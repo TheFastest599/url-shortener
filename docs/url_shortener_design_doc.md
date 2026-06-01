@@ -1,85 +1,114 @@
-# Project Design Document: HiClickMe (Java Spring Boot Microservices, PostgreSQL, Redis & Apache Kafka)
+# Project Design Document: HiClickMe (Java Spring Boot Microservices, gRPC, PostgreSQL, Redis & Apache Kafka)
 
 ## 1. Project Overview
 **Project Name:** HiClickMe (Multi-Tenant URL Shortener & Analytics SaaS)  
-**Purpose:** Provide a highly scalable, multi-tenant URL shortening platform featuring custom subdomains, dynamic QR code generation, UTM tracking profiles, rate limiting, and premium subscription tiers. The platform is designed from the ground up using a **decoupled Microservices Architecture** to support massive redirect throughput, independent service scalability, and high resilience.
+**Purpose:** Provide a highly scalable, multi-tenant URL shortening platform featuring custom subdomains, dynamic QR code generation, UTM tracking profiles, rate limiting, and premium subscription tiers. The platform is designed using a decoupled Microservices Architecture to support massive redirect throughput, independent service scalability, and high resilience.
 
 ### Core Architecture Goals
 *   **High Performance Redirections:** Under `< 10ms` response times for cached short URLs using a reactive Redirect Microservice backed by Redis.
+*   **Decoupled Database Isolation:** Zero cross-database queries. Each microservice completely owns its database. Downstream services resolve transactional fallbacks over gRPC.
+*   **Unified Edge Security & Auth:** Centralized authentication, OAuth2 login coordination, and token rotation managed by a dedicated API Gateway microservice with its own database.
+*   **Low Latency Inter-Service RPC:** High-efficiency, strongly-typed internal communication using gRPC (HTTP/2 multiplexing, Protocol Buffers binary serialization).
 *   **Write-Isolated Analytics Ingestion:** Decouple click tracking database writes from the redirection flow using Apache Kafka and a dedicated Analytics Ingestion Microservice.
-*   **Decoupled Service Scalability:** Independently scale the Redirect service (network/CPU-bound) from the Core admin service (API-bound) and Analytics consumer (I/O-bound).
-*   **Stateful Security & RBAC:** Stateless JWT tokens, HTTP-Only Cookie Refresh Token Rotation (RTR) with database replicas, and role gating (USER and ADMIN).
+*   **Independent Scalability:** Separately scale the network-bound Redirect Service, the I/O-bound Analytics Ingestion, and the CPU/API-bound Gateway and Core Admin services.
 
 ---
 
-## 2. Microservices Architecture
+## 2. The Role of an API Gateway
 
-### 2.1 High-Level Architecture Diagram
+An **API Gateway** acts as the single entrypoint for all external client requests. Instead of clients talking to multiple microservices directly, they hit the API Gateway, which coordinates, secures, and routes requests down to the backend services.
+
+### Core Responsibilities of the API Gateway
+
+1. **Reverse Proxying & Request Routing:**
+   Insulates internal microservices by hiding their IP addresses and ports behind a single public URL (e.g., `https://api.hiclickme.com`). It performs path-based, host-based, or header-based routing to forward HTTP requests to the appropriate downstream service.
+   
+2. **Security & Identity Gating (AuthN & AuthZ):**
+   Handles all authentication and authorization concerns at the perimeter. It integrates local email/password registration and OAuth2 authentication (Google, GitHub), issues stateless JSON Web Tokens (JWT), manages secure `HttpOnly` refresh token cookies, and performs Refresh Token Rotation (RTR). It blocks unauthorized traffic before it penetrates the internal network.
+
+3. **Distributed Rate Limiting:**
+   Protects downstream backend applications from Denial of Service (DoS) attacks, scraping, and client abuse. By executing high-performance checks against Redis at the edge, it rejects requests exceeding rate limits (HTTP `429 Too Many Requests`) before consuming backend database or processing power.
+
+4. **Protocol Translation & Orchestration:**
+   Translates external client-facing protocols (HTTP REST / JSON) into high-performance internal protocols (gRPC / Protocol Buffers). It orchestrates complex client requests by querying multiple gRPC microservices in parallel, aggregating their responses, and returning a unified JSON payload to the client.
+
+5. **Load Balancing & Service Discovery:**
+   Integrates with service registries (e.g., Consul, Eureka, or Kubernetes DNS) to dynamically resolve healthy instances of downstream services and distribute traffic evenly across them.
+
+6. **Observability & Cross-Cutting Concerns:**
+   Injects distributed tracing headers (e.g., W3C Trace Context, Zipkin B3) and request correlation IDs. This ensures that every transaction can be monitored end-to-end as it traverses downstream services. It also aggregates metrics (request counts, latency distributions) and logs anomalies at the entrypoint.
+
+7. **Resilience & Circuit Breaking:**
+   Defines fallback responses, connection timeouts, and circuit breakers (e.g., Resilience4j, Envoy). If a downstream microservice experiences high latency or outages, the Gateway fast-fails and returns cached or graceful default responses to the client, preventing cascade failures.
+
+---
+
+## 3. Microservices Architecture
+
+### 3.1 High-Level Architecture Diagram
 
 ```mermaid
 graph TD
-    User([User Client]) -->|1. Dashboard / APIs| API_Gateway[API Gateway / Router]
+    User([User Client]) -->|1. REST APIs / Auth| API_Gateway[API Gateway :8080]
     User -->|2. Clicks Short Link| MS_Redirect[Redirect Service :8082]
     
-    API_Gateway -->|Route /api/**| MS_Core[Core Admin Service :8081]
-    
-    subgraph Microservices Stack
-        %% Core Admin Service
-        MS_Core -->|Reads/Writes| DB_Transactional[(PostgreSQL Transactional DB)]
-        MS_Core -->|Token Store| Redis_Auth[(Redis Session & Token Store)]
+    subgraph Microservices Cluster
+        %% API Gateway & Auth
+        API_Gateway -->|Reads/Writes Auth| DB_Auth[(PostgreSQL Auth DB :5431)]
+        API_Gateway -->|Rate Limit Checks| Redis_Shared[(Redis Cache & Rate Store :6379)]
+        
+        %% gRPC Channels
+        API_Gateway -.->|gRPC :9090| MS_Core[Core Admin Service :8081]
+        API_Gateway -.->|gRPC :9091| MS_Analytics[Analytics Service :8083]
         
         %% Redirect Service
-        MS_Redirect -->|Checks Cache| Redis_Cache[(Redis Redirect Cache)]
-        MS_Redirect -->|Cache Miss Query| DB_Transactional
-        MS_Redirect -->|Publish Click Event| KafkaBroker[Apache Kafka Broker]
+        MS_Redirect -->|Checks Cache| Redis_Shared
+        MS_Redirect -.->|gRPC: URL Resolution| MS_Core
+        MS_Redirect -->|Publish Click Event| KafkaBroker[Apache Kafka Broker :9092]
     end
     
-    %% Analytics Service
-    KafkaBroker -->|Async Dequeue| MS_Analytics[Analytics Service :8083]
-    MS_Analytics -->|Writes Analytics Records| DB_Analytics[(PostgreSQL Analytics DB)]
+    %% Core & Analytics DBs
+    MS_Core -->|Reads/Writes Core| DB_Core[(PostgreSQL Core DB :5432)]
+    KafkaBroker -->|Async Ingest| MS_Analytics
+    MS_Analytics -->|Bulk Inserts| DB_Analytics[(PostgreSQL Analytics DB :5433)]
 ```
 
-### 2.2 Component Directory & Ports
+### 3.2 Component Directory & Ports
 
-| Service / Component | Port | Technology | Purpose |
-| :--- | :--- | :--- | :--- |
-| **Frontend Dashboard** | `3000` | Next.js, React, TailwindCSS, shadcn/ui | User portal for URL configuration, UTM profiles, and viewing analytics. |
-| **Core Admin Service** | `8081` | Spring Boot 3.x, Spring Data JPA, Hibernate | Manages user registrations, subscriptions, Mock billing checkout, link CRUD operations, and JWT token rotation. |
-| **Redirect Service** | `8082` | Spring WebFlux / Java 17, Redis | Intercepts short code requests, resolves target URLs from cache, and publishes clicks. |
-| **Analytics Service** | `8083` | Spring Boot 3.x, Spring Kafka, MaxMind GeoIP | Consumes click messages from Apache Kafka, handles bot detection, parses user-agent metadata, and bulk-inserts logs. |
-| **Transactional Database**| `5432` | PostgreSQL 16+ (Schema: `hiclickme_core`) | Relational database containing users, passwords, profiles, mappings, and subscriptions. |
-| **Analytics Database** | `5433` | PostgreSQL 16+ (Schema: `hiclickme_analytics`)| Write-intensive relational database holding only click event logs. |
-| **Message Queue Broker** | `9092` | Apache Kafka (KRaft mode) | Decouples HTTP redirection traffic from analytical database writes. |
-| **In-Memory Store** | `6379` | Redis 7+ | Handles fast redirect mappings, rate-limiting, and stateless sessions. |
+| Service / Component | Public Port | gRPC Port | Technology | Purpose |
+| :--- | :--- | :--- | :--- | :--- |
+| **API Gateway** | `8080` | N/A | Spring Cloud Gateway, Reactive Security | Central entrypoint, routing, rate limiting, OAuth2 Client, token rotation, and REST-to-gRPC translation. |
+| **Core Admin Service** | N/A | `9090` | Spring Boot, gRPC Server, JPA / Hibernate | Manages user metadata configurations, billing/subscriptions, URL mapping databases, and UTM profiles. |
+| **Redirect Service** | `8082` | N/A | Spring WebFlux, Redis Reactive, gRPC Client | Resolves short URLs via Redis (or gRPC Core Service fallback) and publishes click events to Apache Kafka. |
+| **Analytics Service** | N/A | `9091` | Spring Boot, Spring Kafka, MaxMind GeoIP | Consumes Kafka click streams, resolves geographic locations, detects bots, bulk-writes logs, and serves gRPC reports. |
+| **PostgreSQL Auth DB** | `5431` | N/A | PostgreSQL 16 (Schema: `hiclickme_auth`) | Relational database containing user login credentials, password hashes, OAuth tokens, and refresh tokens. |
+| **PostgreSQL Core DB** | `5432` | N/A | PostgreSQL 16 (Schema: `hiclickme_core`) | Relational database containing URL mappings, UTM profiles, customer metadata, and subscription statuses. |
+| **PostgreSQL Analytics DB**| `5433` | N/A | PostgreSQL 16 (Schema: `hiclickme_analytics`)| Write-optimized database storing click records, browser metadata, and location analytics. |
+| **Redis Cache & Rate Store**| `6379` | N/A | Redis 7.2 | Shares rate limit statistics, redirect caches, and session contexts. |
+| **Apache Kafka Broker** | `9092` | N/A | Confluent Kafka / KRaft Mode | High-throughput streaming buffer decoupling redirection handling from analytics logging. |
 
 ---
 
-## 3. Database Schema & Data Models
+## 4. Database Schema & Data Models
 
-### 3.1 Core Transactional Database (PostgreSQL - Port `5432`)
-
-**What the Transactional Database Stores (Simplified):**
-*   **Users & Passwords**: Tracks usernames, email IDs, login types (Email or OAuth providers like Google/Github), password hashes, and user metadata details.
-*   **Subscriptions**: Stores membership status (e.g. Free or Premium tiers), Stripe IDs, and expiration dates.
-*   **URL Mappings**: Links the shortened codes to their original long destination URLs, scoped per tenant client, and includes an active flag to allow deactivating links.
-*   **UTM Profiles**: Stores marketing track profiles mapping campaign sources, mediums, etc., to URLs.
-*   **Refresh Tokens**: Keeps trace of active and revoked session refresh tokens to prevent token reuse and session hijacking.
+### 4.1 PostgreSQL Auth Database (Port `5431`)
+Stores strictly credential, token, and identity mapping tables owned and managed exclusively by the `api-gateway-service`.
 
 ```sql
--- 1. Users Table (Core Identity)
+-- 1. Users Table (Core Identity Reference)
 CREATE TABLE users (
     id BIGSERIAL PRIMARY KEY,
     username VARCHAR(255) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
     role VARCHAR(50) DEFAULT 'USER' NOT NULL, -- USER, ADMIN
-    type VARCHAR(50) NOT NULL, -- EMAIL, GOOGLE, GITHUB
+    auth_type VARCHAR(50) NOT NULL, -- EMAIL, GOOGLE, GITHUB
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 CREATE INDEX idx_users_username ON users(username);
 CREATE INDEX idx_users_email ON users(email);
 
--- 2. User Passwords Table (One-to-One, populated if type = 'EMAIL')
+-- 2. User Passwords Table (One-to-One, populated if auth_type = 'EMAIL')
 CREATE TABLE user_passwords (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -87,7 +116,7 @@ CREATE TABLE user_passwords (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
--- 3. User OAuth Credentials Table (One-to-One/Many, populated if type = OAuth provider)
+-- 3. User OAuth Credentials Table (One-to-One/Many, populated if auth_type = OAUTH)
 CREATE TABLE user_oauth_credentials (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -101,45 +130,63 @@ CREATE TABLE user_oauth_credentials (
     CONSTRAINT uq_provider_user_id UNIQUE (provider, provider_user_id)
 );
 
--- 4. User Metadata Table (One-to-One profile metadata and subscription tier details)
+-- 4. Refresh Tokens Table (Database copies for rotation & replay detection)
+CREATE TABLE refresh_tokens (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token VARCHAR(255) UNIQUE NOT NULL,
+    expiry_date TIMESTAMP WITH TIME ZONE NOT NULL,
+    revoked BOOLEAN DEFAULT FALSE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+CREATE INDEX idx_refresh_tokens_token ON refresh_tokens(token);
+```
+
+### 4.2 PostgreSQL Core Database (Port `5432`)
+Stores business-specific URL mappings, configurations, user billing statuses, and marketing profiles owned and managed exclusively by `url-core-service`.
+
+```sql
+-- 1. User Metadata Profile Table (Corresponds to User ID in Auth Service DB)
 CREATE TABLE user_metadata (
     id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT UNIQUE NOT NULL, -- Logical foreign key reference to Auth DB Users
     tier VARCHAR(50) DEFAULT 'FREE' NOT NULL, -- FREE, PREMIUM, ENTERPRISE
     name VARCHAR(255),
     avatar_url VARCHAR(512),
     phone VARCHAR(50),
-    settings JSONB, -- Custom dashboard configuration flags
+    settings JSONB,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 CREATE INDEX idx_user_metadata_tier ON user_metadata(tier);
 
--- 5. Subscriptions Table
+-- 2. Subscriptions Table
 CREATE TABLE subscriptions (
     id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL, -- Logical foreign key reference to Auth DB Users
     stripe_subscription_id VARCHAR(255),
     status VARCHAR(50) NOT NULL, -- ACTIVE, PAST_DUE, CANCELED
     start_date TIMESTAMP WITH TIME ZONE,
     end_date TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
+CREATE INDEX idx_subscriptions_user ON subscriptions(user_id);
 
--- 6. URL Mappings Table
+-- 3. URL Mappings Table
 CREATE TABLE url_mappings (
     id BIGSERIAL PRIMARY KEY,
     short_code VARCHAR(10) UNIQUE NOT NULL,
     destination_url TEXT NOT NULL,
-    tenant_id VARCHAR(50) NOT NULL,
+    tenant_id VARCHAR(50) NOT NULL, -- Groups resources logically
+    user_id BIGINT NOT NULL, -- Owner reference
     click_count BIGINT DEFAULT 0 NOT NULL,
     is_active BOOLEAN DEFAULT TRUE NOT NULL,
     metadata JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 CREATE INDEX idx_url_mappings_short_code ON url_mappings(short_code);
-CREATE INDEX idx_url_mappings_tenant ON url_mappings(tenant_id);
+CREATE INDEX idx_url_mappings_user ON url_mappings(user_id);
 
--- 7. UTM Profiles Table
+-- 4. UTM Profiles Table
 CREATE TABLE utm_profiles (
     id BIGSERIAL PRIMARY KEY,
     url_mapping_id BIGINT NOT NULL REFERENCES url_mappings(id) ON DELETE CASCADE,
@@ -152,26 +199,10 @@ CREATE TABLE utm_profiles (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 CREATE INDEX idx_utm_profiles_url_mapping ON utm_profiles(url_mapping_id);
-
--- 8. Refresh Tokens Table (Database copies for rotation & replay detection)
-CREATE TABLE refresh_tokens (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token VARCHAR(255) UNIQUE NOT NULL,
-    expiry_date TIMESTAMP WITH TIME ZONE NOT NULL,
-    revoked BOOLEAN DEFAULT FALSE NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
-);
-CREATE INDEX idx_refresh_tokens_token ON refresh_tokens(token);
 ```
 
-### 3.2 Analytics Database (PostgreSQL - Port `5433`)
-
-**What the Analytics Database Stores (Simplified):**
-*   **Visitor Details**: Logs individual redirection click timestamps, user-agent browsers, operating systems, unique visitor tracking cookies, and locale preferences.
-*   **Marketing UTMs & Referrers**: Records referring web sites and incoming campaign UTM tags.
-*   **Location & Bot Tracking**: Tracks geolocation information (resolved from IP addresses) and flags crawler bots.
-*   **JSONB Storage**: Holds unstructured parameters and network latencies in a JSONB column to keep logs extensible.
+### 4.3 PostgreSQL Analytics Database (Port `5433`)
+Stores raw event click tracking data managed strictly by `url-analytics-service`.
 
 ```sql
 -- 1. Click Analytics Table
@@ -195,544 +226,544 @@ CREATE TABLE click_analytics (
     is_bot BOOLEAN DEFAULT FALSE NOT NULL,
     visitor_id VARCHAR(36),
     locale VARCHAR(10),
-    extra_data JSONB -- Custom parameters, client IP, system routing latencies
+    extra_data JSONB
 );
 CREATE INDEX idx_click_analytics_short_code ON click_analytics(short_code);
 CREATE INDEX idx_click_analytics_timestamp ON click_analytics(timestamp);
-CREATE INDEX idx_click_analytics_visitor ON click_analytics(visitor_id);
 ```
 
-### 3.3 Database Entity Relationship Diagram (ERD)
+### 4.4 Database Entity Relationship Diagram (ERD)
 
 ```mermaid
 erDiagram
-    users {
-        bigint id PK
-        varchar username UK
-        varchar email UK
-        varchar role
-        varchar type
-        timestamp created_at
-        timestamp updated_at
-    }
-    user_passwords {
-        bigint id PK
-        bigint user_id FK, UK
-        varchar password_hash
-        timestamp updated_at
-    }
-    user_oauth_credentials {
-        bigint id PK
-        bigint user_id FK, UK
-        varchar provider
-        varchar provider_user_id
-        text access_token
-        text refresh_token
-        timestamp expires_at
-        timestamp created_at
-        timestamp updated_at
-    }
-    user_metadata {
-        bigint id PK
-        bigint user_id FK, UK
-        varchar tier
-        varchar name
-        varchar avatar_url
-        varchar phone
-        jsonb settings
-        timestamp updated_at
-    }
-    refresh_tokens {
-        bigint id PK
-        bigint user_id FK
-        varchar token UK
-        timestamp expiry_date
-        boolean revoked
-        timestamp created_at
-    }
-    subscriptions {
-        bigint id PK
-        bigint user_id FK
-        varchar stripe_subscription_id
-        varchar status
-        timestamp start_date
-        timestamp end_date
-        timestamp created_at
-    }
-    url_mappings {
-        bigint id PK
-        varchar short_code UK
-        text destination_url
-        varchar tenant_id
-        bigint click_count
-        boolean is_active
-        jsonb metadata
-        timestamp created_at
-    }
-    utm_profiles {
-        bigint id PK
-        bigint url_mapping_id FK
-        varchar name
-        varchar utm_source
-        varchar utm_medium
-        varchar utm_campaign
-        varchar utm_term
-        varchar utm_content
-        timestamp created_at
-    }
-    click_analytics {
-        bigint id PK
-        varchar short_code
-        bigint utm_profile_id FK
-        timestamp timestamp
-        text user_agent
-        varchar device_type
-        varchar browser
-        varchar operating_system
-        varchar geo_country
-        varchar geo_city
-        text referrer
-        varchar utm_source
-        varchar utm_medium
-        varchar utm_campaign
-        varchar utm_term
-        varchar utm_content
-        boolean is_bot
-        varchar visitor_id
-        varchar locale
-        jsonb extra_data
-    }
+    subgraph Auth Boundary [PostgreSQL Auth DB - 5431]
+        users {
+            bigint id PK
+            varchar username UK
+            varchar email UK
+            varchar role
+            varchar auth_type
+            timestamp created_at
+        }
+        user_passwords {
+            bigint id PK
+            bigint user_id FK, UK
+            varchar password_hash
+        }
+        user_oauth_credentials {
+            bigint id PK
+            bigint user_id FK, UK
+            varchar provider
+            varchar provider_user_id UK
+            text access_token
+            text refresh_token
+        }
+        refresh_tokens {
+            bigint id PK
+            bigint user_id FK
+            varchar token UK
+            timestamp expiry_date
+            boolean revoked
+        }
+    end
 
-    users ||--o| subscriptions : "has"
+    subgraph Core Boundary [PostgreSQL Core DB - 5432]
+        user_metadata {
+            bigint id PK
+            bigint user_id UK "Logical FK to Auth.users"
+            varchar tier
+            varchar name
+            jsonb settings
+        }
+        subscriptions {
+            bigint id PK
+            bigint user_id "Logical FK to Auth.users"
+            varchar stripe_subscription_id
+            varchar status
+            timestamp start_date
+            timestamp end_date
+        }
+        url_mappings {
+            bigint id PK
+            varchar short_code UK
+            text destination_url
+            varchar tenant_id
+            bigint user_id "Logical FK to Auth.users"
+            boolean is_active
+        }
+        utm_profiles {
+            bigint id PK
+            bigint url_mapping_id FK
+            varchar name
+            varchar utm_source
+            varchar utm_medium
+        }
+    end
+
+    subgraph Analytics Boundary [PostgreSQL Analytics DB - 5433]
+        click_analytics {
+            bigint id PK
+            varchar short_code
+            bigint utm_profile_id "Logical FK to Core.utm_profiles"
+            timestamp timestamp
+            text user_agent
+            varchar geo_country
+            boolean is_bot
+            varchar visitor_id
+        }
+    end
+
+    users ||--o| user_passwords : "secures"
+    users ||--o| user_oauth_credentials : "binds"
     users ||--o{ refresh_tokens : "owns"
-    users ||--o{ url_mappings : "owns (logical mapping)"
-    users ||--o| user_passwords : "has (if type='EMAIL')"
-    users ||--o| user_oauth_credentials : "has (if type='OAUTH')"
-    users ||--o| user_metadata : "has profile details"
-    url_mappings ||--o{ utm_profiles : "has"
-    url_mappings ||--o{ click_analytics : "records clicks (logical)"
-    utm_profiles ||--o{ click_analytics : "attributes clicks (logical)"
-```
-
-### 3.4 Redis Key Schema Design
-
-| Key Pattern | Data Type | TTL | Purpose |
-| :--- | :--- | :--- | :--- |
-| `url:redirect:{shortCode}` | String | Dynamic (2m - 6h) | Caches destination URLs for high-speed routing. |
-| `url:hits:{shortCode}` | String Counter | 24 hours | Tracks daily click popularity to compute Adaptive cache TTLs. |
-| `rate:limit:{tenantId}:{ip}` | String / Long | 1 minute | Tracks API invocation limits for rate-limiting. |
-| `session:{sessionToken}` | String / Hash | 2 hours | User dashboard state. |
-
----
-
-## 4. Microservice Implementation Specifications
-
-### 4.1 Redirect Service (`url-redirect-service` - Port `8082`)
-
-The Redirect Service handles traffic routing. It does not write to databases and is implemented using constructor injection and adaptive caching.
-
-**How the Redirect Controller Works (Simplified):**
-*   **Reads the Short Link**: Extracts the requested short link code (like `hcm.me/r/abc`) from the incoming request path.
-*   **Resolves the Destination**: Finds the corresponding long target URL using a fast cache-aside lookup service (checking Redis first, then falling back to the database).
-*   **Appends Tracking Tags**: If a UTM configuration is linked, it dynamically constructs and adds tracking tags to the destination URL.
-*   **Tracks Unique Visitors**: Looks for a special cookie (`hcm_uid`). If not found, generates and stores a new cookie to recognize return visitors.
-*   **Asynchronous Analytics Publishing**: Hands off the click metadata to the Kafka publisher in the background so redirect performance remains under 10ms.
-*   **Performs the Redirect**: Issues an HTTP `302 Found` redirect to automatically forward the client's browser to the destination.
-
-```java
-// RedirectController.java
-@RestController
-@RequestMapping("/r")
-public class RedirectController {
-
-    private final UrlMappingService urlMappingService;
-    private final AnalyticsPublisher analyticsPublisher;
-
-    public RedirectController(UrlMappingService urlMappingService, AnalyticsPublisher analyticsPublisher) {
-        this.urlMappingService = urlMappingService;
-        this.analyticsPublisher = analyticsPublisher;
-    }
-
-    @GetMapping("/{shortCode}")
-    public ResponseEntity<Void> redirect(
-            @PathVariable String shortCode,
-            @RequestParam(required = false) Long profileId,
-            HttpServletRequest request,
-            HttpServletResponse response) {
-        
-        // Resolve cache-aside redirection URL
-        String destinationUrl = urlMappingService.getDestinationUrl(shortCode);
-        
-        if (destinationUrl == null) {
-            return ResponseEntity.notFound().build();
-        }
-
-        // Apply UTM Profile parameters if profileId is passed
-        String redirectUrl = destinationUrl;
-        if (profileId != null) {
-            redirectUrl = urlMappingService.appendUtmProfile(destinationUrl, profileId);
-        }
-
-        // Retrieve or initialize unique visitor cookie
-        String visitorId = getOrCreateVisitorId(request, response);
-
-        // Asynchronously publish click statistics to Apache Kafka
-        analyticsPublisher.publishClick(shortCode, profileId, visitorId, request);
-
-        return ResponseEntity.status(HttpStatus.FOUND)
-                .location(URI.create(redirectUrl))
-                .build();
-    }
-
-    private String getOrCreateVisitorId(HttpServletRequest request, HttpServletResponse response) {
-        String visitorId = null;
-        if (request.getCookies() != null) {
-            for (Cookie cookie : request.getCookies()) {
-                if ("hcm_uid".equals(cookie.getName())) {
-                     visitorId = cookie.getValue();
-                     break;
-                }
-            }
-        }
-        if (visitorId == null) {
-            visitorId = UUID.randomUUID().toString();
-            ResponseCookie cookie = ResponseCookie.from("hcm_uid", visitorId)
-                    .maxAge(Duration.ofDays(365))
-                    .path("/")
-                    .secure(true)
-                    .httpOnly(true)
-                    .sameSite("Lax")
-                    .build();
-            response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
-        }
-        return visitorId;
-    }
-}
-```
-
-**How the Analytics Publisher Works (Simplified):**
-*   **Assembles Event Metadata**: Collects raw browser identifiers, visitor cookies, IP addresses, preferred languages, timestamps, and UTM parameters into a unified package.
-*   **Publishes to Kafka Broker**: Sends the tracking event package to the `analytics.click` Kafka topic asynchronously.
-*   **Maintains Event Order**: Sets the message key to the URL's unique `shortCode`, which guarantees that all click events for the same short URL land in the exact same Kafka partition and process in correct chronological order.
-
-```java
-// AnalyticsPublisher.java
-@Component
-public class AnalyticsPublisher {
     
-    private final KafkaTemplate<String, ClickEventPayload> kafkaTemplate;
+    users -.-> user_metadata : "logical sync"
+    users -.-> subscriptions : "logical sync"
+    users -.-> url_mappings : "logical ownership"
+    
+    url_mappings ||--o{ utm_profiles : "encompasses"
+    url_mappings -.-> click_analytics : "traces clicks"
+```
 
-    public AnalyticsPublisher(KafkaTemplate<String, ClickEventPayload> kafkaTemplate) {
-        this.kafkaTemplate = kafkaTemplate;
+---
+
+## 5. gRPC Interface Definitions
+
+Internal services establish strict, compiled contracts using Protocol Buffers. This ensures cross-service type safety, backwards compatibility, and low serialization overhead.
+
+### 5.1 url_service.proto
+
+Defines endpoints in the `Core Admin Service` to resolve short codes and manage mappings.
+
+```protobuf
+syntax = "proto3";
+
+package hiclickme.core;
+
+option java_multiple_files = true;
+option java_package = "com.hiclickme.grpc.core";
+option java_outer_classname = "UrlServiceProto";
+
+service UrlService {
+  rpc GetUrlMapping (GetUrlMappingRequest) returns (GetUrlMappingResponse);
+  rpc CreateUrlMapping (CreateUrlMappingRequest) returns (CreateUrlMappingResponse);
+}
+
+message GetUrlMappingRequest {
+  string short_code = 1;
+}
+
+message GetUrlMappingResponse {
+  bool found = 1;
+  string short_code = 2;
+  string destination_url = 3;
+  bool is_active = 4;
+  string tenant_id = 5;
+  int64 user_id = 6;
+  repeated UtmProfile utm_profiles = 7;
+}
+
+message UtmProfile {
+  int64 id = 1;
+  string name = 2;
+  string utm_source = 3;
+  string utm_medium = 4;
+  string utm_campaign = 5;
+}
+
+message CreateUrlMappingRequest {
+  string destination_url = 1;
+  string tenant_id = 2;
+  int64 user_id = 3;
+  string custom_short_code = 4;
+}
+
+message CreateUrlMappingResponse {
+  string short_code = 1;
+  string destination_url = 2;
+}
+```
+
+### 5.2 subscription_service.proto
+
+Defines endpoints in the `Core Admin Service` to lookup active plans and validate limits.
+
+```protobuf
+syntax = "proto3";
+
+package hiclickme.core;
+
+option java_multiple_files = true;
+option java_package = "com.hiclickme.grpc.core";
+option java_outer_classname = "SubscriptionServiceProto";
+
+service SubscriptionService {
+  rpc ValidateTenantLimit (ValidateTenantLimitRequest) returns (ValidateTenantLimitResponse);
+  rpc GetTenantSubscription (GetTenantSubscriptionRequest) returns (GetTenantSubscriptionResponse);
+}
+
+message ValidateTenantLimitRequest {
+  string tenant_id = 1;
+  int64 user_id = 2;
+}
+
+message ValidateTenantLimitResponse {
+  bool allowed = 1;
+  string current_tier = 2;
+  int64 current_usage = 3;
+  int64 limit = 4;
+}
+
+message GetTenantSubscriptionRequest {
+  int64 user_id = 1;
+}
+
+message GetTenantSubscriptionResponse {
+  string stripe_subscription_id = 1;
+  string status = 2;
+  string tier = 3;
+  int64 end_timestamp = 4;
+}
+```
+
+### 5.3 analytics_service.proto
+
+Defines endpoints in the `Analytics Service` to retrieve statistics for the dashboard.
+
+```protobuf
+syntax = "proto3";
+
+package hiclickme.analytics;
+
+option java_multiple_files = true;
+option java_package = "com.hiclickme.grpc.analytics";
+option java_outer_classname = "AnalyticsServiceProto";
+
+service AnalyticsService {
+  rpc GetClickStatistics (ClickStatsRequest) returns (ClickStatsResponse);
+}
+
+message ClickStatsRequest {
+  string short_code = 1;
+  int64 start_timestamp = 2;
+  int64 end_timestamp = 3;
+}
+
+message ClickStatsResponse {
+  string short_code = 1;
+  int64 total_clicks = 2;
+  int64 bot_clicks = 3;
+  repeated CountryBreakdown country_stats = 4;
+}
+
+message CountryBreakdown {
+  string country_code = 1;
+  int64 click_count = 2;
+}
+```
+
+---
+
+## 6. Microservice Implementation Specifications
+
+### 6.1 API Gateway Service (`url-gateway-service` - Port `8080`)
+Exposes REST resources externally, processes auth flows with its local DB, handles rate limits with Redis, and makes gRPC requests downstream.
+
+#### 1. Routing & Security Setup (`application.yml`)
+```yaml
+server:
+  port: 8080
+
+spring:
+  application:
+    name: url-gateway-service
+  r2dbc:
+    url: r2dbc:postgresql://localhost:5431/hiclickme_auth
+    username: auth_user
+    password: auth_password
+  redis:
+    host: localhost
+    port: 6379
+  cloud:
+    gateway:
+      routes:
+        - id: core_admin_rest_fallback
+          uri: noop:// # Route internally captured by REST-gRPC controllers
+          predicates:
+            - Path=/api/v1/dashboard/**
+        - id: redirect_route
+          uri: http://localhost:8082
+          predicates:
+            - Path=/r/**
+```
+
+#### 2. Reactive Security Configuration (Spring Security & JWT)
+Authenticates clients, reads access tokens, and processes secure Refresh Token Rotation inside the Gateway context.
+
+```java
+@Configuration
+@EnableWebFluxSecurity
+public class SecurityConfiguration {
+
+    private final JwtTokenProvider jwtTokenProvider;
+
+    public SecurityConfiguration(JwtTokenProvider jwtTokenProvider) {
+        this.jwtTokenProvider = jwtTokenProvider;
     }
 
-    public void publishClick(String shortCode, Long utmProfileId, String visitorId, HttpServletRequest request) {
-        ClickEventPayload payload = new ClickEventPayload(
-            shortCode,
-            utmProfileId,
-            visitorId,
-            request.getHeader("User-Agent"),
-            request.getHeader("Referer"),
-            request.getRemoteAddr(),
-            request.getHeader("Accept-Language"),
-            System.currentTimeMillis(),
-            request.getParameter("utm_source"),
-            request.getParameter("utm_medium"),
-            request.getParameter("utm_campaign"),
-            request.getParameter("utm_term"),
-            request.getParameter("utm_content")
-        );
-        
-        // Non-blocking publish to Apache Kafka Broker using shortCode as partition key
-        kafkaTemplate.send("analytics.click", shortCode, payload);
+    @Bean
+    public SecurityWebFilterChain springSecurityFilterChain(ServerHttpSecurity http) {
+        return http
+            .csrf(ServerHttpSecurity.CsrfSpec::disable)
+            .authorizeExchange(exchanges -> exchanges
+                .pathMatchers("/api/v1/auth/**").permitAll()
+                .pathMatchers("/r/**").permitAll()
+                .anyExchange().authenticated()
+            )
+            .securityContextRepository(new BearerTokenSecurityContextRepository(jwtTokenProvider))
+            .build();
     }
 }
 ```
 
-### 4.2 Analytics Ingestion Service (`url-analytics-service` - Port `8083`)
+#### 3. Edge Rate Limiter (Redis Lua Token Bucket Filter)
+Runs reactive global rate limit evaluations on all edge routes before propagating requests downstream.
 
-Processes click events asynchronously from Apache Kafka, resolves client geolocations, detects bots, and inserts metrics into the dedicated Analytics database.
+##### Redis Lua Rate Limiting Script (`request_rate_limiter.lua`)
+This atomic script implements a Token Bucket algorithm in Redis to prevent race conditions during concurrent requests:
+```lua
+local key = KEYS[1]
+local limit = tonumber(ARGV[1])
+local refill_rate = tonumber(ARGV[2])
+local now = tonumber(redis.call('TIME')[1])
 
-**What the Click Event Payload Represents (Simplified):**
-*   **Immutable Data Holder**: A lightweight Java record designed to transport all UTM parameters, browser headers, and network details in a single data transfer object across Kafka.
+local bucket = redis.call('HMGET', key, 'tokens', 'last_refill')
+local tokens = tonumber(bucket[1])
+local last_refill = tonumber(bucket[2])
 
-```java
-// ClickEventPayload.java
-public record ClickEventPayload(
-    String shortCode,
-    Long utmProfileId,
-    String visitorId,
-    String userAgent,
-    String referrer,
-    String ipAddress,
-    String locale,
-    long timestamp,
-    String utmSource,
-    String utmMedium,
-    String utmCampaign,
-    String utmTerm,
-    String utmContent
-) {}
+if not tokens then
+    tokens = limit
+    last_refill = now
+else
+    local elapsed = math.max(0, now - last_refill)
+    tokens = math.min(limit, tokens + elapsed * refill_rate)
+    last_refill = now
+end
+
+if tokens >= 1 then
+    tokens = tokens - 1
+    redis.call('HMSET', key, 'tokens', tokens, 'last_refill', last_refill)
+    redis.call('EXPIRE', key, 60)
+    return 1
+else
+    return 0
+end
 ```
 
-**How the Analytics Consumer Works (Simplified):**
-*   **Kafka Listener Integration**: Listens to the `analytics.click` Kafka topic using 3 parallel consumer threads for fast, concurrent ingestion.
-*   **Filters Bot Traffic**: Checks the user-agent header against a list of bot keywords (like `bot`, `crawler`, `spider`) to filter out automated engines from actual user metrics.
-*   **Resolves Geolocations**: Translates the raw IP address into geographical coordinates (Country and City).
-*   **Handles Unstructured Parameters**: Packages raw IP address values and ingestion timestamps into a PostgreSQL JSONB column for flexible future querying.
-*   **Saves to PostgreSQL**: Saves the complete click analytics record directly to the dedicated analytics database.
-
+##### Spring Cloud Gateway Rate Limiting Filter
 ```java
-// AnalyticsConsumer.java
 @Component
-public class AnalyticsConsumer {
+public class GatewayRateLimitingFilter implements GlobalFilter, Ordered {
 
-    private final ClickAnalyticsRepository analyticsRepository;
+    private final ReactiveStringRedisTemplate redisTemplate;
+    private final RedisScript<Long> luaScript;
 
-    public AnalyticsConsumer(ClickAnalyticsRepository analyticsRepository) {
-        this.analyticsRepository = analyticsRepository;
-    }
-
-    @KafkaListener(topics = "analytics.click", groupId = "analytics-group", concurrency = "3")
-    public void consumeClickEvent(ClickEventPayload payload) {
-        ClickAnalytics record = new ClickAnalytics();
-        record.setShortCode(payload.shortCode());
-        record.setUtmProfileId(payload.utmProfileId());
-        record.setVisitorId(payload.visitorId());
-        record.setUserAgent(payload.userAgent());
-        record.setReferrer(payload.referrer());
-        record.setLocale(payload.locale());
-        record.setUtmSource(payload.utmSource());
-        record.setUtmMedium(payload.utmMedium());
-        record.setUtmCampaign(payload.utmCampaign());
-        record.setUtmTerm(payload.utmTerm());
-        record.setUtmContent(payload.utmContent());
-        
-        // Detect bot / crawler traffic
-        boolean isBot = detectBot(payload.userAgent());
-        record.setBot(isBot);
-        
-        // GeoIP parsing lookup (e.g. MaxMind) goes here
-        record.setGeoCountry("US"); // Resolved from payload.ipAddress()
-        record.setGeoCity("San Francisco");
-        
-        // Store dynamic unstructured properties in JSONB field
-        Map<String, Object> extra = new HashMap<>();
-        extra.put("ipAddress", payload.ipAddress());
-        extra.put("ingestTimestamp", System.currentTimeMillis());
-        record.setExtraData(extra);
-        
-        // Save record to hclikme_analytics database
-        analyticsRepository.save(record);
-    }
-
-    private boolean detectBot(String userAgent) {
-        if (userAgent == null) return false;
-        String ua = userAgent.toLowerCase();
-        return ua.contains("bot") || ua.contains("crawler") || ua.contains("spider") 
-               || ua.contains("slack") || ua.contains("discord") || ua.contains("embed");
-    }
-}
-```
-
-### 4.3 Core Admin Service (`url-core-service` - Port `8081`)
-Manages accounts, OAuth identity setups, subscriptions, URL creations, and dynamic local payments checks.
-
-#### 1. Simulated Billing API (Mock Payments)
-
-**How the Simulated Billing API Works (Simplified):**
-*   **Creates Checkout Session**: Receives requests to upgrade user plans, generates a mock transaction token, caches metadata in Redis for 15 minutes, and redirects the user to a checkout page.
-*   **Receives Webhook Result**: Accepts mock payment callbacks. If the billing checkout is successful, updates the user's account tier.
-*   **Grants Premium Status**: Modifies the user plan to `PREMIUM` in the core database and records a subscription validity record.
-*   **Removes Cached Session**: Deletes the used checkout session token from Redis immediately after processing.
-
-```java
-// MockPaymentController.java
-@RestController
-@RequestMapping("/api/payment")
-public class MockPaymentController {
-
-    private final RedisTemplate<String, Object> redisTemplate;
-    private final UserRepository userRepository;
-    private final UserMetadataRepository userMetadataRepository;
-    private final SubscriptionRepository subscriptionRepository;
-
-    public MockPaymentController(
-            RedisTemplate<String, Object> redisTemplate,
-            UserRepository userRepository,
-            UserMetadataRepository userMetadataRepository,
-            SubscriptionRepository subscriptionRepository) {
+    public GatewayRateLimitingFilter(ReactiveStringRedisTemplate redisTemplate, RedisScript<Long> luaScript) {
         this.redisTemplate = redisTemplate;
-        this.userRepository = userRepository;
-        this.userMetadataRepository = userMetadataRepository;
-        this.subscriptionRepository = subscriptionRepository;
+        this.luaScript = luaScript;
     }
 
-    @PostMapping("/checkout")
-    public ResponseEntity<Map<String, String>> createCheckoutSession(@RequestBody CheckoutRequest request) {
-        String sessionId = "sess_mock_" + UUID.randomUUID();
-        
-        // Store session metadata in Redis with a 15-minute TTL
-        redisTemplate.opsForValue().set("payment:session:" + sessionId, request, Duration.ofMinutes(15));
-        
-        // Redirect to local mockup
-        String mockCheckoutUrl = "/payment/mock-checkout.html?sessionId=" + sessionId;
-        return ResponseEntity.ok(Map.of("checkoutUrl", mockCheckoutUrl));
+    @Override
+    public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+        String ip = exchange.getRequest().getRemoteAddress().getAddress().getHostAddress();
+        String limitKey = "rate:limit:global:" + ip;
+
+        // Keys: [limitKey], Args: [MaxBucketSize (60 tokens), RefillRatePerSecond (1 token/s)]
+        return redisTemplate.execute(luaScript, List.of(limitKey), List.of("60", "1"))
+            .flatMap(allowed -> {
+                if (allowed == 0) {
+                    exchange.getResponse().setStatusCode(HttpStatus.TOO_MANY_REQUESTS);
+                    exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
+                    byte[] bytes = "{\"error\":\"Too many requests. Limit exceeded.\"}".getBytes(StandardCharsets.UTF_8);
+                    DataBuffer buffer = exchange.getResponse().bufferFactory().wrap(bytes);
+                    return exchange.getResponse().writeWith(Mono.just(buffer));
+                }
+                return chain.filter(exchange);
+            });
     }
 
-    @PostMapping("/mock-webhook")
-    public ResponseEntity<Void> handleMockWebhook(@RequestBody MockWebhookRequest request) {
-        String sessionKey = "payment:session:" + request.sessionId();
-        CheckoutRequest sessionData = (CheckoutRequest) redisTemplate.opsForValue().get(sessionKey);
-        
-        if (sessionData == null) {
-            return ResponseEntity.badRequest().build();
-        }
-
-        if (request.success()) {
-            User user = userRepository.findById(sessionData.userId())
-                    .orElseThrow(() -> new RuntimeException("User not found"));
-
-            // Update plan tier in UserMetadata
-            UserMetadata metadata = userMetadataRepository.findByUserId(user.getId())
-                    .orElse(new UserMetadata(user));
-            metadata.setTier(sessionData.plan());
-            userMetadataRepository.save(metadata);
-
-            // Record Active Subscription
-            Subscription sub = new Subscription();
-            sub.setUser(user);
-            sub.setStripeSubscriptionId(request.sessionId());
-            sub.setStatus("ACTIVE");
-            sub.setStartDate(Instant.now());
-            sub.setEndDate(Instant.now().plus(30, ChronoUnit.DAYS));
-            subscriptionRepository.save(sub);
-        }
-
-        redisTemplate.delete(sessionKey);
-        return ResponseEntity.ok().build();
+    @Override
+    public int getOrder() {
+        return Ordered.HIGHEST_PRECEDENCE;
     }
 }
 ```
 
-#### 2. Dynamic QR Code Generator (ZXing Engine)
-Generates vector or PNG QR codes for mapped short links dynamically.
-
-**How the QR Code Service Works (Simplified):**
-*   **Encodes URL Text**: Inputs any target text (such as the short link) into the ZXing matrix layout generator.
-*   **Generates Raw Output**: Converts the encoded layout matrix into a stream of PNG image bytes to render directly on client dashboards.
+#### 4. REST to gRPC Translation Controller
+Gateway translates JSON API requests from the frontend into internal gRPC payloads, queries headless services, and maps results back to client JSON.
 
 ```java
-// QRCodeService.java
-@Service
-public class QRCodeService {
+@RestController
+@RequestMapping("/api/v1/dashboard")
+public class DashboardGatewayController {
 
-    public byte[] generateQRCode(String text, int width, int height) throws Exception {
-        QRCodeWriter qrCodeWriter = new QRCodeWriter();
-        BitMatrix bitMatrix = qrCodeWriter.encode(text, BarcodeFormat.QR_CODE, width, height);
+    @GrpcClient("url-core-service")
+    private UrlServiceGrpc.UrlServiceBlockingStub urlServiceStub;
 
-        ByteArrayOutputStream pngOutputStream = new ByteArrayOutputStream();
-        MatrixToImageWriter.writeToStream(bitMatrix, "PNG", pngOutputStream);
-        return pngOutputStream.toByteArray();
-    }
-}
-```
+    @PostMapping("/links")
+    public ResponseEntity<UrlMappingDto> createLink(
+            @RequestBody CreateLinkRequest request,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        
+        // Construct protobuf message
+        CreateUrlMappingRequest grpcRequest = CreateUrlMappingRequest.newBuilder()
+                .setDestinationUrl(request.destinationUrl())
+                .setTenantId(principal.getTenantId())
+                .setUserId(principal.getUserId())
+                .build();
 
-#### 3. Multi-Tenant Subdomain Interceptor
-A custom HandlerInterceptor dynamically resolving tenant domains (e.g. `tenant1.hiclickme.com`) and injecting them into the Request Context.
+        // High-speed gRPC call to core service
+        CreateUrlMappingResponse grpcResponse = urlServiceStub.createUrlMapping(grpcRequest);
 
-**How the Multi-Tenant Subdomain Interceptor Works (Simplified):**
-*   **Resolves Domain Subdomains**: Inspects incoming API requests to check for tenant subdomains (e.g. `tenant-a.hiclickme.com`).
-*   **Stores Tenant Scope**: Sets the isolated Tenant ID in a local ThreadLocal context variable. This ensures any queries automatically filter data for that specific tenant.
-*   **Clears Thread Pools**: Automatically purges the thread-bound tenant variables upon request completion to prevent cross-request thread pool memory leaks.
-
-```java
-// TenantInterceptor.java
-@Component
-public class TenantInterceptor implements HandlerInterceptor {
-
-    private final TenantContext tenantContext;
-
-    public TenantInterceptor(TenantContext tenantContext) {
-        this.tenantContext = tenantContext;
-    }
-
-    @Override
-    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-        String serverName = request.getServerName(); // e.g. client1.hiclickme.com
-        if (serverName != null && serverName.endsWith(".hiclickme.com")) {
-            String subdomain = serverName.substring(0, serverName.indexOf("."));
-            if (!"www".equalsIgnoreCase(subdomain) && !"api".equalsIgnoreCase(subdomain)) {
-                request.setAttribute("tenantId", subdomain);
-                tenantContext.setCurrentTenantId(subdomain); // Set ThreadLocal tenant context
-            }
-        }
-        return true;
-    }
-
-    @Override
-    public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
-        tenantContext.clear(); // Evict ThreadLocal key to prevent memory leaks
+        // Map back to response JSON DTO
+        UrlMappingDto responseDto = new UrlMappingDto(
+                grpcResponse.getShortCode(),
+                grpcResponse.getDestinationUrl()
+        );
+        return ResponseEntity.ok(responseDto);
     }
 }
 ```
 
 ---
 
-## 5. Performance & Caching Configuration
+### 6.2 Core Admin Service (`url-core-service` - Port `9090`)
+Runs headless as an internal gRPC service without public HTTP exposure. It manages the transactional database `hiclickme_core` and executes logical CRUD rules.
 
-### 5.1 Dynamic Cache TTL (Adaptive Popularity Eviction)
-Implemented in the `url-redirect-service` to optimize Redis memory space:
-
-**How the URL Mapping Service Works (Simplified):**
-*   **Increments Rolling Counters**: Tracks hit frequencies on Redis to compute recent link popularity.
-*   **Resolves Redis Cache**: Attempts to resolve redirect destinations instantly from memory. Popular links have their Redis expiration extended to save DB queries.
-*   **Queries Database on Cache Miss**: Falls back to query PostgreSQL if the cache is empty. If the link is active, caches it on Redis.
-*   **Applies Adaptive TTL Rules**: Computes Cache Expiry dynamically: 2 minutes for unpopular/cold links (saves memory) up to 6 hours for highly popular/viral links (minimizes database load).
+#### 1. gRPC Server Implementation
+Handles incoming request definitions compiled from proto classes.
 
 ```java
-// UrlMappingService.java
-@Service
-public class UrlMappingService {
+@GrpcService
+public class UrlServiceImpl extends UrlServiceGrpc.UrlServiceImplBase {
 
     private final UrlMappingRepository urlRepository;
     private final StringRedisTemplate redisTemplate;
 
-    public UrlMappingService(UrlMappingRepository urlRepository, StringRedisTemplate redisTemplate) {
+    public UrlServiceImpl(UrlMappingRepository urlRepository, StringRedisTemplate redisTemplate) {
         this.urlRepository = urlRepository;
         this.redisTemplate = redisTemplate;
     }
 
-    public String getDestinationUrl(String shortCode) {
+    @Override
+    public void getUrlMapping(GetUrlMappingRequest request, StreamObserver<GetUrlMappingResponse> responseObserver) {
+        Optional<UrlMapping> mappingOpt = urlRepository.findByShortCode(request.getShortCode());
+        
+        if (mappingOpt.isEmpty()) {
+            responseObserver.onNext(GetUrlMappingResponse.newBuilder().setFound(false).build());
+            responseObserver.onCompleted();
+            return;
+        }
+
+        UrlMapping mapping = mappingOpt.get();
+        
+        GetUrlMappingResponse.Builder builder = GetUrlMappingResponse.newBuilder()
+                .setFound(true)
+                .setShortCode(mapping.getShortCode())
+                .setDestinationUrl(mapping.getDestinationUrl())
+                .setIsActive(mapping.isActive())
+                .setTenantId(mapping.getTenantId())
+                .setUserId(mapping.getUserId());
+
+        // Map internal UTM profiles list to gRPC elements
+        mapping.getUtmProfiles().forEach(p -> builder.addUtmProfiles(
+                UtmProfile.newBuilder()
+                        .setId(p.getId())
+                        .setName(p.getName())
+                        .setUtmSource(p.getUtmSource())
+                        .setUtmMedium(p.getUtmMedium())
+                        .build()
+        ));
+
+        responseObserver.onNext(builder.build());
+        responseObserver.onCompleted();
+    }
+}
+```
+
+---
+
+### 6.3 Redirect Service (`url-redirect-service` - Port `8082`)
+A reactive WebFlux application executing redirections. It does not establish direct relational database pools.
+
+#### 1. Redirection Resolver with gRPC Fallback Client
+Handles redirect execution. Checks Redis cache first. If a cache miss occurs, resolves URL targets by issuing a gRPC call to `url-core-service`.
+
+```java
+@RestController
+@RequestMapping("/r")
+public class RedirectController {
+
+    private final ReactiveStringRedisTemplate redisTemplate;
+    private final KafkaTemplate<String, ClickEventPayload> kafkaTemplate;
+    
+    @GrpcClient("url-core-service")
+    private UrlServiceGrpc.UrlServiceFutureStub coreServiceStub; // Asynchronous non-blocking gRPC stub
+
+    public RedirectController(ReactiveStringRedisTemplate redisTemplate, KafkaTemplate<String, ClickEventPayload> kafkaTemplate) {
+        this.redisTemplate = redisTemplate;
+        this.kafkaTemplate = kafkaTemplate;
+    }
+
+    @GetMapping("/{shortCode}")
+    public Mono<ResponseEntity<Void>> redirect(
+            @PathVariable String shortCode,
+            ServerHttpRequest request,
+            ServerHttpResponse response) {
+
         String cacheKey = "url:redirect:" + shortCode;
         String counterKey = "url:hits:" + shortCode;
 
-        // 1. Increment call popularity counter
-        Long hits = redisTemplate.opsForValue().increment(counterKey);
-        if (hits != null && hits == 1) {
-            redisTemplate.expire(counterKey, Duration.ofDays(1)); // 24h rolling count window
-        }
+        // 1. Increment rolling popularity counter reactively
+        return redisTemplate.opsForValue().increment(counterKey)
+            .flatMap(hits -> {
+                Duration adaptiveTtl = calculateAdaptiveTtl(hits != null ? hits : 0L);
 
-        // 2. Resolve cache
-        String cachedUrl = redisTemplate.opsForValue().get(cacheKey);
-        if (cachedUrl != null) {
-            // Extend cache life dynamically based on call traffic volume
-            Duration adaptiveTtl = calculateAdaptiveTtl(hits != null ? hits : 0L);
-            redisTemplate.expire(cacheKey, adaptiveTtl);
-            return cachedUrl;
-        }
+                // 2. Resolve cached redirect target
+                return redisTemplate.opsForValue().get(cacheKey)
+                    .flatMap(cachedUrl -> {
+                        // Cache hit: extend TTL reactively on rolling hits popularity
+                        return redisTemplate.expire(cacheKey, adaptiveTtl)
+                            .then(Mono.defer(() -> {
+                                publishClickEvent(shortCode, request);
+                                return Mono.just(createRedirectResponse(cachedUrl));
+                             }));
+                    })
+                    .switchIfEmpty(Mono.defer(() -> {
+                        // Cache miss: gRPC Call to Core Service
+                        GetUrlMappingRequest grpcRequest = GetUrlMappingRequest.newBuilder()
+                                .setShortCode(shortCode)
+                                .build();
 
-        // 3. Database fallback on Cache Miss
-        Optional<UrlMapping> mapping = urlRepository.findByShortCode(shortCode);
-        if (mapping.isEmpty() || !mapping.get().isActive()) {
-            return null;
-        }
+                        // Convert gRPC ListenableFuture to Spring Reactor Mono
+                        return Mono.fromFuture(JdkFutureAdapters.listenInPoolThread(
+                                coreServiceStub.getUrlMapping(grpcRequest)
+                        )).flatMap(grpcResponse -> {
+                            if (!grpcResponse.getFound() || !grpcResponse.getIsActive()) {
+                                return Mono.just(ResponseEntity.notFound().build());
+                            }
 
-        String destinationUrl = mapping.get().getDestinationUrl();
-        Duration adaptiveTtl = calculateAdaptiveTtl(hits != null ? hits : 0L);
-        redisTemplate.opsForValue().set(cacheKey, destinationUrl, adaptiveTtl);
+                            String targetUrl = grpcResponse.getDestinationUrl();
 
-        return destinationUrl;
+                            // Pre-warm Cache with Adaptive Popularity-based TTL
+                            return redisTemplate.opsForValue().set(cacheKey, targetUrl, adaptiveTtl)
+                                    .then(Mono.defer(() -> {
+                                        publishClickEvent(shortCode, request);
+                                        return Mono.just(createRedirectResponse(targetUrl));
+                                    }));
+                        });
+                    }));
+            });
     }
 
     private Duration calculateAdaptiveTtl(long hits) {
@@ -746,223 +777,94 @@ public class UrlMappingService {
             return Duration.ofHours(6);        // Viral Key: Longest TTL
         }
     }
-}
-```
 
-### 5.2 Rate Limiting (Redis Token Bucket Filter)
-To protect Redirect endpoints and REST APIs from DDoS attacks and scraping, a custom Spring filter rate-limits clients based on IP and tenant ID using a Redis Lua script.
-
-**How the Rate Limiting Filter Works (Simplified):**
-*   **Builds Client Keys**: Constructs unique cache keys utilizing both the tenant identifier and the remote IP address.
-*   **Runs Atomic Scripting**: Invokes a Redis Lua script to check the client's current limit (e.g. max 60 requests per minute).
-*   **Restricts Exceeded Access**: Returns an immediate HTTP `429 Too Many Requests` error with rate limit information if limits are exceeded.
-
-```java
-// RateLimitingFilter.java
-@Component
-public class RateLimitingFilter extends OncePerRequestFilter {
-
-    private final StringRedisTemplate redisTemplate;
-    private final RedisScript<Long> rateLimitScript;
-
-    public RateLimitingFilter(StringRedisTemplate redisTemplate, RedisScript<Long> rateLimitScript) {
-        this.redisTemplate = redisTemplate;
-        this.rateLimitScript = rateLimitScript;
+    private void publishClickEvent(String shortCode, ServerHttpRequest request) {
+        ClickEventPayload payload = new ClickEventPayload(
+            shortCode,
+            request.getHeaders().getFirst("User-Agent"),
+            request.getRemoteAddress().getHostName(),
+            System.currentTimeMillis()
+        );
+        kafkaTemplate.send("analytics.click", shortCode, payload);
     }
 
-    @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
-            throws ServletException, IOException {
-        
-        String ip = request.getRemoteAddr();
-        String tenantId = (String) request.getAttribute("tenantId");
-        String key = "rate:limit:" + (tenantId != null ? tenantId : "global") + ":" + ip;
-
-        // Execute atomic Token Bucket script (Keys: [key], Args: [max_limit (60), time_window (60s)])
-        Long allowed = redisTemplate.execute(rateLimitScript, Collections.singletonList(key), "60", "60");
-
-        if (allowed != null && allowed == 0) {
-            response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
-            response.setContentType("application/json");
-            response.getWriter().write("{\"error\": \"Too many requests. Rate limit exceeded.\"}");
-            return;
-        }
-
-        filterChain.doFilter(request, response);
-    }
-}
-```
-
-### 5.3 Cache Invalidation Policy (Deactivation & Deletion)
-To prevent clients from accessing stale or deleted redirect targets, cache eviction must happen immediately upon short URL modification, deletion, or deactivation. 
-
-#### Strategy A: Direct Cache Eviction (Shared Redis Mode)
-If `url-core-service` and `url-redirect-service` share access to the same Redis cluster, the admin service directly evicts the keys on write:
-
-**How Direct Cache Eviction Works (Simplified):**
-*   **Saves Link Updates**: Marks the short URL database mapping as inactive or deletes it completely.
-*   **Purges Redis Keys**: Directly issues synchronous deletion commands for both the redirect cache key and hit counter key, ensuring instant cache consistency.
-
-```java
-// UrlAdminService.java (Inside url-core-service)
-@Service
-public class UrlAdminService {
-
-    private final UrlMappingRepository urlRepository;
-    private final StringRedisTemplate redisTemplate;
-
-    public UrlAdminService(UrlMappingRepository urlRepository, StringRedisTemplate redisTemplate) {
-        this.urlRepository = urlRepository;
-        this.redisTemplate = redisTemplate;
-    }
-
-    @Transactional
-    public void deactivateUrl(String shortCode) {
-        // 1. Update database status
-        UrlMapping mapping = urlRepository.findByShortCode(shortCode)
-                .orElseThrow(() -> new EntityNotFoundException("URL mapping not found"));
-        mapping.setActive(false);
-        urlRepository.save(mapping);
-
-        // 2. Synchronously evict from Redis cache
-        evictCache(shortCode);
-    }
-
-    @Transactional
-    public void deleteUrl(String shortCode) {
-        // 1. Delete from database
-        urlRepository.deleteByShortCode(shortCode);
-
-        // 2. Synchronously evict from Redis cache
-        evictCache(shortCode);
-    }
-
-    private void evictCache(String shortCode) {
-        String cacheKey = "url:redirect:" + shortCode;
-        String counterKey = "url:hits:" + shortCode;
-        
-        // Execute atomic deletion of cached redirect and hits count
-        redisTemplate.delete(List.of(cacheKey, counterKey));
-    }
-}
-```
-
-#### Strategy B: Event-Driven Cache Eviction (Decoupled Kafka Mode)
-If services use isolated Redis caches (e.g. regional edge caches), the `url-core-service` publishes an eviction event to a Kafka topic, and `url-redirect-service` consumes it to purge its cache.
-
-**How the Eviction Event Publisher Works (Simplified):**
-*   **Creates Cache Eviction Events**: Packages the target short link code and current timestamp into a Kafka event.
-*   **Sends Notification to Kafka**: Publishes the event to the `url.eviction` topic, informing all downstream caching clusters about the update.
-
-```java
-// 1. Core Service publishes eviction event
-public void publishEviction(String shortCode) {
-    UrlEvictionEvent event = new UrlEvictionEvent(shortCode, System.currentTimeMillis());
-    kafkaTemplate.send("url.eviction", shortCode, event);
-}
-```
-
-**How the Eviction Event Consumer Works (Simplified):**
-*   **Listens to Eviction Topic**: Monitors the `url.eviction` topic continuously across caching nodes.
-*   **Purges Local Cache**: Destroys the matching Redis keys locally upon receiving eviction alerts, maintaining eventual cache consistency.
-
-```java
-// 2. Redirect Service consumes eviction event
-@Component
-public class CacheEvictionConsumer {
-
-    private final StringRedisTemplate redisTemplate;
-
-    public CacheEvictionConsumer(StringRedisTemplate redisTemplate) {
-        this.redisTemplate = redisTemplate;
-    }
-
-    @KafkaListener(topics = "url.eviction", groupId = "redirect-cache-group")
-    public void handleEviction(UrlEvictionEvent event) {
-        String cacheKey = "url:redirect:" + event.shortCode();
-        String counterKey = "url:hits:" + event.shortCode();
-        redisTemplate.delete(List.of(cacheKey, counterKey));
-    }
-}
-```
-
----
-
-## 6. Security, Authorization & Token Rotation
-
-### 6.1 Double-Token Stateless JWT + RTR
-To enforce secure authorization, `url-core-service` handles JWT lifecycle authentication:
-*   **Access Token (JWT):** Statelesly holds roles. Sent in response body and kept in-memory by client to prevent XSS.
-*   **Refresh Token:** Housed in database (`refresh_tokens`), cookie-passed as `HttpOnly`, `Secure`, `SameSite=Strict`.
-*   **Rotation (RTR) on `/refresh`**:
-    1. Client presents refresh token cookie.
-    2. Server verifies token status in DB. If valid, generates a new Access Token and a new Refresh Token, revoking the old one.
-    3. **Replay Theft Prevention**: If the presented token has `revoked = true`, the system assumes a replay attack. It immediately revokes all refresh tokens linked to that user, forcing a logout.
-
-**How Token Rotation Works (Simplified):**
-*   **Checks Inbound Session Cookie**: Extracts the refresh token from secure, HTTP-only cookies.
-*   **Executes DB-backed Rotation**: Sends token to the rotation engine which checks for theft/replay attempts.
-*   **Returns Secure Tokens**: Sets the new rotated refresh token in the response cookie and issues the fresh, stateless access token in the response body.
-
-```java
-// AuthController.java
-@RestController
-@RequestMapping("/api/auth")
-public class AuthController {
-
-    private final TokenService tokenService;
-
-    public AuthController(TokenService tokenService) {
-        this.tokenService = tokenService;
-    }
-
-    @PostMapping("/refresh")
-    public ResponseEntity<JwtResponse> rotateTokens(HttpServletRequest request, HttpServletResponse response) {
-        String oldRefreshToken = tokenService.extractRefreshTokenFromCookie(request);
-        if (oldRefreshToken == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
-        }
-
-        TokenRotationResult result = tokenService.rotateRefreshToken(oldRefreshToken);
-
-        ResponseCookie cookie = ResponseCookie.from("refreshToken", result.newRefreshToken())
-                .httpOnly(true)
-                .secure(true)
-                .path("/api/auth")
-                .sameSite("Strict")
-                .maxAge(7 * 24 * 60 * 60)
+    private ResponseEntity<Void> createRedirectResponse(String targetUrl) {
+        return ResponseEntity.status(HttpStatus.FOUND)
+                .location(URI.create(targetUrl))
                 .build();
-        response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
-
-        return ResponseEntity.ok(new JwtResponse(result.newAccessToken()));
     }
 }
 ```
 
-### 6.2 Role Gating & Admin Bypass
-*   `USER` roles can view and mutate records matching their `tenant_id`.
-*   `ADMIN` roles bypass method constraints and can read and modify all tenant databases, metadata, and subscriptions.
+---
+
+### 6.4 Analytics Ingestion Service (`url-analytics-service` - Port `8083` / gRPC `9091`)
+Reads event messages from Apache Kafka asynchronously, resolves locations, performs bot filters, bulk-inserts traces, and implements gRPC analytics report feeds.
+
+```java
+@Component
+public class ClickConsumer {
+
+    private final ClickRepository clickRepository;
+
+    public ClickConsumer(ClickRepository clickRepository) {
+        this.clickRepository = clickRepository;
+    }
+
+    @KafkaListener(topics = "analytics.click", groupId = "analytics-ingest-group", concurrency = "3")
+    public void consume(ConsumerRecord<String, ClickEventPayload> record) {
+        ClickEventPayload payload = record.value();
+        
+        ClickAnalytics log = new ClickAnalytics();
+        log.setShortCode(payload.shortCode());
+        log.setUserAgent(payload.userAgent());
+        log.setVisitorId(UUID.randomUUID().toString());
+        log.setBot(detectBot(payload.userAgent()));
+        log.setGeoCountry(resolveGeoCountry(payload.ipAddress()));
+        
+        clickRepository.save(log);
+    }
+
+    private boolean detectBot(String userAgent) {
+        if (userAgent == null) return false;
+        String ua = userAgent.toLowerCase();
+        return ua.contains("bot") || ua.contains("crawler") || ua.contains("spider");
+    }
+
+    private String resolveGeoCountry(String ip) {
+        // Mock GeoIP translation
+        return "US";
+    }
+}
+```
 
 ---
 
-## 7. Deployment Configuration & Verification
+## 7. Multi-Container Orchestration (`docker-compose.yml`)
 
-### 7.1 Multi-Container Stack (`docker-compose.yml`)
-
-Spins up Postgres instances, Redis cache, Apache Kafka broker (KRaft mode), and the microservices stack:
-
-**How the Docker Container Services Work (Simplified):**
-*   **postgres-core**: Hosts the database holding transactional records (users, passwords, subscription tiers, mappings, and UTM configs) on standard port 5432.
-*   **postgres-analytics**: Hosts the isolated click log database mapped to port 5433 to protect core administrative operations from write IO contention.
-*   **redis**: Provides in-memory storage for high-speed URL redirect mappings, user sessions, and sliding-window rate limit checks.
-*   **kafka**: Spins up Apache Kafka in KRaft mode to decouple and ingest click tracking metrics asynchronously.
+Coordinates local startup of databases, brokers, caches, and the microservices stack.
 
 ```yaml
 version: '3.8'
+
 services:
-  # 1. Transactional PostgreSQL (Port 5432)
+  # 1. Identity PostgreSQL DB
+  postgres-auth:
+    image: postgres:16-alpine
+    container_name: postgres-auth
+    environment:
+      POSTGRES_DB: hiclickme_auth
+      POSTGRES_USER: auth_user
+      POSTGRES_PASSWORD: auth_password
+    ports:
+      - "5431:5432"
+    volumes:
+      - pg_auth_data:/var/lib/postgresql/data
+
+  # 2. Transactional Business PostgreSQL DB
   postgres-core:
     image: postgres:16-alpine
+    container_name: postgres-core
     environment:
       POSTGRES_DB: hiclickme_core
       POSTGRES_USER: core_user
@@ -972,87 +874,223 @@ services:
     volumes:
       - pg_core_data:/var/lib/postgresql/data
 
-  # 2. Analytics PostgreSQL (Port 5433)
+  # 3. Write-Intensive Analytics PostgreSQL DB
   postgres-analytics:
     image: postgres:16-alpine
+    container_name: postgres-analytics
     environment:
       POSTGRES_DB: hiclickme_analytics
       POSTGRES_USER: analytics_user
       POSTGRES_PASSWORD: analytics_password
     ports:
-      - "5433:5432" # Maps container 5432 port to host 5433
+      - "5433:5432"
     volumes:
       - pg_analytics_data:/var/lib/postgresql/data
 
-  # 3. Redis In-Memory Store
+  # 4. Redis Cache & Limit Store
   redis:
-    image: redis:7-alpine
+    image: redis:7.2-alpine
+    container_name: redis-cache
     ports:
       - "6379:6379"
 
-  # 4. Apache Kafka Broker (KRaft Mode)
+  # 5. Apache Kafka (KRaft mode)
   kafka:
     image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka-broker
     ports:
       - "9092:9092"
     environment:
       KAFKA_NODE_ID: 1
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
-      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092'
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_NUM_REPLICAS: 1
       KAFKA_PROCESS_ROLES: 'broker,controller'
       KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29093'
       KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092'
-      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
       CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
 
+  # 6. API Gateway Microservice
+  url-gateway-service:
+    build: ./url-gateway-service
+    container_name: url-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_R2DBC_URL: r2dbc:postgresql://postgres-auth:5432/hiclickme_auth
+      SPRING_REDIS_HOST: redis
+    depends_on:
+      - postgres-auth
+      - redis
+
+  # 7. Core Admin Microservice (Headless gRPC)
+  url-core-service:
+    build: ./url-core-service
+    container_name: url-core
+    expose:
+      - "9090"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-core:5432/hiclickme_core
+      SPRING_REDIS_HOST: redis
+    depends_on:
+      - postgres-core
+      - redis
+
+  # 8. Redirection Microservice
+  url-redirect-service:
+    build: ./url-redirect-service
+    container_name: url-redirect
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_REDIS_HOST: redis
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    depends_on:
+      - redis
+      - kafka
+
 volumes:
+  pg_auth_data:
   pg_core_data:
   pg_analytics_data:
 ```
 
-### 7.2 Verification Testing
-1.  **High-Speed Concurrency Redirection Check**: Use Apache Benchmark (`ab`) to run load tests against the Redirect microservice:
-    ```bash
-    ab -n 10000 -c 100 http://localhost:8082/r/testCode
-    ```
-    Goal: Redirections resolve with average response latency `<10ms` under concurrent traffic load.
-2.  **Apache Kafka Ingestion Proof**: Turn off `url-analytics-service`, generate clicks, and verify messages pile up in the Kafka topic (`analytics.click`). Restart the service and verify that the consumer consumes the queued messages successfully from their last committed offsets and flushes them to PostgreSQL with zero loss of analytics data.
-3.  **JWT Replay Attack Verification**: Send a request to `/api/auth/refresh` using an expired or already rotated refresh token to verify the system immediately invalidates the entire token lineage for that user.
-
-### 7.3 Cloud Deployment Strategy (AWS Topology)
-For production deployments, the services are orchestrated serverlessly using AWS managed solutions:
-*   **AWS ECS on Fargate**: Hosts Docker container tasks for `url-core-service` (port 8081), `url-redirect-service` (port 8082), and `url-analytics-service` (port 8083).
-*   **Application Load Balancer (ALB)**: Acts as the entrypoint routing traffic based on path rules:
-    *   `/r/**` is routed to the Redirect Service target group.
-    *   `/api/**` and static pages are routed to the Core Service target group.
-*   **Amazon RDS PostgreSQL (Multi-AZ)**: Separate database instances hosting `hiclickme_core` and `hiclickme_analytics` databases to prevent analytical write operations from competing with core user transaction I/O locks.
-*   **Amazon ElastiCache for Redis**: Multi-node replication cluster handling cache resolutions and sliding-window rate limit scripts.
-*   **Amazon MSK (Managed Streaming for Apache Kafka)**: Fully managed, highly available Kafka cluster acting as the shock-absorber and storage log for high ingestion clicks.
-*   **Amazon S3 & CloudFront CDN**: Delivers static asset files (React/Next.js dashboard) and custom branded QR images.
-
-### 7.4 Operational Security & Reliability
-*   **HTTPS Enforcement**: TLS is termination at the ALB layer using ACM certificates.
-*   **Database Backups**: Automated daily snapshots for both RDS PostgreSQL instances, replicated across regions.
-*   **Operational Monitoring**: Spring Boot Actuator exposes health indicators scraped by Prometheus for Grafana visualizations. Sentry is hooked into the global exception handler for real-time error logging.
-
 ---
 
-## 9. Optional Advanced Features
+## 8. Production-Ready & High-Availability Topology Checklist
 
-### 9.1 Bulk Link Import & Export
-*   Exposes endpoints `/api/links/import` and `/api/links/export` supporting bulk CSV/JSON mappings, parsing files in-memory and saving them to the PostgreSQL database in batched transactions.
+To deploy this microservice architecture into production (e.g., AWS, GCP, or Kubernetes), the following enhancements must be made:
 
-### 9.2 UTM Parameter Builder
-*   Interactive panel in the React dashboard which validates raw URLs and dynamically constructs target URLs using UTM parameters.
+### 8.1 Service Discovery & Service Mesh
+*   **Service Directory Registry:** Deploy a service registry like **HashiCorp Consul** or rely on **Kubernetes CoreDNS** for internal name resolution.
+*   **Service Mesh (Istio / Linkerd):** Use a service mesh sidecar proxy pattern (Envoy) to secure all internal gRPC channels with mutual TLS (mTLS), automate token distribution, and manage traffic splitting without modifying application code.
 
-### 9.3 Global Admin Metrics Panel
-*   Administrators (users with `ROLE_ADMIN`) have access to a global Grafana dashboard detailing system-wide metrics (total links created, redirection cache hit ratio, Apache Kafka consumer lag and message throughput, and active database connection pool stats).
+### 8.2 Distributed Tracing & Observability
+*   **OpenTelemetry Integration:** Instrument all microservices with OpenTelemetry SDKs.
+*   **Trace Context Propagation:** Ingest standard W3C tracing headers (e.g., `traceparent`) at the API Gateway. Propagate this context via gRPC metadata headers (for internal queries) and Apache Kafka record headers (for ingestion logging).
+*   **Jaeger Visualization:** Export traces to a centralized **Jaeger** or AWS X-Ray collection server. This allows developers to track the exact lifecycle of a request as it hops from Gateway -> Redirect Service -> gRPC Client -> Core Service -> Kafka -> Analytics.
 
-### 9.4 Cron Jobs for Cache Pre-Warming
-*   A Spring `@Scheduled` task executes every 60 minutes in the Redirect service, selecting the top 500 most popular links from the analytics database and pre-loading them into the Redis Cache-Aside store to guarantee consistent sub-10ms latency.
+### 8.3 gRPC Load Balancing & Client Optimization
+*   **Headless Services (Kubernetes):** gRPC keeps long-lived HTTP/2 TCP connections open. Standard L4 load balancers will route all requests down a single connection, causing load imbalances. Deploy Kubernetes headless services paired with **client-side round-robin load balancing** or use a gRPC-aware proxy like **Envoy** to route calls at the L7 layer.
+*   **Multiplexing & Connection Pooling:** Tune client-side stubs to share a single, multiplexed HTTP/2 connection channel across multiple threads, keeping latencies under `< 1ms`.
+
+### 8.4 Database Tuning & High Availability
+*   **PgBouncer Connection Poolers:** PostgreSQL creates a dedicated OS thread per connection, which consumes substantial memory. Deploy **PgBouncer** in front of each PostgreSQL database instance to manage transaction-level connection pooling.
+*   **Multi-AZ Relational Replication:** Run AWS RDS PostgreSQL in a Multi-AZ clustering setup, hosting a synchronous primary database instance alongside hot, cross-region read replicas.
+*   **Redis Sentinel or Cluster:** Replace single Redis instances with a Redis Cluster containing automatic failover support (Master-Replica configuration) to prevent session or rate limit data loss.
+
+### 8.5 Reliable Kafka Messaging & Scale
+*   **Replication & In-Sync Replicas:** Configure Kafka topics with a `replication.factor` of 3 and `min.insync.replicas` of 2. Ensure producers use `acks=all` to guarantee click events are safely persisted before returning HTTP success values.
+*   **Partition Strategy:** Split the `analytics.click` topic into multiple partitions (e.g., 6 or 12 partitions) using the shortened URL `shortCode` as the key. This scales processing capacities by distributing event streams across concurrent consumer groups while guaranteeing strict message ordering per link.
+*   **Transactional Outbox Pattern:** Avoid two-phase commits (2PC) between database saves and Kafka publishes inside administrative services. Store changes first in a local DB transactional outbox table, and stream events to Kafka using **Debezium** Change Data Capture (CDC).
+
+### 8.6 Security & Infrastructure Secrets
+*   **Internal Network Isolation:** Downstream gRPC services must be deployed within isolated private subnets, allowing connections only from the API Gateway or designated internal security groups.
+*   **Secrets Manager Configuration:** Remove plaintext database passwords and API tokens from code configurations. Retrieve them at startup from managed security systems (e.g., AWS Secrets Manager or HashiCorp Vault).
+*   **Web Application Firewall (WAF):** Place a WAF in front of the API Gateway to filter out SQL injections, Cross-Site Scripting (XSS), and automated bot floods before they reach gateway routers.
+
+### 8.7 User Deletion & Resource Cleanup Mechanics (Transactional Outbox vs. gRPC Sync)
+
+When a user deletes their account (initiated at the **API Gateway**), the system must cleanly delete their URL mappings in the **Core Admin Service** database (`hiclickme_core`) and evict all active short URL mappings cached in the **Redirect Service** Redis cluster. 
+
+In a distributed, production-grade microservice architecture, handling this deletion presents a choice between **Synchronous gRPC Orchestration** and **Asynchronous Message-Driven Eventual Consistency**.
+
+#### 1. Comparison: Synchronous gRPC vs. Asynchronous Message Queue
+
+| Architectural Attribute | Synchronous gRPC Orchestration | Asynchronous Message Queue (Outbox Pattern) |
+| :--- | :--- | :--- |
+| **Response Latency** | **High:** Gateway blocks client request while executing multiple synchronous downstream DB deletions and Redis evictions. | **Sub-10ms:** Gateway writes a local deletion record and returns success instantly. |
+| **Resilience & Fault Tolerance** | **Low:** If the downstream Core service or Redis is down, the user deletion fails, or leaves the system in an inconsistent state. | **High:** If downstream services are down, Kafka buffers events. Once services recover, they consume events and complete cleanup. |
+| **Consistency Guarantee** | **Strong (Dual-Write Risk):** Attempts immediate consistency but faces partial failures if one network request succeeds and another fails. | **Eventual Consistency:** Guaranteed delivery. Replay mechanics and DLQs handle edge failure cases. |
+| **Temporal Coupling** | **High:** All services must be fully operational and reachable at the exact moment of user deletion. | **Low:** Services are completely decoupled. Gateway does not need to know about URL deletion or Redis evictions. |
+| **Database Isolation** | Enforced (clean API interface boundaries). | Enforced (event-driven messaging boundaries). |
+
+#### 2. Selected Production Pattern: Asynchronous Event-Driven Cleanup (Transactional Outbox)
+
+To achieve maximum resilience and sub-10ms gateway responsiveness under peak loads, the platform employs the **Transactional Outbox Pattern** to propagate user deletion and cache invalidation events. This completely avoids distributed transactions (e.g., Two-Phase Commit / 2PC) which are prone to network blocks and high latencies.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client as User / Admin Client
+    participant GW as API Gateway (Port 8080)
+    participant AuthDB as PostgreSQL Auth DB
+    participant Connector as Debezium CDC Connector
+    participant Kafka as Apache Kafka Broker
+    participant Core as Core Admin Service
+    participant CoreDB as PostgreSQL Core DB
+    participant Redirect as Redirect Service
+    participant Redis as Redis Cache
+
+    Client->>GW: HTTP DELETE /api/v1/users/{id}
+    Note over GW,AuthDB: Atomic DB Transaction Starts
+    GW->>AuthDB: DELETE FROM users WHERE id = {id}
+    GW->>AuthDB: INSERT INTO outbox (aggregate_type, payload) VALUES ('USER', '{"user_id": 123, "action": "DELETED"}')
+    Note over GW,AuthDB: Atomic DB Transaction Commits
+    GW-->>Client: HTTP 200 OK (Account Closed)
+
+    loop Transaction Log Mining
+        Connector->>AuthDB: Read Write-Ahead Log (WAL)
+        Connector->>Kafka: Publish Event to 'auth.user-events'
+    end
+
+    Note over Core: Consumer Group: 'core-user-deletion'
+    Kafka->>Core: Pull 'UserDeletedEvent'
+    Note over Core,CoreDB: Atomic DB Transaction Starts
+    Core->>CoreDB: DELETE FROM url_mappings WHERE user_id = 123 RETURNING short_code
+    CoreDB-->>Core: List of short_codes deleted: ['abc', 'xyz']
+    Core->>CoreDB: INSERT INTO core_outbox (payload) VALUES ('{"short_codes": ["abc", "xyz"]}')
+    Note over Core,CoreDB: Atomic DB Transaction Commits
+
+    loop Transaction Log Mining
+        Connector->>CoreDB: Read Write-Ahead Log (WAL)
+        Connector->>Kafka: Publish Event to 'url.eviction'
+    end
+
+    Note over Redirect: Consumer Group: 'redirect-cache-eviction'
+    Kafka->>Redirect: Pull 'UrlEvictionEvent' (['abc', 'xyz'])
+    Redirect->>Redis: redis.unlink("url:redirect:abc", "url:redirect:xyz")
+    Note over Redis: Cache is Purged (Consistent State reached)
+```
+
+#### 3. Execution Phase Walkthrough
+
+1. **Step 1: Auth Deletion & Outbox Write (Gateway Boundary)**
+   The `url-gateway-service` initiates a single database transaction in `hiclickme_auth`. It soft-deletes or hard-deletes the user and writes a `UserDeletedEvent` to a local `outbox` table in the *same* database transaction. This guarantees that the user deletion and the event creation succeed or fail together. The API Gateway then immediately returns an HTTP `200 OK` response to the client.
+
+2. **Step 2: CDC Publishing**
+   A Change Data Capture (CDC) tool (e.g., Debezium) mines the PostgreSQL Write-Ahead Log (WAL) of `hiclickme_auth` for changes in the `outbox` table and publishes the `UserDeletedEvent` to the `auth.user-events` Kafka topic.
+
+3. **Step 3: Core Database Deletion**
+   The headless `url-core-service` consumes the `UserDeletedEvent`. It initiates a PostgreSQL transaction in `hiclickme_core` to clean up all URL mappings and subscriptions:
+   ```sql
+   -- Core deletes URL mappings and returns the short codes that were deleted
+   DELETE FROM url_mappings 
+   WHERE user_id = 123 
+   RETURNING short_code;
+   ```
+   The service intercepts the list of deleted short codes and inserts a `CacheEvictionEvent` into the `core_outbox` table in the *same* PostgreSQL transaction.
+
+4. **Step 4: Cache Eviction**
+   Debezium publishes the cache eviction event containing the short codes array (e.g., `["abc", "xyz"]`) to the `url.eviction` Kafka topic.
+   The reactive `url-redirect-service` consumes the event and executes an asynchronous, non-blocking Redis `UNLINK` command (which is much faster than `DEL` as it reclaims memory space in a background thread) to purge the cached redirects:
+   ```java
+   // Reactive cache purge inside url-redirect-service
+   @KafkaListener(topics = "url.eviction", groupId = "redirect-cache-eviction")
+   public Mono<Void> handleEvictionEvent(UrlEvictionEvent event) {
+       List<String> cacheKeys = event.getShortCodes().stream()
+           .map(code -> "url:redirect:" + code)
+           .collect(Collectors.toList());
+       
+       return redisTemplate.opsForValue().delete(cacheKeys) // executes non-blocking pipeline
+           .doOnSuccess(count -> log.info("Successfully evicted {} keys from Redis.", count))
+           .then();
+   }
+   ```
+
+By utilizing this asynchronous, transaction-outbox pattern, we achieve robust database isolation, microsecond-level API Gateway responsiveness, and guaranteed eventual cache consistency even in the presence of downstream network partitions or node failures.
+
