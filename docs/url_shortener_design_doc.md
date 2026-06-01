@@ -45,7 +45,7 @@ graph TD
 | :--- | :--- | :--- | :--- |
 | **Frontend Dashboard** | `3000` | Next.js, React, TailwindCSS, shadcn/ui | User portal for URL configuration, UTM profiles, and viewing analytics. |
 | **Core Admin Service** | `8081` | Spring Boot 3.x, Spring Data JPA, Hibernate | Manages user registrations, subscriptions, Mock billing checkout, link CRUD operations, and JWT token rotation. |
-| **Redirect Service** | `8082` | Spring WebFlux / Java 21 Virtual Threads, Redis | Intercepts short code requests, resolves target URLs from cache, and publishes clicks. |
+| **Redirect Service** | `8082` | Spring WebFlux / Java 17, Redis | Intercepts short code requests, resolves target URLs from cache, and publishes clicks. |
 | **Analytics Service** | `8083` | Spring Boot 3.x, Spring Kafka, MaxMind GeoIP | Consumes click messages from Apache Kafka, handles bot detection, parses user-agent metadata, and bulk-inserts logs. |
 | **Transactional Database**| `5432` | PostgreSQL 16+ (Schema: `hiclickme_core`) | Relational database containing users, passwords, profiles, mappings, and subscriptions. |
 | **Analytics Database** | `5433` | PostgreSQL 16+ (Schema: `hiclickme_analytics`)| Write-intensive relational database holding only click event logs. |
