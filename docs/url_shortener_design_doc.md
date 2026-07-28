@@ -6,7 +6,7 @@
 
 ### Core Architecture Goals
 *   **High Performance Redirections:** Under `< 10ms` response times for cached short URLs using a reactive Redirect Microservice backed by Redis.
-*   **Decoupled Database Isolation:** Zero cross-database queries. Each microservice completely owns its database. Downstream services resolve transactional fallbacks over gRPC.
+*   **Decoupled Database Isolation:** Zero cross-database queries. Each microservice completely owns its database schema / logical database. For development, a single PostgreSQL server instance (port `5432`) hosts 3 logically isolated databases (`hiclickme_auth`, `hiclickme_core`, `hiclickme_analytics`). Downstream services resolve transactional fallbacks over gRPC.
 *   **Unified Edge Security & Auth:** Centralized authentication, OAuth2 login coordination, and token rotation managed by a dedicated API Gateway microservice with its own database.
 *   **Low Latency Inter-Service RPC:** High-efficiency, strongly-typed internal communication using gRPC (HTTP/2 multiplexing, Protocol Buffers binary serialization).
 *   **Write-Isolated Analytics Ingestion:** Decouple click tracking database writes from the redirection flow using Apache Kafka and a dedicated Analytics Ingestion Microservice.
@@ -54,7 +54,7 @@ graph TD
     
     subgraph Microservices Cluster
         %% API Gateway & Auth
-        API_Gateway -->|Reads/Writes Auth| DB_Auth[(PostgreSQL Auth DB :5431)]
+        API_Gateway -->|Reads/Writes Auth| DB_Auth[(PostgreSQL Auth DB: hiclickme_auth)]
         API_Gateway -->|Rate Limit Checks| Redis_Shared[(Redis Cache & Rate Store :6379)]
         
         %% gRPC Channels
@@ -67,10 +67,16 @@ graph TD
         MS_Redirect -->|Publish Click Event| KafkaBroker[Apache Kafka Broker :9092]
     end
     
+    subgraph Shared PostgreSQL Instance :5432
+        DB_Auth
+        DB_Core[(PostgreSQL Core DB: hiclickme_core)]
+        DB_Analytics[(PostgreSQL Analytics DB: hiclickme_analytics)]
+    end
+    
     %% Core & Analytics DBs
-    MS_Core -->|Reads/Writes Core| DB_Core[(PostgreSQL Core DB :5432)]
+    MS_Core -->|Reads/Writes Core| DB_Core
     KafkaBroker -->|Async Ingest| MS_Analytics
-    MS_Analytics -->|Bulk Inserts| DB_Analytics[(PostgreSQL Analytics DB :5433)]
+    MS_Analytics -->|Bulk Inserts| DB_Analytics
 ```
 
 ### 3.2 Component Directory & Ports
@@ -81,9 +87,7 @@ graph TD
 | **Core Admin Service** | N/A | `9090` | Spring Boot, gRPC Server, JPA / Hibernate | Manages user metadata configurations, billing/subscriptions, URL mapping databases, and UTM profiles. |
 | **Redirect Service** | `8082` | N/A | Spring WebFlux, Redis Reactive, gRPC Client | Resolves short URLs via Redis (or gRPC Core Service fallback) and publishes click events to Apache Kafka. |
 | **Analytics Service** | N/A | `9091` | Spring Boot, Spring Kafka, MaxMind GeoIP | Consumes Kafka click streams, resolves geographic locations, detects bots, bulk-writes logs, and serves gRPC reports. |
-| **PostgreSQL Auth DB** | `5431` | N/A | PostgreSQL 16 (Schema: `hiclickme_auth`) | Relational database containing user login credentials, password hashes, OAuth tokens, and refresh tokens. |
-| **PostgreSQL Core DB** | `5432` | N/A | PostgreSQL 16 (Schema: `hiclickme_core`) | Relational database containing URL mappings, UTM profiles, customer metadata, and subscription statuses. |
-| **PostgreSQL Analytics DB**| `5433` | N/A | PostgreSQL 16 (Schema: `hiclickme_analytics`)| Write-optimized database storing click records, browser metadata, and location analytics. |
+| **PostgreSQL Shared Instance** | `5432` | N/A | PostgreSQL 16 | Single database container hosting 3 logically isolated databases: `hiclickme_auth`, `hiclickme_core`, and `hiclickme_analytics`. |
 | **Redis Cache & Rate Store**| `6379` | N/A | Redis 7.2 | Shares rate limit statistics, redirect caches, and session contexts. |
 | **Apache Kafka Broker** | `9092` | N/A | Confluent Kafka / KRaft Mode | High-throughput streaming buffer decoupling redirection handling from analytics logging. |
 
@@ -91,7 +95,7 @@ graph TD
 
 ## 4. Database Schema & Data Models
 
-### 4.1 PostgreSQL Auth Database (Port `5431`)
+### 4.1 PostgreSQL Auth Database (Database: `hiclickme_auth` on Port `5432`)
 Stores strictly credential, token, and identity mapping tables owned and managed exclusively by the `api-gateway-service`.
 
 ```sql
@@ -142,7 +146,7 @@ CREATE TABLE refresh_tokens (
 CREATE INDEX idx_refresh_tokens_token ON refresh_tokens(token);
 ```
 
-### 4.2 PostgreSQL Core Database (Port `5432`)
+### 4.2 PostgreSQL Core Database (Database: `hiclickme_core` on Port `5432`)
 Stores business-specific URL mappings, configurations, user billing statuses, and marketing profiles owned and managed exclusively by `url-core-service`.
 
 ```sql
@@ -201,7 +205,7 @@ CREATE TABLE utm_profiles (
 CREATE INDEX idx_utm_profiles_url_mapping ON utm_profiles(url_mapping_id);
 ```
 
-### 4.3 PostgreSQL Analytics Database (Port `5433`)
+### 4.3 PostgreSQL Analytics Database (Database: `hiclickme_analytics` on Port `5432`)
 Stores raw event click tracking data managed strictly by `url-analytics-service`.
 
 ```sql
@@ -236,7 +240,7 @@ CREATE INDEX idx_click_analytics_timestamp ON click_analytics(timestamp);
 
 ```mermaid
 erDiagram
-    subgraph Auth Boundary [PostgreSQL Auth DB - 5431]
+    subgraph Auth Boundary [PostgreSQL Auth DB: hiclickme_auth]
         users {
             bigint id PK
             varchar username UK
@@ -267,7 +271,7 @@ erDiagram
         }
     end
 
-    subgraph Core Boundary [PostgreSQL Core DB - 5432]
+    subgraph Core Boundary [PostgreSQL Core DB: hiclickme_core]
         user_metadata {
             bigint id PK
             bigint user_id UK "Logical FK to Auth.users"
@@ -300,7 +304,7 @@ erDiagram
         }
     end
 
-    subgraph Analytics Boundary [PostgreSQL Analytics DB - 5433]
+    subgraph Analytics Boundary [PostgreSQL Analytics DB: hiclickme_analytics]
         click_analytics {
             bigint id PK
             varchar short_code
@@ -478,7 +482,7 @@ spring:
   application:
     name: url-gateway-service
   r2dbc:
-    url: r2dbc:postgresql://localhost:5431/hiclickme_auth
+    url: r2dbc:postgresql://localhost:5432/hiclickme_auth
     username: auth_user
     password: auth_password
   redis:
@@ -848,53 +852,28 @@ Coordinates local startup of databases, brokers, caches, and the microservices s
 version: '3.8'
 
 services:
-  # 1. Identity PostgreSQL DB
-  postgres-auth:
+  # 1. Shared PostgreSQL DB Instance (Hosts 3 logical databases: hiclickme_auth, hiclickme_core, hiclickme_analytics)
+  postgres:
     image: postgres:16-alpine
-    container_name: postgres-auth
+    container_name: postgres-db
     environment:
-      POSTGRES_DB: hiclickme_auth
-      POSTGRES_USER: auth_user
-      POSTGRES_PASSWORD: auth_password
-    ports:
-      - "5431:5432"
-    volumes:
-      - pg_auth_data:/var/lib/postgresql/data
-
-  # 2. Transactional Business PostgreSQL DB
-  postgres-core:
-    image: postgres:16-alpine
-    container_name: postgres-core
-    environment:
-      POSTGRES_DB: hiclickme_core
-      POSTGRES_USER: core_user
-      POSTGRES_PASSWORD: core_password
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_password
     ports:
       - "5432:5432"
     volumes:
-      - pg_core_data:/var/lib/postgresql/data
+      - pg_data:/var/lib/postgresql/data
+      - ./scripts/init-dbs.sql:/docker-entrypoint-initdb.d/init-dbs.sql
 
-  # 3. Write-Intensive Analytics PostgreSQL DB
-  postgres-analytics:
-    image: postgres:16-alpine
-    container_name: postgres-analytics
-    environment:
-      POSTGRES_DB: hiclickme_analytics
-      POSTGRES_USER: analytics_user
-      POSTGRES_PASSWORD: analytics_password
-    ports:
-      - "5433:5432"
-    volumes:
-      - pg_analytics_data:/var/lib/postgresql/data
-
-  # 4. Redis Cache & Limit Store
+  # 2. Redis Cache & Limit Store
   redis:
     image: redis:7.2-alpine
     container_name: redis-cache
     ports:
       - "6379:6379"
 
-  # 5. Apache Kafka (KRaft mode)
+  # 3. Apache Kafka (KRaft mode)
   kafka:
     image: confluentinc/cp-kafka:7.6.0
     container_name: kafka-broker
@@ -914,33 +893,33 @@ services:
       KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
       CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
 
-  # 6. API Gateway Microservice
+  # 4. API Gateway Microservice
   url-gateway-service:
     build: ./url-gateway-service
     container_name: url-gateway
     ports:
       - "8080:8080"
     environment:
-      SPRING_R2DBC_URL: r2dbc:postgresql://postgres-auth:5432/hiclickme_auth
+      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/hiclickme_auth
       SPRING_REDIS_HOST: redis
     depends_on:
-      - postgres-auth
+      - postgres
       - redis
 
-  # 7. Core Admin Microservice (Headless gRPC)
+  # 5. Core Admin Microservice (Headless gRPC)
   url-core-service:
     build: ./url-core-service
     container_name: url-core
     expose:
       - "9090"
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-core:5432/hiclickme_core
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/hiclickme_core
       SPRING_REDIS_HOST: redis
     depends_on:
-      - postgres-core
+      - postgres
       - redis
 
-  # 8. Redirection Microservice
+  # 6. Redirection Microservice
   url-redirect-service:
     build: ./url-redirect-service
     container_name: url-redirect
@@ -953,10 +932,21 @@ services:
       - redis
       - kafka
 
+  # 7. Analytics Ingestion Microservice
+  url-analytics-service:
+    build: ./url-analytics-service
+    container_name: url-analytics
+    expose:
+      - "9091"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/hiclickme_analytics
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    depends_on:
+      - postgres
+      - kafka
+
 volumes:
-  pg_auth_data:
-  pg_core_data:
-  pg_analytics_data:
+  pg_data:
 ```
 
 ---
