@@ -236,93 +236,99 @@ CREATE INDEX idx_click_analytics_timestamp ON click_analytics(timestamp);
 
 ```mermaid
 erDiagram
-    subgraph Auth Boundary [PostgreSQL Auth DB - 5431]
-        users {
-            bigint id PK
-            varchar username UK
-            varchar email UK
-            varchar role
-            varchar auth_type
-            timestamp created_at
-        }
-        user_passwords {
-            bigint id PK
-            bigint user_id FK, UK
-            varchar password_hash
-        }
-        user_oauth_credentials {
-            bigint id PK
-            bigint user_id FK, UK
-            varchar provider
-            varchar provider_user_id UK
-            text access_token
-            text refresh_token
-        }
-        refresh_tokens {
-            bigint id PK
-            bigint user_id FK
-            varchar token UK
-            timestamp expiry_date
-            boolean revoked
-        }
-    end
+    %% ==========================================
+    %% PostgreSQL Auth DB (Port 5431)
+    %% ==========================================
+    users {
+        bigint id PK
+        varchar username UK
+        varchar email UK
+        varchar role
+        varchar auth_type
+        timestamp created_at
+    }
+    user_passwords {
+        bigint id PK
+        bigint user_id FK "UK"
+        varchar password_hash
+    }
+    user_oauth_credentials {
+        bigint id PK
+        bigint user_id FK "UK"
+        varchar provider
+        varchar provider_user_id UK
+        text access_token
+        text refresh_token
+    }
+    refresh_tokens {
+        bigint id PK
+        bigint user_id FK
+        varchar token UK
+        timestamp expiry_date
+        boolean revoked
+    }
 
-    subgraph Core Boundary [PostgreSQL Core DB - 5432]
-        user_metadata {
-            bigint id PK
-            bigint user_id UK "Logical FK to Auth.users"
-            varchar tier
-            varchar name
-            jsonb settings
-        }
-        subscriptions {
-            bigint id PK
-            bigint user_id "Logical FK to Auth.users"
-            varchar stripe_subscription_id
-            varchar status
-            timestamp start_date
-            timestamp end_date
-        }
-        url_mappings {
-            bigint id PK
-            varchar short_code UK
-            text destination_url
-            varchar tenant_id
-            bigint user_id "Logical FK to Auth.users"
-            boolean is_active
-        }
-        utm_profiles {
-            bigint id PK
-            bigint url_mapping_id FK
-            varchar name
-            varchar utm_source
-            varchar utm_medium
-        }
-    end
+    %% ==========================================
+    %% PostgreSQL Core DB (Port 5432)
+    %% ==========================================
+    user_metadata {
+        bigint id PK
+        bigint user_id UK "Logical FK to Auth.users"
+        varchar tier
+        varchar name
+        jsonb settings
+    }
+    subscriptions {
+        bigint id PK
+        bigint user_id "Logical FK to Auth.users"
+        varchar stripe_subscription_id
+        varchar status
+        timestamp start_date
+        timestamp end_date
+    }
+    url_mappings {
+        bigint id PK
+        varchar short_code UK
+        text destination_url
+        varchar tenant_id
+        bigint user_id "Logical FK to Auth.users"
+        boolean is_active
+    }
+    utm_profiles {
+        bigint id PK
+        bigint url_mapping_id FK
+        varchar name
+        varchar utm_source
+        varchar utm_medium
+    }
 
-    subgraph Analytics Boundary [PostgreSQL Analytics DB - 5433]
-        click_analytics {
-            bigint id PK
-            varchar short_code
-            bigint utm_profile_id "Logical FK to Core.utm_profiles"
-            timestamp timestamp
-            text user_agent
-            varchar geo_country
-            boolean is_bot
-            varchar visitor_id
-        }
-    end
+    %% ==========================================
+    %% PostgreSQL Analytics DB (Port 5433)
+    %% ==========================================
+    click_analytics {
+        bigint id PK
+        varchar short_code "Logical FK to Core.url_mappings"
+        bigint utm_profile_id "Logical FK to Core.utm_profiles"
+        timestamp timestamp
+        text user_agent
+        varchar geo_country
+        boolean is_bot
+        varchar visitor_id
+    }
 
+    %% Physical Foreign Key Relationships (Auth DB)
     users ||--o| user_passwords : "secures"
     users ||--o| user_oauth_credentials : "binds"
     users ||--o{ refresh_tokens : "owns"
-    
-    users -.-> user_metadata : "logical sync"
-    users -.-> subscriptions : "logical sync"
-    users -.-> url_mappings : "logical ownership"
-    
+
+    %% Physical Foreign Key Relationships (Core DB)
     url_mappings ||--o{ utm_profiles : "encompasses"
-    url_mappings -.-> click_analytics : "traces clicks"
+
+    %% Cross-Database Logical Relationships (Microservices Boundaries)
+    users ||..o| user_metadata : "logical sync"
+    users ||..o{ subscriptions : "logical sync"
+    users ||..o{ url_mappings : "logical ownership"
+    url_mappings ||..o{ click_analytics : "traces clicks"
 ```
 
 ---
