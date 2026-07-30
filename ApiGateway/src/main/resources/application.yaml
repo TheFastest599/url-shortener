@@ -1,21 +1,37 @@
 server:
-  port: 8080
+    port: ${PORT:8080}
+
+debug: false
+
+logging:
+    level:
+        root: INFO
+        org.springframework.cloud.gateway: DEBUG
+        org.springframework.security: DEBUG
 
 spring:
-  application:
-    name: url-gateway-service
-  r2dbc:
-    url: r2dbc:postgresql://localhost:5432/url_shortener_auth
-    username: postgres
-    password: postgres_password
-  flyway:
-    enabled: true
-    url: jdbc:postgresql://localhost:5432/url_shortener_auth
-    user: postgres
-    password: postgres_password
-    baseline-on-migrate: true
-    locations: classpath:db/migration
-  data:
-    redis:
-      host: localhost
-      port: 6379
+    application:
+        name: api-gateway
+    cloud:
+        config:
+            enabled: false
+    r2dbc:
+        url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:url_shortener_auth}
+        username: ${DB_USERNAME:postgres}
+        password: ${DB_PASSWORD:postgres_password}
+    flyway:
+        enabled: true
+        url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:url_shortener_auth}
+        user: ${DB_USERNAME:postgres}
+        password: ${DB_PASSWORD:postgres_password}
+        baseline-on-migrate: true
+        locations: classpath:db/migration
+    data:
+        redis:
+            host: ${REDIS_HOST:localhost}
+            port: ${REDIS_PORT:6379}
+
+app:
+    jwt:
+        secret: ${JWT_SECRET:defaultSecretKeyWhichIsAtLeast32BytesLongForHS256BitSecurity!}
+        expiration-ms: ${JWT_EXPIRATION_MS:900000}

@@ -16,8 +16,8 @@ CREATE TABLE IF NOT EXISTS users (
 
 );
 
-CREATE INDEX idx_users_username ON users(username);
-CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 
 -- 2. User Passwords Table (One to One with users)
 CREATE TABLE IF NOT EXISTS user_passwords (
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS user_oauth_credentials (
     create_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
 
-    CONSTRAINT uq_provider_provider_id UNIQUE (provider, provider_id)
+    CONSTRAINT uq_provider_provider_id UNIQUE (provider, provider_user_id)
 );
 
 -- 4. Refresh Tokens Table (Rotation and Replay Detection)
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     token TEXT UNIQUE NOT NULL,
     expiry_date TIMESTAMP WITH TIME ZONE NOT NULL,
     revoked BOOLEAN DEFAULT FALSE NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token);
