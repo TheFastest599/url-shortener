@@ -9,7 +9,7 @@ spring:
   application:
     name: url-core-service
   datasource:
-    url: jdbc:postgresql://localhost:5432/hiclickme_core
+    url: jdbc:postgresql://localhost:5432/url_shortener_core
     username: core_user
     password: core_password
     driver-class-name: org.postgresql.Driver
