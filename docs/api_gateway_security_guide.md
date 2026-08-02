@@ -449,7 +449,26 @@ public class SecurityConfig {
                 .httpBasic(ServerHttpSecurity.HttpBasicSpec::disable)
                 .formLogin(ServerHttpSecurity.FormLoginSpec::disable)
                 .securityContextRepository(securityContextRepository)
+                .exceptionHandling(exceptionHandlingSpec -> exceptionHandlingSpec
+                        .authenticationEntryPoint((exchange, ex) -> {
+                            exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+                            exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
+                            byte[] bytes = "{\"error\":\"Unauthorized\",\"message\":\"Authentication token is missing or invalid.\"}"
+                                    .getBytes(StandardCharsets.UTF_8);
+                            DataBuffer buffer = exchange.getResponse().bufferFactory().wrap(bytes);
+                            return exchange.getResponse().writeWith(Mono.just(buffer));
+                        })
+                        .accessDeniedHandler((exchange, ex) -> {
+                            exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
+                            exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
+                            byte[] bytes = "{\"error\":\"Forbidden\",\"message\":\"Access denied to the requested resource.\"}"
+                                    .getBytes(StandardCharsets.UTF_8);
+                            DataBuffer buffer = exchange.getResponse().bufferFactory().wrap(bytes);
+                            return exchange.getResponse().writeWith(Mono.just(buffer));
+                        })
+                )
                 .authorizeExchange(exchanges -> exchanges
+                        .pathMatchers("/", "/actuator/health").permitAll()
                         .pathMatchers("/api/v1/auth/**").permitAll()
                         .pathMatchers("/r/**").permitAll()
                         .anyExchange().authenticated()
