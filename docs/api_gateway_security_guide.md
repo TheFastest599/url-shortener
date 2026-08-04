@@ -18,7 +18,8 @@ By following this guide, you will learn how to build a modern, high-performance 
 6. [Module 5: Data Transfer Objects (DTOs)](#module-5-data-transfer-objects-dtos)
 7. [Module 6: Reactive AuthService (Business Logic)](#module-6-reactive-authservice-business-logic)
 8. [Module 7: Auth REST Controller](#module-7-auth-rest-controller)
-9. [Module 8: Step-by-Step Testing & Verification Guide](#module-8-step-by-step-testing--verification-guide)
+9. [Module 8: Extensible OAuth2 Identity Provider Architecture (Google & GitHub)](#module-8-extensible-oauth2-identity-provider-architecture-google--github)
+10. [Module 9: Step-by-Step Testing & Verification Guide](#module-9-step-by-step-testing--verification-guide)
 
 ---
 
@@ -523,11 +524,23 @@ public record RefreshTokenRequest(
 ) {}
 ```
 
-### 4. `AuthResponse.java`
+### 4. `UserDto.java`
 ```java
 package com.urlshortener.apigateway.dto;
 
 import java.util.UUID;
+
+public record UserDto(
+    UUID id,
+    String username,
+    String email,
+    String role
+) {}
+```
+
+### 5. `AuthResponse.java`
+```java
+package com.urlshortener.apigateway.dto;
 
 public record AuthResponse(
     String accessToken,
@@ -536,7 +549,9 @@ public record AuthResponse(
     long expiresIn,
     UserDto user
 ) {
-    public record UserDto(UUID id, String username, String email, String role) {}
+    // Note: UserDto can be defined as a standalone file above (UserDto.java) 
+    // or as a nested inner record here:
+    // public record UserDto(UUID id, String username, String email, String role) {}
 }
 ```
 
@@ -559,6 +574,8 @@ import com.urlshortener.apigateway.repository.RefreshTokenRepository;
 import com.urlshortener.apigateway.repository.UserPasswordRepository;
 import com.urlshortener.apigateway.repository.UserRepository;
 import com.urlshortener.apigateway.security.JwtTokenProvider;
+import com.urlshortener.apigateway.security.oauth.OAuth2IdentityProvider;
+import com.urlshortener.apigateway.security.oauth.OAuth2ProviderFactory;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -577,77 +594,125 @@ public class AuthService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
+    private final OAuth2ProviderFactory oauth2ProviderFactory;
+
+    // ==========================================
+    // 1. PUBLIC AUTHENTICATION APIs
+    // ==========================================
 
     @Transactional
     public Mono<AuthResponse> register(RegisterRequest request) {
-        return userRepository.existsByEmail(request.email())
-                .flatMap(emailExists -> {
-                    if (emailExists) {
-                        return Mono.error(new IllegalArgumentException("Email already registered"));
-                    }
-                    return userRepository.existsByUsername(request.username());
-                })
-                .flatMap(usernameExists -> {
-                    if (usernameExists) {
-                        return Mono.error(new IllegalArgumentException("Username already taken"));
-                    }
-
-                    User user = User.builder()
-                            .username(request.username())
-                            .email(request.email())
-                            .role("USER")
-                            .authType("EMAIL")
-                            .createdAt(Instant.now())
-                            .updatedAt(Instant.now())
-                            .build();
-
-                    return userRepository.save(user);
-                })
-                .flatMap(savedUser -> {
-                    UserPassword userPassword = UserPassword.builder()
-                            .userId(savedUser.getId())
-                            .passwordHash(passwordEncoder.encode(request.password()))
-                            .updatedAt(Instant.now())
-                            .build();
-
-                    return passwordRepository.save(userPassword)
-                            .thenReturn(savedUser);
-                })
-                .flatMap(this::generateAuthResponse);
+        return validateUserDoesNotExist(request.email(), request.username())
+                .then(saveUser(request))
+                .flatMap(user -> saveUserPassword(user, request.password()))
+                .flatMap(this::generateAuthTokenPair);
     }
 
     public Mono<AuthResponse> login(LoginRequest request) {
-        return userRepository.findByEmail(request.email())
-                .switchIfEmpty(Mono.error(new IllegalArgumentException("Invalid email or password")))
-                .flatMap(user -> passwordRepository.findByUserId(user.getId())
-                        .flatMap(userPassword -> {
-                            if (!passwordEncoder.matches(request.password(), userPassword.getPasswordHash())) {
-                                return Mono.error(new IllegalArgumentException("Invalid email or password"));
-                            }
-                            return generateAuthResponse(user);
-                        })
-                );
+        return findUserByEmail(request.email())
+                .flatMap(user -> verifyPassword(user, request.password()))
+                .flatMap(this::generateAuthTokenPair);
     }
 
     @Transactional
     public Mono<AuthResponse> refreshToken(RefreshTokenRequest request) {
-        return refreshTokenRepository.findByToken(request.refreshToken())
+        return findValidRefreshToken(request.refreshToken())
+                .flatMap(this::rotateRefreshToken)
+                .flatMap(token -> userRepository.findById(token.getUserId()))
+                .flatMap(this::generateAuthTokenPair);
+    }
+
+    @Transactional
+    public Mono<AuthResponse> processOAuth2Login(String providerName, String code) {
+        OAuth2IdentityProvider provider = oauth2ProviderFactory.getProvider(providerName);
+
+        return provider.processAuthorizationCode(code)
+                .flatMap(this::findOrCreateOAuthUser)
+                .flatMap(this::generateAuthTokenPair);
+    }
+
+    // ==========================================
+    // 2. HELPER METHODS (MODULAR & READABLE)
+    // ==========================================
+
+    private Mono<Void> validateUserDoesNotExist(String email, String username) {
+        return userRepository.existsByEmail(email)
+                .flatMap(emailExists -> emailExists 
+                        ? Mono.error(new IllegalArgumentException("Email already registered"))
+                        : userRepository.existsByUsername(username))
+                .flatMap(usernameExists -> usernameExists
+                        ? Mono.error(new IllegalArgumentException("Username already taken"))
+                        : Mono.empty());
+    }
+
+    private Mono<User> saveUser(RegisterRequest request) {
+        User user = User.builder()
+                .username(request.username())
+                .email(request.email())
+                .role("USER")
+                .authType("EMAIL")
+                .createdAt(Instant.now())
+                .updatedAt(Instant.now())
+                .build();
+
+        return userRepository.save(user);
+    }
+
+    private Mono<User> saveUserPassword(User user, String rawPassword) {
+        UserPassword userPassword = UserPassword.builder()
+                .userId(user.getId())
+                .passwordHash(passwordEncoder.encode(rawPassword))
+                .updatedAt(Instant.now())
+                .build();
+
+        return passwordRepository.save(userPassword)
+                .thenReturn(user);
+    }
+
+    private Mono<User> findUserByEmail(String email) {
+        return userRepository.findByEmail(email)
+                .switchIfEmpty(Mono.error(new IllegalArgumentException("Invalid email or password")));
+    }
+
+    private Mono<User> verifyPassword(User user, String rawPassword) {
+        return passwordRepository.findByUserId(user.getId())
+                .flatMap(userPassword -> {
+                    if (!passwordEncoder.matches(rawPassword, userPassword.getPasswordHash())) {
+                        return Mono.error(new IllegalArgumentException("Invalid email or password"));
+                    }
+                    return Mono.just(user);
+                });
+    }
+
+    private Mono<RefreshToken> findValidRefreshToken(String token) {
+        return refreshTokenRepository.findByToken(token)
                 .switchIfEmpty(Mono.error(new IllegalArgumentException("Invalid refresh token")))
                 .flatMap(refreshToken -> {
                     if (refreshToken.getRevoked() || refreshToken.getExpiryDate().isBefore(Instant.now())) {
                         return Mono.error(new IllegalArgumentException("Refresh token is expired or revoked"));
                     }
-
-                    // Revoke old refresh token (Refresh Token Rotation)
-                    refreshToken.setRevoked(true);
-
-                    return refreshTokenRepository.save(refreshToken)
-                            .then(userRepository.findById(refreshToken.getUserId()))
-                            .flatMap(this::generateAuthResponse);
+                    return Mono.just(refreshToken);
                 });
     }
 
-    private Mono<AuthResponse> generateAuthResponse(User user) {
+    private Mono<RefreshToken> rotateRefreshToken(RefreshToken refreshToken) {
+        refreshToken.setRevoked(true);
+        return refreshTokenRepository.save(refreshToken);
+    }
+
+    private Mono<User> findOrCreateOAuthUser(OAuth2UserInfo userInfo) {
+        return userRepository.findByEmail(userInfo.email())
+                .switchIfEmpty(userRepository.save(User.builder()
+                        .username(userInfo.username())
+                        .email(userInfo.email())
+                        .role("USER")
+                        .authType(userInfo.provider())
+                        .createdAt(Instant.now())
+                        .updatedAt(Instant.now())
+                        .build()));
+    }
+
+    private Mono<AuthResponse> generateAuthTokenPair(User user) {
         String accessToken = jwtTokenProvider.generateAccessToken(
                 user.getId(), user.getUsername(), user.getEmail(), user.getRole()
         );
@@ -667,7 +732,7 @@ public class AuthService {
                         rawRefreshToken,
                         "Bearer",
                         900,
-                        new AuthResponse.UserDto(user.getId(), user.getUsername(), user.getEmail(), user.getRole())
+                        new UserDto(user.getId(), user.getUsername(), user.getEmail(), user.getRole())
                 ));
     }
 }
@@ -722,7 +787,302 @@ public class AuthController {
 
 ---
 
-## Module 8: Step-by-Step Testing & Verification Guide
+## Module 8: Extensible OAuth2 Identity Provider Architecture (Google, GitHub & Custom Providers)
+
+This module provides a production-grade, extensible **OAuth2 Strategy Pattern Architecture**. Adding any new identity provider (Google, GitHub, Apple, Facebook, Okta) requires creating a single class implementing `OAuth2IdentityProvider` without modifying core authentication code.
+
+### 1. Environment Variable Configuration (`.env` & `.env.example`)
+Add OAuth2 client credentials to `apigateway/.env`:
+
+```env
+# OAuth2 Provider Credentials
+OAUTH_GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
+OAUTH_GOOGLE_CLIENT_SECRET=your_google_client_secret
+OAUTH_GOOGLE_REDIRECT_URI=http://localhost:8080/api/v1/auth/oauth2/callback/google
+
+OAUTH_GITHUB_CLIENT_ID=your_github_client_id
+OAUTH_GITHUB_CLIENT_SECRET=your_github_client_secret
+OAUTH_GITHUB_REDIRECT_URI=http://localhost:8080/api/v1/auth/oauth2/callback/github
+```
+
+---
+
+### 2. OAuth2 User Info DTO (`OAuth2UserInfo.java`)
+File: `apigateway/src/main/java/com/urlshortener/apigateway/dto/OAuth2UserInfo.java`
+
+```java
+package com.urlshortener.apigateway.dto;
+
+public record OAuth2UserInfo(
+    String providerUserId, // Provider's unique sub/id (e.g., Google sub or GitHub id)
+    String email,
+    String username,
+    String provider        // GOOGLE, GITHUB
+) {}
+```
+
+---
+
+### 3. Extensible Provider Interface (`OAuth2IdentityProvider.java`)
+File: `apigateway/src/main/java/com/urlshortener/apigateway/security/oauth/OAuth2IdentityProvider.java`
+
+```java
+package com.urlshortener.apigateway.security.oauth;
+
+import com.urlshortener.apigateway.dto.OAuth2UserInfo;
+import reactor.core.publisher.Mono;
+
+public interface OAuth2IdentityProvider {
+    /**
+     * Returns the uppercase provider name identifier (e.g. "GOOGLE", "GITHUB").
+     */
+    String getProviderName();
+
+    /**
+     * Exchanges authorization code for provider user details asynchronously.
+     */
+    Mono<OAuth2UserInfo> processAuthorizationCode(String code);
+
+    /**
+     * Constructs the OAuth2 login redirect URL for the frontend client.
+     */
+    String getAuthorizationUrl();
+}
+```
+
+---
+
+### 4. Google Identity Provider Implementation (`GoogleOAuth2Provider.java`)
+File: `apigateway/src/main/java/com/urlshortener/apigateway/security/oauth/GoogleOAuth2Provider.java`
+
+```java
+package com.urlshortener.apigateway.security.oauth;
+
+import com.urlshortener.apigateway.dto.OAuth2UserInfo;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
+
+import java.util.Map;
+
+@Component
+public class GoogleOAuth2Provider implements OAuth2IdentityProvider {
+
+    private final WebClient webClient = WebClient.create();
+
+    @Value("${oauth.google.client-id:${OAUTH_GOOGLE_CLIENT_ID:google-client-id-fallback}}")
+    private String clientId;
+
+    @Value("${oauth.google.client-secret:${OAUTH_GOOGLE_CLIENT_SECRET:google-client-secret-fallback}}")
+    private String clientSecret;
+
+    @Value("${oauth.google.redirect-uri:${OAUTH_GOOGLE_REDIRECT_URI:http://localhost:8080/api/v1/auth/oauth2/callback/google}}")
+    private String redirectUri;
+
+    @Override
+    public String getProviderName() {
+        return "GOOGLE";
+    }
+
+    @Override
+    public String getAuthorizationUrl() {
+        return "https://accounts.google.com/o/oauth2/v2/auth" +
+                "?client_id=" + clientId +
+                "&redirect_uri=" + redirectUri +
+                "&response_type=code" +
+                "&scope=openid%20email%20profile";
+    }
+
+    @Override
+    public Mono<OAuth2UserInfo> processAuthorizationCode(String code) {
+        return webClient.post()
+                .uri("https://oauth2.googleapis.com/token")
+                .bodyValue(Map.of(
+                        "code", code,
+                        "client_id", clientId,
+                        "client_secret", clientSecret,
+                        "redirect_uri", redirectUri,
+                        "grant_type", "authorization_code"
+                ))
+                .retrieve()
+                .bodyToMono(Map.class)
+                .flatMap(tokenResponse -> {
+                    String accessToken = (String) tokenResponse.get("access_token");
+                    return webClient.get()
+                            .uri("https://www.googleapis.com/oauth2/v3/userinfo")
+                            .headers(h -> h.setBearerAuth(accessToken))
+                            .retrieve()
+                            .bodyToMono(Map.class)
+                            .map(userMap -> new OAuth2UserInfo(
+                                    (String) userMap.get("sub"),
+                                    (String) userMap.get("email"),
+                                    (String) userMap.getOrDefault("name", userMap.get("email")),
+                                    getProviderName()
+                            ));
+                });
+    }
+}
+```
+
+---
+
+### 5. GitHub Identity Provider Implementation (`GitHubOAuth2Provider.java`)
+File: `apigateway/src/main/java/com/urlshortener/apigateway/security/oauth/GitHubOAuth2Provider.java`
+
+```java
+package com.urlshortener.apigateway.security.oauth;
+
+import com.urlshortener.apigateway.dto.OAuth2UserInfo;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
+
+import java.util.Map;
+
+@Component
+public class GitHubOAuth2Provider implements OAuth2IdentityProvider {
+
+    private final WebClient webClient = WebClient.create();
+
+    @Value("${oauth.github.client-id:${OAUTH_GITHUB_CLIENT_ID:github-client-id-fallback}}")
+    private String clientId;
+
+    @Value("${oauth.github.client-secret:${OAUTH_GITHUB_CLIENT_SECRET:github-client-secret-fallback}}")
+    private String clientSecret;
+
+    @Value("${oauth.github.redirect-uri:${OAUTH_GITHUB_REDIRECT_URI:http://localhost:8080/api/v1/auth/oauth2/callback/github}}")
+    private String redirectUri;
+
+    @Override
+    public String getProviderName() {
+        return "GITHUB";
+    }
+
+    @Override
+    public String getAuthorizationUrl() {
+        return "https://github.com/login/oauth/authorize" +
+                "?client_id=" + clientId +
+                "&redirect_uri=" + redirectUri +
+                "&scope=user:email";
+    }
+
+    @Override
+    public Mono<OAuth2UserInfo> processAuthorizationCode(String code) {
+        return webClient.post()
+                .uri("https://github.com/login/oauth/access_token")
+                .header("Accept", "application/json")
+                .bodyValue(Map.of(
+                        "code", code,
+                        "client_id", clientId,
+                        "client_secret", clientSecret,
+                        "redirect_uri", redirectUri
+                ))
+                .retrieve()
+                .bodyToMono(Map.class)
+                .flatMap(tokenResponse -> {
+                    String accessToken = (String) tokenResponse.get("access_token");
+                    return webClient.get()
+                            .uri("https://api.github.com/user")
+                            .headers(h -> h.setBearerAuth(accessToken))
+                            .retrieve()
+                            .bodyToMono(Map.class)
+                            .map(userMap -> new OAuth2UserInfo(
+                                    String.valueOf(userMap.get("id")),
+                                    (String) userMap.get("email"),
+                                    (String) userMap.get("login"),
+                                    getProviderName()
+                            ));
+                });
+    }
+}
+```
+
+---
+
+### 6. Provider Registry Factory (`OAuth2ProviderFactory.java`)
+File: `apigateway/src/main/java/com/urlshortener/apigateway/security/oauth/OAuth2ProviderFactory.java`
+
+Spring automatically autowires all components implementing `OAuth2IdentityProvider` into a map.
+
+```java
+package com.urlshortener.apigateway.security.oauth;
+
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+@Component
+public class OAuth2ProviderFactory {
+
+    private final Map<String, OAuth2IdentityProvider> providers;
+
+    public OAuth2ProviderFactory(List<OAuth2IdentityProvider> providerList) {
+        this.providers = providerList.stream()
+                .collect(Collectors.toMap(
+                        p -> p.getProviderName().toUpperCase(),
+                        p -> p
+                ));
+    }
+
+    public OAuth2IdentityProvider getProvider(String providerName) {
+        OAuth2IdentityProvider provider = providers.get(providerName.toUpperCase());
+        if (provider == null) {
+            throw new IllegalArgumentException("Unsupported OAuth2 provider: " + providerName);
+        }
+        return provider;
+    }
+}
+```
+
+---
+
+### 7. AuthService OAuth Integration (`AuthService.java`)
+Add `processOAuth2Login` to `AuthService.java`:
+
+```java
+public Mono<AuthResponse> processOAuth2Login(String providerName, String code) {
+    OAuth2IdentityProvider provider = oauth2ProviderFactory.getProvider(providerName);
+
+    return provider.processAuthorizationCode(code)
+            .flatMap(userInfo -> userRepository.findByEmail(userInfo.email())
+                    .switchIfEmpty(userRepository.save(User.builder()
+                            .username(userInfo.username())
+                            .email(userInfo.email())
+                            .role("USER")
+                            .authType(userInfo.provider())
+                            .build()))
+                    .flatMap(user -> generateAuthResponse(user)));
+}
+```
+
+---
+
+### 8. AuthController OAuth Endpoints (`AuthController.java`)
+Add OAuth routes to `AuthController.java`:
+
+```java
+@GetMapping("/oauth2/{provider}/login")
+public Mono<ResponseEntity<Map<String, String>>> getOAuth2LoginUrl(@PathVariable String provider) {
+    String url = oauth2ProviderFactory.getProvider(provider).getAuthorizationUrl();
+    return Mono.just(ResponseEntity.ok(Map.of("authorizationUrl", url)));
+}
+
+@GetMapping("/oauth2/{provider}/callback")
+public Mono<ResponseEntity<AuthResponse>> oauth2Callback(
+        @PathVariable String provider,
+        @RequestParam String code) {
+    return authService.processOAuth2Login(provider, code)
+            .map(ResponseEntity::ok);
+}
+```
+
+---
+
+## Module 9: Step-by-Step Testing & Verification Guide
 
 Once you code these files, test your API Gateway manually using `curl` or Postman:
 
@@ -778,3 +1138,5 @@ You have designed a modern, production-grade **Reactive Authentication System**:
 2. Password hashing via **BCrypt**.
 3. Microsecond local JWT token validation.
 4. Secure **Refresh Token Rotation (RTR)** with **UUID** keys.
+5. Extensible **OAuth2 Strategy Pattern** supporting Google, GitHub, and custom identity providers.
+
