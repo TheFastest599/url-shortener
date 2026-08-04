@@ -101,7 +101,7 @@ public class AuthService {
     private Mono<User> findUserByEmail(String email){
         return userRepository.findByEmail(email)
                 .switchIfEmpty(Mono.error(new
-                        IllegalArgumentException("Invalid email or passowrd")));
+                        IllegalArgumentException("Invalid email or password")));
     }
 
     private Mono<User> verifyPassword(User user, String rawPassword){
