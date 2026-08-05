@@ -422,6 +422,8 @@ Configures reactive route authorization, password encoder, and web filter chain.
 package com.urlshortener.apigateway.config;
 
 import com.urlshortener.apigateway.security.BearerTokenSecurityContextRepository;
+import com.urlshortener.apigateway.security.CustomAccessDeniedHandler;
+import com.urlshortener.apigateway.security.CustomAuthenticationEntryPoint;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -437,6 +439,8 @@ import org.springframework.security.web.server.SecurityWebFilterChain;
 public class SecurityConfig {
 
     private final BearerTokenSecurityContextRepository securityContextRepository;
+    private final CustomAuthenticationEntryPoint authenticationEntryPoint;
+    private final CustomAccessDeniedHandler accessDeniedHandler;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -451,25 +455,11 @@ public class SecurityConfig {
                 .formLogin(ServerHttpSecurity.FormLoginSpec::disable)
                 .securityContextRepository(securityContextRepository)
                 .exceptionHandling(exceptionHandlingSpec -> exceptionHandlingSpec
-                        .authenticationEntryPoint((exchange, ex) -> {
-                            exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
-                            exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
-                            byte[] bytes = "{\"error\":\"Unauthorized\",\"message\":\"Authentication token is missing or invalid.\"}"
-                                    .getBytes(StandardCharsets.UTF_8);
-                            DataBuffer buffer = exchange.getResponse().bufferFactory().wrap(bytes);
-                            return exchange.getResponse().writeWith(Mono.just(buffer));
-                        })
-                        .accessDeniedHandler((exchange, ex) -> {
-                            exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
-                            exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
-                            byte[] bytes = "{\"error\":\"Forbidden\",\"message\":\"Access denied to the requested resource.\"}"
-                                    .getBytes(StandardCharsets.UTF_8);
-                            DataBuffer buffer = exchange.getResponse().bufferFactory().wrap(bytes);
-                            return exchange.getResponse().writeWith(Mono.just(buffer));
-                        })
+                        .authenticationEntryPoint(authenticationEntryPoint)
+                        .accessDeniedHandler(accessDeniedHandler)
                 )
                 .authorizeExchange(exchanges -> exchanges
-                        .pathMatchers("/", "/actuator/health").permitAll()
+                        .pathMatchers("/", "/health", "/api/v1/health", "/actuator/health").permitAll()
                         .pathMatchers("/api/v1/auth/**").permitAll()
                         .pathMatchers("/r/**").permitAll()
                         .anyExchange().authenticated()
@@ -1044,18 +1034,13 @@ public class OAuth2ProviderFactory {
 Add `processOAuth2Login` to `AuthService.java`:
 
 ```java
+@Transactional
 public Mono<AuthResponse> processOAuth2Login(String providerName, String code) {
-    OAuth2IdentityProvider provider = oauth2ProviderFactory.getProvider(providerName);
+    OAuth2IdentityProvider provider = oAuth2ProviderFactory.getProvider(providerName);
 
     return provider.processAuthorizationCode(code)
-            .flatMap(userInfo -> userRepository.findByEmail(userInfo.email())
-                    .switchIfEmpty(userRepository.save(User.builder()
-                            .username(userInfo.username())
-                            .email(userInfo.email())
-                            .role("USER")
-                            .authType(userInfo.provider())
-                            .build()))
-                    .flatMap(user -> generateAuthResponse(user)));
+            .flatMap(this::findOrCreateAuthUser)
+            .flatMap(this::generateAuthTokenPair);
 }
 ```
 
