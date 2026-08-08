@@ -15,9 +15,15 @@ spring:
     name: url-core-service
   datasource:
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     url: jdbc:postgresql://localhost:5432/hiclickme_core
     username: core_user
     password: core_password
+=======
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:url_shortener_core}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres_password}
+>>>>>>> Stashed changes
 =======
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:url_shortener_core}
     username: ${DB_USERNAME:postgres}

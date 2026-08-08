@@ -2,6 +2,7 @@
 
 ## 1. Project Overview
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 **Project Name:** HiClickMe (Multi-Tenant URL Shortener & Analytics SaaS)  
 **Purpose:** Provide a highly scalable, multi-tenant URL shortening platform featuring custom subdomains, dynamic QR code generation, UTM tracking profiles, rate limiting, and premium subscription tiers. The platform is designed using a decoupled Microservices Architecture to support massive redirect throughput, independent service scalability, and high resilience.
 
@@ -18,6 +19,13 @@
 **Purpose:** Provide a highly scalable, multi-tenant URL shortening platform featuring custom subdomains, dynamic QR code generation, UTM tracking profiles, rate limiting, and premium subscription tiers. The platform is designed using a decoupled Microservices Architecture to support massive redirect throughput, independent service scalability, and high resilience.
 
 ### Core Architecture Goals
+=======
+
+**Project Name:** URL Shortener (Multi-Tenant URL Shortener & Analytics SaaS)  
+**Purpose:** Provide a highly scalable, multi-tenant URL shortening platform featuring custom subdomains, dynamic QR code generation, UTM tracking profiles, rate limiting, and premium subscription tiers. The platform is designed using a decoupled Microservices Architecture to support massive redirect throughput, independent service scalability, and high resilience.
+
+### Core Architecture Goals
+>>>>>>> Stashed changes
 
 - **High Performance Redirections:** Under `< 10ms` response times for cached short URLs using a reactive Redirect Microservice backed by Redis.
 - **Decoupled Database Isolation:** Zero cross-database queries. Each microservice completely owns its database schema / logical database. For development, a single PostgreSQL server instance (port `5432`) hosts 3 logically isolated databases (`url_shortener_auth`, `url_shortener_core`, `url_shortener_analytics`). Downstream services resolve transactional fallbacks over gRPC.
@@ -25,6 +33,9 @@
 - **Low Latency Inter-Service RPC:** High-efficiency, strongly-typed internal communication using gRPC (HTTP/2 multiplexing, Protocol Buffers binary serialization).
 - **Write-Isolated Analytics Ingestion:** Decouple click tracking database writes from the redirection flow using Apache Kafka and a dedicated Analytics Ingestion Microservice.
 - **Independent Scalability:** Separately scale the network-bound Redirect Service, the I/O-bound Analytics Ingestion, and the CPU/API-bound Gateway and Core Admin services.
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 
 ---
@@ -96,6 +107,7 @@ graph TD
 ### 3.2 Component Directory & Ports
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 | Service / Component | Public Port | gRPC Port | Technology | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
 | **API Gateway** | `8080` | N/A | Spring Cloud Gateway, Reactive Security | Central entrypoint, routing, rate limiting, OAuth2 Client, token rotation, and REST-to-gRPC translation. |
@@ -106,6 +118,8 @@ graph TD
 | **Redis Cache & Rate Store**| `6379` | N/A | Redis 7.2 | Shares rate limit statistics, redirect caches, and session contexts. |
 | **Apache Kafka Broker** | `9092` | N/A | Confluent Kafka / KRaft Mode | High-throughput streaming buffer decoupling redirection handling from analytics logging. |
 =======
+=======
+>>>>>>> Stashed changes
 | Service / Component            | Public Port | gRPC Port | Technology                                  | Purpose                                                                                                                                      |
 | :----------------------------- | :---------- | :-------- | :------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------- |
 | **API Gateway**                | `8080`      | N/A       | Spring Cloud Gateway, Reactive Security     | Central entrypoint, routing, rate limiting, OAuth2 Client, token rotation, and REST-to-gRPC translation.                                     |
@@ -115,6 +129,9 @@ graph TD
 | **PostgreSQL Shared Instance** | `5432`      | N/A       | PostgreSQL 16                               | Single database container hosting 3 logically isolated databases: `url_shortener_auth`, `url_shortener_core`, and `url_shortener_analytics`. |
 | **Redis Cache & Rate Store**   | `6379`      | N/A       | Redis 7.2                                   | Shares rate limit statistics, redirect caches, and session contexts.                                                                         |
 | **Apache Kafka Broker**        | `9092`      | N/A       | Confluent Kafka / KRaft Mode                | High-throughput streaming buffer decoupling redirection handling from analytics logging.                                                     |
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 
 ---
@@ -126,6 +143,9 @@ graph TD
 =======
 ### 4.1 PostgreSQL Auth Database (Database: `url_shortener_auth` on Port `5432`)
 
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 Stores strictly credential, token, and identity mapping tables owned and managed exclusively by the `api-gateway-service`.
 
@@ -182,6 +202,9 @@ CREATE INDEX idx_refresh_tokens_token ON refresh_tokens(token);
 =======
 ### 4.2 PostgreSQL Core Database (Database: `url_shortener_core` on Port `5432`)
 
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 Stores business-specific URL mappings, configurations, user billing statuses, and marketing profiles owned and managed exclusively by `url-core-service`.
 
@@ -246,6 +269,9 @@ CREATE INDEX idx_utm_profiles_url_mapping ON utm_profiles(url_mapping_id);
 =======
 ### 4.3 PostgreSQL Analytics Database (Database: `url_shortener_analytics` on Port `5432`)
 
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 Stores raw event click tracking data managed strictly by `url-analytics-service`.
 
@@ -698,8 +724,11 @@ public class DashboardGatewayController {
 
 ### 6.2 Core Admin Service (`url-core-service` - Port `9090`)
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 Runs headless as an internal gRPC service without public HTTP exposure. It manages the transactional database `hiclickme_core` and executes logical CRUD rules.
 =======
+=======
+>>>>>>> Stashed changes
 
 Runs headless as an internal gRPC service without public HTTP exposure. It manages the transactional database `url_shortener_core` and executes logical CRUD rules.
 >>>>>>> Stashed changes
@@ -924,6 +953,7 @@ version: "3.8"
 
 services:
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
   # 1. Shared PostgreSQL DB Instance (Hosts 3 logical databases: hiclickme_auth, hiclickme_core, hiclickme_analytics)
   postgres:
     image: postgres:16-alpine
@@ -938,6 +968,8 @@ services:
       - pg_data:/var/lib/postgresql/data
       - ./scripts/init-dbs.sql:/docker-entrypoint-initdb.d/init-dbs.sql
 =======
+=======
+>>>>>>> Stashed changes
     # 1. Shared PostgreSQL DB Instance (Hosts 3 logical databases: url_shortener_auth, url_shortener_core, url_shortener_analytics)
     postgres:
         image: postgres:16-alpine
@@ -951,6 +983,9 @@ services:
         volumes:
             - pg_data:/var/lib/postgresql/data
             - ./scripts/init-dbs.sql:/docker-entrypoint-initdb.d/init-dbs.sql
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 
     # 2. Redis Cache & Limit Store
@@ -980,6 +1015,7 @@ services:
             KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
             CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
 
+<<<<<<< Updated upstream
 <<<<<<< Updated upstream
   # 4. API Gateway Microservice
   url-gateway-service:
@@ -1015,11 +1051,35 @@ services:
             - "8080:8080"
         environment:
             SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/url_shortener_auth
+=======
+    # 4. API Gateway Microservice
+    url-gateway-service:
+        build: ./url-gateway-service
+        container_name: url-gateway
+        ports:
+            - "8080:8080"
+        environment:
+            SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/url_shortener_auth
             SPRING_REDIS_HOST: redis
         depends_on:
             - postgres
             - redis
 
+    # 5. Core Admin Microservice (Headless gRPC)
+    url-core-service:
+        build: ./url-core-service
+        container_name: url-core
+        expose:
+            - "9090"
+        environment:
+            SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/url_shortener_core
+>>>>>>> Stashed changes
+            SPRING_REDIS_HOST: redis
+        depends_on:
+            - postgres
+            - redis
+
+<<<<<<< Updated upstream
     # 5. Core Admin Microservice (Headless gRPC)
     url-core-service:
         build: ./url-core-service
@@ -1061,6 +1121,21 @@ services:
       - postgres
       - kafka
 =======
+=======
+    # 6. Redirection Microservice
+    url-redirect-service:
+        build: ./url-redirect-service
+        container_name: url-redirect
+        ports:
+            - "8082:8082"
+        environment:
+            SPRING_REDIS_HOST: redis
+            SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+        depends_on:
+            - redis
+            - kafka
+
+>>>>>>> Stashed changes
     # 7. Analytics Ingestion Microservice
     url-analytics-service:
         build: ./url-analytics-service
@@ -1073,6 +1148,9 @@ services:
         depends_on:
             - postgres
             - kafka
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 
 volumes:
@@ -1122,7 +1200,11 @@ To deploy this microservice architecture into production (e.g., AWS, GCP, or Kub
 ### 8.7 User Deletion & Resource Cleanup Mechanics (Transactional Outbox vs. gRPC Sync)
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 When a user deletes their account (initiated at the **API Gateway**), the system must cleanly delete their URL mappings in the **Core Admin Service** database (`hiclickme_core`) and evict all active short URL mappings cached in the **Redirect Service** Redis cluster. 
+=======
+When a user deletes their account (initiated at the **API Gateway**), the system must cleanly delete their URL mappings in the **Core Admin Service** database (`url_shortener_core`) and evict all active short URL mappings cached in the **Redirect Service** Redis cluster.
+>>>>>>> Stashed changes
 =======
 When a user deletes their account (initiated at the **API Gateway**), the system must cleanly delete their URL mappings in the **Core Admin Service** database (`url_shortener_core`) and evict all active short URL mappings cached in the **Redirect Service** Redis cluster.
 >>>>>>> Stashed changes
@@ -1191,7 +1273,11 @@ sequenceDiagram
 
 1. **Step 1: Auth Deletion & Outbox Write (Gateway Boundary)**
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
    The `url-gateway-service` initiates a single database transaction in `hiclickme_auth`. It soft-deletes or hard-deletes the user and writes a `UserDeletedEvent` to a local `outbox` table in the *same* database transaction. This guarantees that the user deletion and the event creation succeed or fail together. The API Gateway then immediately returns an HTTP `200 OK` response to the client.
+=======
+   The `url-gateway-service` initiates a single database transaction in `url_shortener_auth`. It soft-deletes or hard-deletes the user and writes a `UserDeletedEvent` to a local `outbox` table in the _same_ database transaction. This guarantees that the user deletion and the event creation succeed or fail together. The API Gateway then immediately returns an HTTP `200 OK` response to the client.
+>>>>>>> Stashed changes
 =======
    The `url-gateway-service` initiates a single database transaction in `url_shortener_auth`. It soft-deletes or hard-deletes the user and writes a `UserDeletedEvent` to a local `outbox` table in the _same_ database transaction. This guarantees that the user deletion and the event creation succeed or fail together. The API Gateway then immediately returns an HTTP `200 OK` response to the client.
 >>>>>>> Stashed changes
@@ -1200,6 +1286,7 @@ sequenceDiagram
    A Change Data Capture (CDC) tool (e.g., Debezium) mines the PostgreSQL Write-Ahead Log (WAL) of `hiclickme_auth` for changes in the `outbox` table and publishes the `UserDeletedEvent` to the `auth.user-events` Kafka topic.
 
 3. **Step 3: Core Database Deletion**
+<<<<<<< Updated upstream
 <<<<<<< Updated upstream
    The headless `url-core-service` consumes the `UserDeletedEvent`. It initiates a PostgreSQL transaction in `hiclickme_core` to clean up all URL mappings and subscriptions:
    ```sql
@@ -1210,6 +1297,8 @@ sequenceDiagram
    ```
    The service intercepts the list of deleted short codes and inserts a `CacheEvictionEvent` into the `core_outbox` table in the *same* PostgreSQL transaction.
 =======
+=======
+>>>>>>> Stashed changes
    The headless `url-core-service` consumes the `UserDeletedEvent`. It initiates a PostgreSQL transaction in `url_shortener_core` to clean up all URL mappings and subscriptions:
 
     ```sql
@@ -1220,6 +1309,9 @@ sequenceDiagram
     ```
 
     The service intercepts the list of deleted short codes and inserts a `CacheEvictionEvent` into the `core_outbox` table in the _same_ PostgreSQL transaction.
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 
 4. **Step 4: Cache Eviction**

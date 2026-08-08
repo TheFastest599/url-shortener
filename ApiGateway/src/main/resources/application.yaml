@@ -46,4 +46,7 @@ app:
     jwt:
         secret: ${JWT_SECRET:defaultSecretKeyWhichIsAtLeast32BytesLongForHS256BitSecurity!}
         expiration-ms: ${JWT_EXPIRATION_MS:900000}
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
