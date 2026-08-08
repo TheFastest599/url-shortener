@@ -1,12 +1,12 @@
-# Project Design Document: HiClickMe (Java Spring Boot Microservices, gRPC, PostgreSQL, Redis & Apache Kafka)
+# Project Design Document: URL Shortener (Java Spring Boot Microservices, gRPC, PostgreSQL, Redis & Apache Kafka)
 
 ## 1. Project Overview
-**Project Name:** HiClickMe (Multi-Tenant URL Shortener & Analytics SaaS)  
+**Project Name:** URL Shortener (Multi-Tenant URL Shortener & Analytics SaaS)  
 **Purpose:** Provide a highly scalable, multi-tenant URL shortening platform featuring custom subdomains, dynamic QR code generation, UTM tracking profiles, rate limiting, and premium subscription tiers. The platform is designed using a decoupled Microservices Architecture to support massive redirect throughput, independent service scalability, and high resilience.
 
 ### Core Architecture Goals
 *   **High Performance Redirections:** Under `< 10ms` response times for cached short URLs using a reactive Redirect Microservice backed by Redis.
-*   **Decoupled Database Isolation:** Zero cross-database queries. Each microservice completely owns its database schema / logical database. For development, a single PostgreSQL server instance (port `5432`) hosts 3 logically isolated databases (`hiclickme_auth`, `hiclickme_core`, `hiclickme_analytics`). Downstream services resolve transactional fallbacks over gRPC.
+*   **Decoupled Database Isolation:** Zero cross-database queries. Each microservice completely owns its database schema / logical database. For development, a single PostgreSQL server instance (port `5432`) hosts 3 logically isolated databases (`url_shortener_auth`, `url_shortener_core`, `url_shortener_analytics`). Downstream services resolve transactional fallbacks over gRPC.
 *   **Unified Edge Security & Auth:** Centralized authentication, OAuth2 login coordination, and token rotation managed by a dedicated API Gateway microservice with its own database.
 *   **Low Latency Inter-Service RPC:** High-efficiency, strongly-typed internal communication using gRPC (HTTP/2 multiplexing, Protocol Buffers binary serialization).
 *   **Write-Isolated Analytics Ingestion:** Decouple click tracking database writes from the redirection flow using Apache Kafka and a dedicated Analytics Ingestion Microservice.
@@ -54,7 +54,7 @@ graph TD
     
     subgraph Microservices Cluster
         %% API Gateway & Auth
-        API_Gateway -->|Reads/Writes Auth| DB_Auth[(PostgreSQL Auth DB: hiclickme_auth)]
+        API_Gateway -->|Reads/Writes Auth| DB_Auth[(PostgreSQL Auth DB: url_shortener_auth)]
         API_Gateway -->|Rate Limit Checks| Redis_Shared[(Redis Cache & Rate Store :6379)]
         
         %% gRPC Channels
@@ -69,8 +69,8 @@ graph TD
     
     subgraph Shared PostgreSQL Instance :5432
         DB_Auth
-        DB_Core[(PostgreSQL Core DB: hiclickme_core)]
-        DB_Analytics[(PostgreSQL Analytics DB: hiclickme_analytics)]
+        DB_Core[(PostgreSQL Core DB: url_shortener_core)]
+        DB_Analytics[(PostgreSQL Analytics DB: url_shortener_analytics)]
     end
     
     %% Core & Analytics DBs
@@ -87,7 +87,7 @@ graph TD
 | **Core Admin Service** | N/A | `9090` | Spring Boot, gRPC Server, JPA / Hibernate | Manages user metadata configurations, billing/subscriptions, URL mapping databases, and UTM profiles. |
 | **Redirect Service** | `8082` | N/A | Spring WebFlux, Redis Reactive, gRPC Client | Resolves short URLs via Redis (or gRPC Core Service fallback) and publishes click events to Apache Kafka. |
 | **Analytics Service** | N/A | `9091` | Spring Boot, Spring Kafka, MaxMind GeoIP | Consumes Kafka click streams, resolves geographic locations, detects bots, bulk-writes logs, and serves gRPC reports. |
-| **PostgreSQL Shared Instance** | `5432` | N/A | PostgreSQL 16 | Single database container hosting 3 logically isolated databases: `hiclickme_auth`, `hiclickme_core`, and `hiclickme_analytics`. |
+| **PostgreSQL Shared Instance** | `5432` | N/A | PostgreSQL 16 | Single database container hosting 3 logically isolated databases: `url_shortener_auth`, `url_shortener_core`, and `url_shortener_analytics`. |
 | **Redis Cache & Rate Store**| `6379` | N/A | Redis 7.2 | Shares rate limit statistics, redirect caches, and session contexts. |
 | **Apache Kafka Broker** | `9092` | N/A | Confluent Kafka / KRaft Mode | High-throughput streaming buffer decoupling redirection handling from analytics logging. |
 
@@ -95,13 +95,15 @@ graph TD
 
 ## 4. Database Schema & Data Models
 
-### 4.1 PostgreSQL Auth Database (Database: `hiclickme_auth` on Port `5432`)
+### 4.1 PostgreSQL Auth Database (Database: `url_shortener_auth` on Port `5432`)
 Stores strictly credential, token, and identity mapping tables owned and managed exclusively by the `api-gateway-service`.
 
 ```sql
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
 -- 1. Users Table (Core Identity Reference)
 CREATE TABLE users (
-    id BIGSERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username VARCHAR(255) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
     role VARCHAR(50) DEFAULT 'USER' NOT NULL, -- USER, ADMIN
@@ -114,16 +116,16 @@ CREATE INDEX idx_users_email ON users(email);
 
 -- 2. User Passwords Table (One-to-One, populated if auth_type = 'EMAIL')
 CREATE TABLE user_passwords (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     password_hash VARCHAR(255) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 -- 3. User OAuth Credentials Table (One-to-One/Many, populated if auth_type = OAUTH)
 CREATE TABLE user_oauth_credentials (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     provider VARCHAR(100) NOT NULL, -- GOOGLE, GITHUB
     provider_user_id VARCHAR(255) NOT NULL,
     access_token TEXT,
@@ -136,9 +138,9 @@ CREATE TABLE user_oauth_credentials (
 
 -- 4. Refresh Tokens Table (Database copies for rotation & replay detection)
 CREATE TABLE refresh_tokens (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token VARCHAR(255) UNIQUE NOT NULL,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT UNIQUE NOT NULL,
     expiry_date TIMESTAMP WITH TIME ZONE NOT NULL,
     revoked BOOLEAN DEFAULT FALSE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
@@ -146,14 +148,16 @@ CREATE TABLE refresh_tokens (
 CREATE INDEX idx_refresh_tokens_token ON refresh_tokens(token);
 ```
 
-### 4.2 PostgreSQL Core Database (Database: `hiclickme_core` on Port `5432`)
+### 4.2 PostgreSQL Core Database (Database: `url_shortener_core` on Port `5432`)
 Stores business-specific URL mappings, configurations, user billing statuses, and marketing profiles owned and managed exclusively by `url-core-service`.
 
 ```sql
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
 -- 1. User Metadata Profile Table (Corresponds to User ID in Auth Service DB)
 CREATE TABLE user_metadata (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT UNIQUE NOT NULL, -- Logical foreign key reference to Auth DB Users
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID UNIQUE NOT NULL, -- Logical foreign key reference to Auth DB Users
     tier VARCHAR(50) DEFAULT 'FREE' NOT NULL, -- FREE, PREMIUM, ENTERPRISE
     name VARCHAR(255),
     avatar_url VARCHAR(512),
@@ -165,8 +169,8 @@ CREATE INDEX idx_user_metadata_tier ON user_metadata(tier);
 
 -- 2. Subscriptions Table
 CREATE TABLE subscriptions (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL, -- Logical foreign key reference to Auth DB Users
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL, -- Logical foreign key reference to Auth DB Users
     stripe_subscription_id VARCHAR(255),
     status VARCHAR(50) NOT NULL, -- ACTIVE, PAST_DUE, CANCELED
     start_date TIMESTAMP WITH TIME ZONE,
@@ -177,11 +181,11 @@ CREATE INDEX idx_subscriptions_user ON subscriptions(user_id);
 
 -- 3. URL Mappings Table
 CREATE TABLE url_mappings (
-    id BIGSERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     short_code VARCHAR(10) UNIQUE NOT NULL,
     destination_url TEXT NOT NULL,
     tenant_id VARCHAR(50) NOT NULL, -- Groups resources logically
-    user_id BIGINT NOT NULL, -- Owner reference
+    user_id UUID NOT NULL, -- Owner reference
     click_count BIGINT DEFAULT 0 NOT NULL,
     is_active BOOLEAN DEFAULT TRUE NOT NULL,
     metadata JSONB,
@@ -192,8 +196,8 @@ CREATE INDEX idx_url_mappings_user ON url_mappings(user_id);
 
 -- 4. UTM Profiles Table
 CREATE TABLE utm_profiles (
-    id BIGSERIAL PRIMARY KEY,
-    url_mapping_id BIGINT NOT NULL REFERENCES url_mappings(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    url_mapping_id UUID NOT NULL REFERENCES url_mappings(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
     utm_source VARCHAR(100),
     utm_medium VARCHAR(100),
@@ -205,15 +209,17 @@ CREATE TABLE utm_profiles (
 CREATE INDEX idx_utm_profiles_url_mapping ON utm_profiles(url_mapping_id);
 ```
 
-### 4.3 PostgreSQL Analytics Database (Database: `hiclickme_analytics` on Port `5432`)
+### 4.3 PostgreSQL Analytics Database (Database: `url_shortener_analytics` on Port `5432`)
 Stores raw event click tracking data managed strictly by `url-analytics-service`.
 
 ```sql
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
 -- 1. Click Analytics Table
 CREATE TABLE click_analytics (
-    id BIGSERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     short_code VARCHAR(10) NOT NULL,
-    utm_profile_id BIGINT, -- Logical reference to utm_profiles(id) in Core DB
+    utm_profile_id UUID, -- Logical reference to utm_profiles(id) in Core DB
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     user_agent TEXT,
     device_type VARCHAR(50),
@@ -244,7 +250,7 @@ erDiagram
     %% PostgreSQL Auth DB (Port 5431)
     %% ==========================================
     users {
-        bigint id PK
+        uuid id PK
         varchar username UK
         varchar email UK
         varchar role
@@ -252,21 +258,21 @@ erDiagram
         timestamp created_at
     }
     user_passwords {
-        bigint id PK
-        bigint user_id FK "UK"
+        uuid id PK
+        uuid user_id FK "UK"
         varchar password_hash
     }
     user_oauth_credentials {
-        bigint id PK
-        bigint user_id FK "UK"
+        uuid id PK
+        uuid user_id FK "UK"
         varchar provider
         varchar provider_user_id UK
         text access_token
         text refresh_token
     }
     refresh_tokens {
-        bigint id PK
-        bigint user_id FK
+        uuid id PK
+        uuid user_id FK
         varchar token UK
         timestamp expiry_date
         boolean revoked
@@ -276,31 +282,31 @@ erDiagram
     %% PostgreSQL Core DB (Port 5432)
     %% ==========================================
     user_metadata {
-        bigint id PK
-        bigint user_id UK "Logical FK to Auth.users"
+        uuid id PK
+        uuid user_id UK "Logical FK to Auth.users"
         varchar tier
         varchar name
         jsonb settings
     }
     subscriptions {
-        bigint id PK
-        bigint user_id "Logical FK to Auth.users"
+        uuid id PK
+        uuid user_id "Logical FK to Auth.users"
         varchar stripe_subscription_id
         varchar status
         timestamp start_date
         timestamp end_date
     }
     url_mappings {
-        bigint id PK
+        uuid id PK
         varchar short_code UK
         text destination_url
         varchar tenant_id
-        bigint user_id "Logical FK to Auth.users"
+        uuid user_id "Logical FK to Auth.users"
         boolean is_active
     }
     utm_profiles {
-        bigint id PK
-        bigint url_mapping_id FK
+        uuid id PK
+        uuid url_mapping_id FK
         varchar name
         varchar utm_source
         varchar utm_medium
@@ -310,9 +316,9 @@ erDiagram
     %% PostgreSQL Analytics DB (Port 5433)
     %% ==========================================
     click_analytics {
-        bigint id PK
+        uuid id PK
         varchar short_code "Logical FK to Core.url_mappings"
-        bigint utm_profile_id "Logical FK to Core.utm_profiles"
+        uuid utm_profile_id "Logical FK to Core.utm_profiles"
         timestamp timestamp
         text user_agent
         varchar geo_country
@@ -369,12 +375,12 @@ message GetUrlMappingResponse {
   string destination_url = 3;
   bool is_active = 4;
   string tenant_id = 5;
-  int64 user_id = 6;
+  string user_id = 6;
   repeated UtmProfile utm_profiles = 7;
 }
 
 message UtmProfile {
-  int64 id = 1;
+  string id = 1;
   string name = 2;
   string utm_source = 3;
   string utm_medium = 4;
@@ -384,7 +390,7 @@ message UtmProfile {
 message CreateUrlMappingRequest {
   string destination_url = 1;
   string tenant_id = 2;
-  int64 user_id = 3;
+  string user_id = 3;
   string custom_short_code = 4;
 }
 
@@ -414,7 +420,7 @@ service SubscriptionService {
 
 message ValidateTenantLimitRequest {
   string tenant_id = 1;
-  int64 user_id = 2;
+  string user_id = 2;
 }
 
 message ValidateTenantLimitResponse {
@@ -425,7 +431,7 @@ message ValidateTenantLimitResponse {
 }
 
 message GetTenantSubscriptionRequest {
-  int64 user_id = 1;
+  string user_id = 1;
 }
 
 message GetTenantSubscriptionResponse {
@@ -526,6 +532,7 @@ public class SecurityConfiguration {
         return http
             .csrf(ServerHttpSecurity.CsrfSpec::disable)
             .authorizeExchange(exchanges -> exchanges
+                .pathMatchers("/", "/actuator/health").permitAll()
                 .pathMatchers("/api/v1/auth/**").permitAll()
                 .pathMatchers("/r/**").permitAll()
                 .anyExchange().authenticated()
@@ -648,7 +655,7 @@ public class DashboardGatewayController {
 ---
 
 ### 6.2 Core Admin Service (`url-core-service` - Port `9090`)
-Runs headless as an internal gRPC service without public HTTP exposure. It manages the transactional database `hiclickme_core` and executes logical CRUD rules.
+Runs headless as an internal gRPC service without public HTTP exposure. It manages the transactional database `url_shortener_core` and executes logical CRUD rules.
 
 #### 1. gRPC Server Implementation
 Handles incoming request definitions compiled from proto classes.
@@ -858,7 +865,7 @@ Coordinates local startup of databases, brokers, caches, and the microservices s
 version: '3.8'
 
 services:
-  # 1. Shared PostgreSQL DB Instance (Hosts 3 logical databases: hiclickme_auth, hiclickme_core, hiclickme_analytics)
+  # 1. Shared PostgreSQL DB Instance (Hosts 3 logical databases: url_shortener_auth, url_shortener_core, url_shortener_analytics)
   postgres:
     image: postgres:16-alpine
     container_name: postgres-db
@@ -906,7 +913,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/hiclickme_auth
+      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/url_shortener_auth
       SPRING_REDIS_HOST: redis
     depends_on:
       - postgres
@@ -919,7 +926,7 @@ services:
     expose:
       - "9090"
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/hiclickme_core
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/url_shortener_core
       SPRING_REDIS_HOST: redis
     depends_on:
       - postgres
@@ -945,7 +952,7 @@ services:
     expose:
       - "9091"
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/hiclickme_analytics
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/url_shortener_analytics
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
     depends_on:
       - postgres
@@ -991,7 +998,7 @@ To deploy this microservice architecture into production (e.g., AWS, GCP, or Kub
 
 ### 8.7 User Deletion & Resource Cleanup Mechanics (Transactional Outbox vs. gRPC Sync)
 
-When a user deletes their account (initiated at the **API Gateway**), the system must cleanly delete their URL mappings in the **Core Admin Service** database (`hiclickme_core`) and evict all active short URL mappings cached in the **Redirect Service** Redis cluster. 
+When a user deletes their account (initiated at the **API Gateway**), the system must cleanly delete their URL mappings in the **Core Admin Service** database (`url_shortener_core`) and evict all active short URL mappings cached in the **Redirect Service** Redis cluster. 
 
 In a distributed, production-grade microservice architecture, handling this deletion presents a choice between **Synchronous gRPC Orchestration** and **Asynchronous Message-Driven Eventual Consistency**.
 
@@ -1056,13 +1063,13 @@ sequenceDiagram
 #### 3. Execution Phase Walkthrough
 
 1. **Step 1: Auth Deletion & Outbox Write (Gateway Boundary)**
-   The `url-gateway-service` initiates a single database transaction in `hiclickme_auth`. It soft-deletes or hard-deletes the user and writes a `UserDeletedEvent` to a local `outbox` table in the *same* database transaction. This guarantees that the user deletion and the event creation succeed or fail together. The API Gateway then immediately returns an HTTP `200 OK` response to the client.
+   The `url-gateway-service` initiates a single database transaction in `url_shortener_auth`. It soft-deletes or hard-deletes the user and writes a `UserDeletedEvent` to a local `outbox` table in the *same* database transaction. This guarantees that the user deletion and the event creation succeed or fail together. The API Gateway then immediately returns an HTTP `200 OK` response to the client.
 
 2. **Step 2: CDC Publishing**
-   A Change Data Capture (CDC) tool (e.g., Debezium) mines the PostgreSQL Write-Ahead Log (WAL) of `hiclickme_auth` for changes in the `outbox` table and publishes the `UserDeletedEvent` to the `auth.user-events` Kafka topic.
+   A Change Data Capture (CDC) tool (e.g., Debezium) mines the PostgreSQL Write-Ahead Log (WAL) of `url_shortener_auth` for changes in the `outbox` table and publishes the `UserDeletedEvent` to the `auth.user-events` Kafka topic.
 
 3. **Step 3: Core Database Deletion**
-   The headless `url-core-service` consumes the `UserDeletedEvent`. It initiates a PostgreSQL transaction in `hiclickme_core` to clean up all URL mappings and subscriptions:
+   The headless `url-core-service` consumes the `UserDeletedEvent`. It initiates a PostgreSQL transaction in `url_shortener_core` to clean up all URL mappings and subscriptions:
    ```sql
    -- Core deletes URL mappings and returns the short codes that were deleted
    DELETE FROM url_mappings 

@@ -9,7 +9,7 @@ spring:
   application:
     name: url-analytics-service
   datasource:
-    url: jdbc:postgresql://localhost:5432/hiclickme_analytics
+    url: jdbc:postgresql://localhost:5432/url_shortener_analytics
     username: analytics_user
     password: analytics_password
     driver-class-name: org.postgresql.Driver
