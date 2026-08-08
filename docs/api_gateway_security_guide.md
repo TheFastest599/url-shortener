@@ -1,0 +1,1201 @@
+# Hands-On Guide: Building the Security & Auth Layer in API Gateway (`url-gateway-service`)
+
+Welcome! This document is a complete, step-by-step hands-on guide for building the entire Security, Authentication, and Token Management layer for the **HiClickMe API Gateway** (`url-gateway-service`).
+
+By following this guide, you will learn how to build a modern, high-performance **Reactive Security System** using **Spring WebFlux**, **Spring Security Reactive**, **Spring Data R2DBC**, **PostgreSQL**, and **JSON Web Tokens (JWT)** with **Refresh Token Rotation (RTR)**.
+
+> [!NOTE]
+> All entities and database primary/foreign keys in this architecture use **UUID** (`gen_random_uuid()`) instead of auto-incrementing integers for enhanced security, distributed key uniqueness, and API privacy.
+
+---
+
+## Table of Contents
+
+1. [Key Concepts & Architecture](#1-key-concepts--architecture)
+2. [Module 1: Database Schema Setup (`url_shortener_auth`)](#module-1-database-schema-setup-url_shortener_auth)
+3. [Module 2: R2DBC Reactive Entities & Repositories](#module-2-r2dbc-reactive-entities--repositories)
+4. [Module 3: JWT Token Provider Engine](#module-3-jwt-token-provider-engine)
+5. [Module 4: Reactive Security Configuration & Web Filter](#module-4-reactive-security-configuration--web-filter)
+6. [Module 5: Data Transfer Objects (DTOs)](#module-5-data-transfer-objects-dtos)
+7. [Module 6: Reactive AuthService (Business Logic)](#module-6-reactive-authservice-business-logic)
+8. [Module 7: Auth REST Controller](#module-7-auth-rest-controller)
+9. [Module 8: Extensible OAuth2 Identity Provider Architecture (Google & GitHub)](#module-8-extensible-oauth2-identity-provider-architecture-google--github)
+10. [Module 9: Step-by-Step Testing & Verification Guide](#module-9-step-by-step-testing--verification-guide)
+
+---
+
+## 1. Key Concepts & Architecture
+
+Before writing code, let's understand why we use these specific components:
+
+- **Reactive I/O (Spring WebFlux):** Unlike standard Spring MVC which uses one thread per request (blocking Tomcat), WebFlux runs on an event loop (Netty). It can process thousands of concurrent requests with very small memory usage.
+- **Non-Blocking Database Access (R2DBC):** JDBC is blocking, which defeats the purpose of WebFlux. R2DBC (Reactive Relational Database Connectivity) allows PostgreSQL queries to run asynchronously via reactive `Mono` and `Flux` streams.
+- **Stateless JWT Authentication:** The Gateway signs a short-lived **Access Token** (e.g. 15 mins). On every request, the Gateway verifies the token signature locally in memory **without querying PostgreSQL**, making API verification microsecond-fast.
+- **Refresh Token Rotation (RTR):** A long-lived **Refresh Token** (7 days) is stored in an `HttpOnly` secure cookie. Every time the access token expires, the client calls `/refresh`. The Gateway invalidates the old refresh token, issues a brand-new refresh token + access token pair, and saves the record in PostgreSQL.
+
+---
+
+## Module 1: Database Schema Setup (`url_shortener_auth`)
+
+Create a Flyway migration file at `apigateway/src/main/resources/db/migration/V1__init_auth_schema.sql`.
+
+```sql
+-- V1__init_auth_schema.sql: Initial Auth Database Schema for HiClickMe (UUID Primary Keys)
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- 1. Users Table (Core Identity Reference)
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username VARCHAR(255) UNIQUE NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    role VARCHAR(50) DEFAULT 'USER' NOT NULL,
+    auth_type VARCHAR(50) DEFAULT 'EMAIL' NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+-- 2. User Passwords Table (One-to-One with users)
+CREATE TABLE IF NOT EXISTS user_passwords (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    password_hash VARCHAR(255) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+-- 3. User OAuth Credentials Table (Optional OAuth providers)
+CREATE TABLE IF NOT EXISTS user_oauth_credentials (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider VARCHAR(100) NOT NULL,
+    provider_user_id VARCHAR(255) NOT NULL,
+    access_token TEXT,
+    refresh_token TEXT,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT uq_provider_user_id UNIQUE (provider, provider_user_id)
+);
+
+-- 4. Refresh Tokens Table (Rotation & Replay Detection)
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT UNIQUE NOT NULL,
+    expiry_date TIMESTAMP WITH TIME ZONE NOT NULL,
+    revoked BOOLEAN DEFAULT FALSE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token);
+```
+
+---
+
+## Module 2: R2DBC Reactive Entities & Repositories
+
+Create package `com.urlshortener.apigateway.entity` and `com.urlshortener.apigateway.repository`.
+
+### 1. `User.java` Entity
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/entity/User.java`
+
+```java
+package com.urlshortener.apigateway.entity;
+
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+@Table("users")
+public class User {
+
+    @Id
+    private UUID id;
+
+    private String username;
+
+    private String email;
+
+    private String role;
+
+    @Column("auth_type")
+    private String authType;
+
+    @Column("created_at")
+    private Instant createdAt;
+
+    @Column("updated_at")
+    private Instant updatedAt;
+}
+```
+
+### 2. `UserPassword.java` Entity
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/entity/UserPassword.java`
+
+```java
+package com.urlshortener.apigateway.entity;
+
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+@Table("user_passwords")
+public class UserPassword {
+
+    @Id
+    private UUID id;
+
+    @Column("user_id")
+    private UUID userId;
+
+    @Column("password_hash")
+    private String passwordHash;
+
+    @Column("updated_at")
+    private Instant updatedAt;
+}
+```
+
+### 3. `RefreshToken.java` Entity
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/entity/RefreshToken.java`
+
+```java
+package com.urlshortener.apigateway.entity;
+
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+@Table("refresh_tokens")
+public class RefreshToken {
+
+    @Id
+    private UUID id;
+
+    @Column("user_id")
+    private UUID userId;
+
+    private String token;
+
+    @Column("expiry_date")
+    private Instant expiryDate;
+
+    private Boolean revoked;
+
+    @Column("created_at")
+    private Instant createdAt;
+}
+```
+
+### 4. Reactive Repositories
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/repository/UserRepository.java`
+
+```java
+package com.urlshortener.apigateway.repository;
+
+import com.urlshortener.apigateway.entity.User;
+import org.springframework.data.repository.reactive.ReactiveCrudRepository;
+import reactor.core.publisher.Mono;
+
+import java.util.UUID;
+
+public interface UserRepository extends ReactiveCrudRepository<User, UUID> {
+    Mono<User> findByEmail(String email);
+    Mono<User> findByUsername(String username);
+    Mono<Boolean> existsByEmail(String email);
+    Mono<Boolean> existsByUsername(String username);
+}
+```
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/repository/UserPasswordRepository.java`
+
+```java
+package com.urlshortener.apigateway.repository;
+
+import com.urlshortener.apigateway.entity.UserPassword;
+import org.springframework.data.repository.reactive.ReactiveCrudRepository;
+import reactor.core.publisher.Mono;
+
+import java.util.UUID;
+
+public interface UserPasswordRepository extends ReactiveCrudRepository<UserPassword, UUID> {
+    Mono<UserPassword> findByUserId(UUID userId);
+}
+```
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/repository/RefreshTokenRepository.java`
+
+```java
+package com.urlshortener.apigateway.repository;
+
+import com.urlshortener.apigateway.entity.RefreshToken;
+import org.springframework.data.repository.reactive.ReactiveCrudRepository;
+import reactor.core.publisher.Mono;
+
+import java.util.UUID;
+
+public interface RefreshTokenRepository extends ReactiveCrudRepository<RefreshToken, UUID> {
+    Mono<RefreshToken> findByToken(String token);
+    Mono<Void> deleteByUserId(UUID userId);
+}
+```
+
+---
+
+## Module 3: JWT Token Provider Engine
+
+Create package `com.urlshortener.apigateway.security` and add `JwtTokenProvider.java`.
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/security/JwtTokenProvider.java`
+
+```java
+package com.urlshortener.apigateway.security;
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
+import java.util.Date;
+import java.util.UUID;
+
+@Component
+public class JwtTokenProvider {
+
+    private final SecretKey secretKey;
+    private final long accessTokenExpirationMs;
+
+    public JwtTokenProvider(
+            @Value("${app.jwt.secret:defaultSecretKeyWhichIsAtLeast32BytesLongForHS256BitSecurity!}") String secret,
+            @Value("${app.jwt.expiration-ms:900000}") long accessTokenExpirationMs // Default: 15 mins
+    ) {
+        this.secretKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+        this.accessTokenExpirationMs = accessTokenExpirationMs;
+    }
+
+    public String generateAccessToken(UUID userId, String username, String email, String role) {
+        Date now = new Date();
+        Date expiryDate = new Date(now.getTime() + accessTokenExpirationMs);
+
+        return Jwts.builder()
+                .subject(userId.toString())
+                .claim("username", username)
+                .claim("email", email)
+                .claim("role", role)
+                .issuedAt(now)
+                .expiration(expiryDate)
+                .signWith(secretKey)
+                .compact();
+    }
+
+    public String generateRefreshToken() {
+        return UUID.randomUUID().toString();
+    }
+
+    public boolean validateToken(String token) {
+        try {
+            Jwts.parser().verifyWith(secretKey).build().parseSignedClaims(token);
+            return true;
+        } catch (JwtException | IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    public Claims getClaimsFromToken(String token) {
+        return Jwts.parser()
+                .verifyWith(secretKey)
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
+    }
+
+    public UUID getUserIdFromToken(String token) {
+        return UUID.fromString(getClaimsFromToken(token).getSubject());
+    }
+}
+```
+
+---
+
+## Module 4: Reactive Security Configuration & Web Filter
+
+### 1. `BearerTokenSecurityContextRepository.java`
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/security/BearerTokenSecurityContextRepository.java`
+
+Extracts `Authorization: Bearer <token>` from HTTP headers and builds the Reactive Security Context.
+
+```java
+package com.urlshortener.apigateway.security;
+
+import io.jsonwebtoken.Claims;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextImpl;
+import org.springframework.security.web.server.context.ServerSecurityContextRepository;
+import org.springframework.stereotype.Component;
+import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Mono;
+
+import java.util.List;
+
+@Component
+@RequiredArgsConstructor
+public class BearerTokenSecurityContextRepository implements ServerSecurityContextRepository {
+
+    private final JwtTokenProvider jwtTokenProvider;
+
+    @Override
+    public Mono<Void> save(ServerWebExchange exchange, SecurityContext context) {
+        return Mono.empty(); // Stateless JWT: no session saving needed
+    }
+
+    @Override
+    public Mono<SecurityContext> load(ServerWebExchange exchange) {
+        String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
+
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+
+            if (jwtTokenProvider.validateToken(token)) {
+                Claims claims = jwtTokenProvider.getClaimsFromToken(token);
+                String userId = claims.getSubject();
+                String role = claims.get("role", String.class);
+
+                List<SimpleGrantedAuthority> authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role));
+                UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(userId, null, authorities);
+
+                return Mono.just(new SecurityContextImpl(auth));
+            }
+        }
+        return Mono.empty();
+    }
+}
+```
+
+### 2. `SecurityConfig.java`
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/config/SecurityConfig.java`
+
+Configures reactive route authorization, password encoder, and web filter chain.
+
+```java
+package com.urlshortener.apigateway.config;
+
+import com.urlshortener.apigateway.security.BearerTokenSecurityContextRepository;
+import com.urlshortener.apigateway.security.CustomAccessDeniedHandler;
+import com.urlshortener.apigateway.security.CustomAuthenticationEntryPoint;
+import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
+import org.springframework.security.config.web.server.ServerHttpSecurity;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.server.SecurityWebFilterChain;
+
+@Configuration
+@EnableWebFluxSecurity
+@RequiredArgsConstructor
+public class SecurityConfig {
+
+    private final BearerTokenSecurityContextRepository securityContextRepository;
+    private final CustomAuthenticationEntryPoint authenticationEntryPoint;
+    private final CustomAccessDeniedHandler accessDeniedHandler;
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    @Bean
+    public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
+        return http
+                .csrf(ServerHttpSecurity.CsrfSpec::disable)
+                .httpBasic(ServerHttpSecurity.HttpBasicSpec::disable)
+                .formLogin(ServerHttpSecurity.FormLoginSpec::disable)
+                .securityContextRepository(securityContextRepository)
+                .exceptionHandling(exceptionHandlingSpec -> exceptionHandlingSpec
+                        .authenticationEntryPoint(authenticationEntryPoint)
+                        .accessDeniedHandler(accessDeniedHandler)
+                )
+                .authorizeExchange(exchanges -> exchanges
+                        .pathMatchers("/", "/health", "/api/v1/health", "/actuator/health", "/favicon.ico").permitAll()
+                        .pathMatchers("/api/v1/auth/**").permitAll()
+                        .pathMatchers("/r/**").permitAll()
+                        .anyExchange().authenticated()
+                )
+                .build();
+    }
+}
+```
+
+---
+
+## Module 5: Data Transfer Objects (DTOs)
+
+Create package `com.urlshortener.apigateway.dto`.
+
+### 1. `RegisterRequest.java`
+
+```java
+package com.urlshortener.apigateway.dto;
+
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+
+public record RegisterRequest(
+    @NotBlank String username,
+    @NotBlank @Email String email,
+    @NotBlank @Size(min = 6) String password
+) {}
+```
+
+### 2. `LoginRequest.java`
+
+```java
+package com.urlshortener.apigateway.dto;
+
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+
+public record LoginRequest(
+    @NotBlank @Email String email,
+    @NotBlank String password
+) {}
+```
+
+### 3. `RefreshTokenRequest.java`
+
+```java
+package com.urlshortener.apigateway.dto;
+
+import jakarta.validation.constraints.NotBlank;
+
+public record RefreshTokenRequest(
+    @NotBlank String refreshToken
+) {}
+```
+
+### 4. `UserDto.java`
+
+```java
+package com.urlshortener.apigateway.dto;
+
+import java.util.UUID;
+
+public record UserDto(
+    UUID id,
+    String username,
+    String email,
+    String role
+) {}
+```
+
+### 5. `AuthResponse.java`
+
+```java
+package com.urlshortener.apigateway.dto;
+
+public record AuthResponse(
+    String accessToken,
+    String refreshToken,
+    String tokenType,
+    long expiresIn,
+    UserDto user
+) {
+    // Note: UserDto can be defined as a standalone file above (UserDto.java)
+    // or as a nested inner record here:
+    // public record UserDto(UUID id, String username, String email, String role) {}
+}
+```
+
+---
+
+## Module 6: Reactive AuthService (Business Logic)
+
+Create package `com.urlshortener.apigateway.service` and add `AuthService.java`.
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/service/AuthService.java`
+
+```java
+package com.urlshortener.apigateway.service;
+
+import com.urlshortener.apigateway.dto.*;
+import com.urlshortener.apigateway.entity.RefreshToken;
+import com.urlshortener.apigateway.entity.User;
+import com.urlshortener.apigateway.entity.UserPassword;
+import com.urlshortener.apigateway.repository.RefreshTokenRepository;
+import com.urlshortener.apigateway.repository.UserPasswordRepository;
+import com.urlshortener.apigateway.repository.UserRepository;
+import com.urlshortener.apigateway.security.JwtTokenProvider;
+import com.urlshortener.apigateway.security.oauth.OAuth2IdentityProvider;
+import com.urlshortener.apigateway.security.oauth.OAuth2ProviderFactory;
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import reactor.core.publisher.Mono;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+
+@Service
+@RequiredArgsConstructor
+public class AuthService {
+
+    private final UserRepository userRepository;
+    private final UserPasswordRepository passwordRepository;
+    private final RefreshTokenRepository refreshTokenRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final JwtTokenProvider jwtTokenProvider;
+    private final OAuth2ProviderFactory oauth2ProviderFactory;
+
+    // ==========================================
+    // 1. PUBLIC AUTHENTICATION APIs
+    // ==========================================
+
+    @Transactional
+    public Mono<AuthResponse> register(RegisterRequest request) {
+        return validateUserDoesNotExist(request.email(), request.username())
+                .then(saveUser(request))
+                .flatMap(user -> saveUserPassword(user, request.password()))
+                .flatMap(this::generateAuthTokenPair);
+    }
+
+    public Mono<AuthResponse> login(LoginRequest request) {
+        return findUserByEmail(request.email())
+                .flatMap(user -> verifyPassword(user, request.password()))
+                .flatMap(this::generateAuthTokenPair);
+    }
+
+    @Transactional
+    public Mono<AuthResponse> refreshToken(RefreshTokenRequest request) {
+        return findValidRefreshToken(request.refreshToken())
+                .flatMap(this::rotateRefreshToken)
+                .flatMap(token -> userRepository.findById(token.getUserId()))
+                .flatMap(this::generateAuthTokenPair);
+    }
+
+    @Transactional
+    public Mono<AuthResponse> processOAuth2Login(String providerName, String code) {
+        OAuth2IdentityProvider provider = oauth2ProviderFactory.getProvider(providerName);
+
+        return provider.processAuthorizationCode(code)
+                .flatMap(this::findOrCreateOAuthUser)
+                .flatMap(this::generateAuthTokenPair);
+    }
+
+    // ==========================================
+    // 2. HELPER METHODS (MODULAR & READABLE)
+    // ==========================================
+
+    private Mono<Void> validateUserDoesNotExist(String email, String username) {
+        return userRepository.existsByEmail(email)
+                .flatMap(emailExists -> emailExists
+                        ? Mono.error(new IllegalArgumentException("Email already registered"))
+                        : userRepository.existsByUsername(username))
+                .flatMap(usernameExists -> usernameExists
+                        ? Mono.error(new IllegalArgumentException("Username already taken"))
+                        : Mono.empty());
+    }
+
+    private Mono<User> saveUser(RegisterRequest request) {
+        User user = User.builder()
+                .username(request.username())
+                .email(request.email())
+                .role("USER")
+                .authType("EMAIL")
+                .createdAt(Instant.now())
+                .updatedAt(Instant.now())
+                .build();
+
+        return userRepository.save(user);
+    }
+
+    private Mono<User> saveUserPassword(User user, String rawPassword) {
+        UserPassword userPassword = UserPassword.builder()
+                .userId(user.getId())
+                .passwordHash(passwordEncoder.encode(rawPassword))
+                .updatedAt(Instant.now())
+                .build();
+
+        return passwordRepository.save(userPassword)
+                .thenReturn(user);
+    }
+
+    private Mono<User> findUserByEmail(String email) {
+        return userRepository.findByEmail(email)
+                .switchIfEmpty(Mono.error(new IllegalArgumentException("Invalid email or password")));
+    }
+
+    private Mono<User> verifyPassword(User user, String rawPassword) {
+        return passwordRepository.findByUserId(user.getId())
+                .flatMap(userPassword -> {
+                    if (!passwordEncoder.matches(rawPassword, userPassword.getPasswordHash())) {
+                        return Mono.error(new IllegalArgumentException("Invalid email or password"));
+                    }
+                    return Mono.just(user);
+                });
+    }
+
+    private Mono<RefreshToken> findValidRefreshToken(String token) {
+        return refreshTokenRepository.findByToken(token)
+                .switchIfEmpty(Mono.error(new IllegalArgumentException("Invalid refresh token")))
+                .flatMap(refreshToken -> {
+                    if (refreshToken.getRevoked() || refreshToken.getExpiryDate().isBefore(Instant.now())) {
+                        return Mono.error(new IllegalArgumentException("Refresh token is expired or revoked"));
+                    }
+                    return Mono.just(refreshToken);
+                });
+    }
+
+    private Mono<RefreshToken> rotateRefreshToken(RefreshToken refreshToken) {
+        refreshToken.setRevoked(true);
+        return refreshTokenRepository.save(refreshToken);
+    }
+
+    private Mono<User> findOrCreateOAuthUser(OAuth2UserInfo userInfo) {
+        return userRepository.findByEmail(userInfo.email())
+                .switchIfEmpty(userRepository.save(User.builder()
+                        .username(userInfo.username())
+                        .email(userInfo.email())
+                        .role("USER")
+                        .authType(userInfo.provider())
+                        .createdAt(Instant.now())
+                        .updatedAt(Instant.now())
+                        .build()));
+    }
+
+    private Mono<AuthResponse> generateAuthTokenPair(User user) {
+        String accessToken = jwtTokenProvider.generateAccessToken(
+                user.getId(), user.getUsername(), user.getEmail(), user.getRole()
+        );
+        String rawRefreshToken = jwtTokenProvider.generateRefreshToken();
+
+        RefreshToken refreshTokenEntity = RefreshToken.builder()
+                .userId(user.getId())
+                .token(rawRefreshToken)
+                .expiryDate(Instant.now().plus(7, ChronoUnit.DAYS))
+                .revoked(false)
+                .createdAt(Instant.now())
+                .build();
+
+        return refreshTokenRepository.save(refreshTokenEntity)
+                .map(savedToken -> new AuthResponse(
+                        accessToken,
+                        rawRefreshToken,
+                        "Bearer",
+                        900,
+                        new UserDto(user.getId(), user.getUsername(), user.getEmail(), user.getRole())
+                ));
+    }
+}
+```
+
+---
+
+## Module 7: Auth REST Controller
+
+Create package `com.urlshortener.apigateway.controller` and add `AuthController.java`.
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/controller/AuthController.java`
+
+```java
+package com.urlshortener.apigateway.controller;
+
+import com.urlshortener.apigateway.dto.*;
+import com.urlshortener.apigateway.service.AuthService;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Mono;
+
+@RestController
+@RequestMapping("/api/v1/auth")
+@RequiredArgsConstructor
+public class AuthController {
+
+    private final AuthService authService;
+
+    @PostMapping("/register")
+    public Mono<ResponseEntity<AuthResponse>> register(@Valid @RequestBody RegisterRequest request) {
+        return authService.register(request)
+                .map(response -> ResponseEntity.status(HttpStatus.CREATED).body(response));
+    }
+
+    @PostMapping("/login")
+    public Mono<ResponseEntity<AuthResponse>> login(@Valid @RequestBody LoginRequest request) {
+        return authService.login(request)
+                .map(ResponseEntity::ok);
+    }
+
+    @PostMapping("/refresh")
+    public Mono<ResponseEntity<AuthResponse>> refreshToken(@Valid @RequestBody RefreshTokenRequest request) {
+        return authService.refreshToken(request)
+                .map(ResponseEntity::ok);
+}
+```
+
+---
+
+### Global Reactive Exception Handler (`GlobalExceptionHandler.java`)
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/exception/GlobalExceptionHandler.java`
+
+Intercepts validation and business logic exceptions (`IllegalArgumentException`), mapping them to clean **HTTP 400 Bad Request** JSON responses instead of default HTTP 500 errors.
+
+```java
+package com.urlshortener.apigateway.exception;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.bind.support.WebExchangeBindException;
+import reactor.core.publisher.Mono;
+
+import java.util.Map;
+
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public Mono<ResponseEntity<Map<String, String>>> handleIllegalArgument(IllegalArgumentException ex) {
+        return Mono.just(ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of(
+                        "error", "Bad Request",
+                        "message", ex.getMessage()
+                )));
+    }
+
+    @ExceptionHandler(WebExchangeBindException.class)
+    public Mono<ResponseEntity<Map<String, String>>> handleValidation(WebExchangeBindException ex) {
+        String message = ex.getBindingResult().getFieldErrors().stream()
+                .map(err -> err.getField() + " " + err.getDefaultMessage())
+                .findFirst()
+                .orElse("Validation error");
+
+        return Mono.just(ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of(
+                        "error", "Validation Error",
+                        "message", message
+                )));
+    }
+}
+```
+
+---
+
+## Module 8: Extensible OAuth2 Identity Provider Architecture (Google, GitHub & Custom Providers)
+
+This module provides a production-grade, extensible **OAuth2 Strategy Pattern Architecture**. Adding any new identity provider (Google, GitHub, Apple, Facebook, Okta) requires creating a single class implementing `OAuth2IdentityProvider` without modifying core authentication code.
+
+### 1. Environment Variable Configuration (`.env` & `.env.example`)
+
+Add OAuth2 client credentials to `apigateway/.env`:
+
+```env
+# OAuth2 Provider Credentials
+OAUTH_GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
+OAUTH_GOOGLE_CLIENT_SECRET=your_google_client_secret
+OAUTH_GOOGLE_REDIRECT_URI=http://localhost:8080/api/v1/auth/oauth2/callback/google
+
+OAUTH_GITHUB_CLIENT_ID=your_github_client_id
+OAUTH_GITHUB_CLIENT_SECRET=your_github_client_secret
+OAUTH_GITHUB_REDIRECT_URI=http://localhost:8080/api/v1/auth/oauth2/callback/github
+```
+
+---
+
+### 2. OAuth2 User Info DTO (`OAuth2UserInfo.java`)
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/dto/OAuth2UserInfo.java`
+
+```java
+package com.urlshortener.apigateway.dto;
+
+public record OAuth2UserInfo(
+    String providerUserId, // Provider's unique sub/id (e.g., Google sub or GitHub id)
+    String email,
+    String username,
+    String provider        // GOOGLE, GITHUB
+) {}
+```
+
+---
+
+### 3. Extensible Provider Interface (`OAuth2IdentityProvider.java`)
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/security/oauth/OAuth2IdentityProvider.java`
+
+```java
+package com.urlshortener.apigateway.security.oauth;
+
+import com.urlshortener.apigateway.dto.OAuth2UserInfo;
+import reactor.core.publisher.Mono;
+
+public interface OAuth2IdentityProvider {
+    /**
+     * Returns the uppercase provider name identifier (e.g. "GOOGLE", "GITHUB").
+     */
+    String getProviderName();
+
+    /**
+     * Exchanges authorization code for provider user details asynchronously.
+     */
+    Mono<OAuth2UserInfo> processAuthorizationCode(String code);
+
+    /**
+     * Constructs the OAuth2 login redirect URL for the frontend client.
+     */
+    String getAuthorizationUrl();
+}
+```
+
+---
+
+### 4. Google Identity Provider Implementation (`GoogleOAuth2Provider.java`)
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/security/oauth/GoogleOAuth2Provider.java`
+
+```java
+package com.urlshortener.apigateway.security.oauth;
+
+import com.urlshortener.apigateway.dto.OAuth2UserInfo;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
+
+import java.util.Map;
+
+@Component
+public class GoogleOAuth2Provider implements OAuth2IdentityProvider {
+
+    private final WebClient webClient = WebClient.create();
+
+    @Value("${oauth.google.client-id:${OAUTH_GOOGLE_CLIENT_ID:google-client-id-fallback}}")
+    private String clientId;
+
+    @Value("${oauth.google.client-secret:${OAUTH_GOOGLE_CLIENT_SECRET:google-client-secret-fallback}}")
+    private String clientSecret;
+
+    @Value("${oauth.google.redirect-uri:${OAUTH_GOOGLE_REDIRECT_URI:http://localhost:8080/api/v1/auth/oauth2/callback/google}}")
+    private String redirectUri;
+
+    @Override
+    public String getProviderName() {
+        return "GOOGLE";
+    }
+
+    @Override
+    public String getAuthorizationUrl() {
+        return "https://accounts.google.com/o/oauth2/v2/auth" +
+                "?client_id=" + clientId +
+                "&redirect_uri=" + redirectUri +
+                "&response_type=code" +
+                "&scope=openid%20email%20profile";
+    }
+
+    @Override
+    public Mono<OAuth2UserInfo> processAuthorizationCode(String code) {
+        return webClient.post()
+                .uri("https://oauth2.googleapis.com/token")
+                .bodyValue(Map.of(
+                        "code", code,
+                        "client_id", clientId,
+                        "client_secret", clientSecret,
+                        "redirect_uri", redirectUri,
+                        "grant_type", "authorization_code"
+                ))
+                .retrieve()
+                .bodyToMono(Map.class)
+                .flatMap(tokenResponse -> {
+                    String accessToken = (String) tokenResponse.get("access_token");
+                    return webClient.get()
+                            .uri("https://www.googleapis.com/oauth2/v3/userinfo")
+                            .headers(h -> h.setBearerAuth(accessToken))
+                            .retrieve()
+                            .bodyToMono(Map.class)
+                            .map(userMap -> new OAuth2UserInfo(
+                                    (String) userMap.get("sub"),
+                                    (String) userMap.get("email"),
+                                    (String) userMap.getOrDefault("name", userMap.get("email")),
+                                    getProviderName()
+                            ));
+                });
+    }
+}
+```
+
+---
+
+### 5. GitHub Identity Provider Implementation (`GitHubOAuth2Provider.java`)
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/security/oauth/GitHubOAuth2Provider.java`
+
+```java
+package com.urlshortener.apigateway.security.oauth;
+
+import com.urlshortener.apigateway.dto.OAuth2UserInfo;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
+
+import java.util.Map;
+
+@Component
+public class GitHubOAuth2Provider implements OAuth2IdentityProvider {
+
+    private final WebClient webClient = WebClient.create();
+
+    @Value("${oauth.github.client-id:${OAUTH_GITHUB_CLIENT_ID:github-client-id-fallback}}")
+    private String clientId;
+
+    @Value("${oauth.github.client-secret:${OAUTH_GITHUB_CLIENT_SECRET:github-client-secret-fallback}}")
+    private String clientSecret;
+
+    @Value("${oauth.github.redirect-uri:${OAUTH_GITHUB_REDIRECT_URI:http://localhost:8080/api/v1/auth/oauth2/callback/github}}")
+    private String redirectUri;
+
+    @Override
+    public String getProviderName() {
+        return "GITHUB";
+    }
+
+    @Override
+    public String getAuthorizationUrl() {
+        return "https://github.com/login/oauth/authorize" +
+                "?client_id=" + clientId +
+                "&redirect_uri=" + redirectUri +
+                "&scope=user:email";
+    }
+
+    @Override
+    public Mono<OAuth2UserInfo> processAuthorizationCode(String code) {
+        return webClient.post()
+                .uri("https://github.com/login/oauth/access_token")
+                .header("Accept", "application/json")
+                .bodyValue(Map.of(
+                        "code", code,
+                        "client_id", clientId,
+                        "client_secret", clientSecret,
+                        "redirect_uri", redirectUri
+                ))
+                .retrieve()
+                .bodyToMono(Map.class)
+                .flatMap(tokenResponse -> {
+                    String accessToken = (String) tokenResponse.get("access_token");
+                    return webClient.get()
+                            .uri("https://api.github.com/user")
+                            .headers(h -> h.setBearerAuth(accessToken))
+                            .retrieve()
+                            .bodyToMono(Map.class)
+                            .map(userMap -> new OAuth2UserInfo(
+                                    String.valueOf(userMap.get("id")),
+                                    (String) userMap.get("email"),
+                                    (String) userMap.get("login"),
+                                    getProviderName()
+                            ));
+                });
+    }
+}
+```
+
+---
+
+### 6. Provider Registry Factory (`OAuth2ProviderFactory.java`)
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/security/oauth/OAuth2ProviderFactory.java`
+
+Spring automatically autowires all components implementing `OAuth2IdentityProvider` into a map.
+
+```java
+package com.urlshortener.apigateway.security.oauth;
+
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+@Component
+public class OAuth2ProviderFactory {
+
+    private final Map<String, OAuth2IdentityProvider> providers;
+
+    public OAuth2ProviderFactory(List<OAuth2IdentityProvider> providerList) {
+        this.providers = providerList.stream()
+                .collect(Collectors.toMap(
+                        p -> p.getProviderName().toUpperCase(),
+                        p -> p
+                ));
+    }
+
+    public OAuth2IdentityProvider getProvider(String providerName) {
+        OAuth2IdentityProvider provider = providers.get(providerName.toUpperCase());
+        if (provider == null) {
+            throw new IllegalArgumentException("Unsupported OAuth2 provider: " + providerName);
+        }
+        return provider;
+    }
+}
+```
+
+---
+
+### 7. AuthService OAuth Integration (`AuthService.java`)
+
+Add `processOAuth2Login` to `AuthService.java`:
+
+```java
+@Transactional
+public Mono<AuthResponse> processOAuth2Login(String providerName, String code) {
+    OAuth2IdentityProvider provider = oAuth2ProviderFactory.getProvider(providerName);
+
+    return provider.processAuthorizationCode(code)
+            .flatMap(this::findOrCreateAuthUser)
+            .flatMap(this::generateAuthTokenPair);
+}
+```
+
+---
+
+### 8. AuthController OAuth Endpoints (`AuthController.java`)
+
+Add OAuth routes to `AuthController.java`:
+
+```java
+@GetMapping("/oauth2/{provider}/login")
+public Mono<ResponseEntity<Map<String, String>>> getOAuth2LoginUrl(@PathVariable String provider) {
+    String url = oauth2ProviderFactory.getProvider(provider).getAuthorizationUrl();
+    return Mono.just(ResponseEntity.ok(Map.of("authorizationUrl", url)));
+}
+
+@GetMapping("/oauth2/{provider}/callback")
+public Mono<ResponseEntity<AuthResponse>> oauth2Callback(
+        @PathVariable String provider,
+        @RequestParam String code) {
+    return authService.processOAuth2Login(provider, code)
+            .map(ResponseEntity::ok);
+}
+```
+
+---
+
+## Module 9: Step-by-Step Testing & Verification Guide
+
+Once you code these files, test your API Gateway manually using `curl` or Postman:
+
+### 1. User Registration (`POST /api/v1/auth/register`)
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "alex",
+    "email": "alex@example.com",
+    "password": "Password123"
+  }'
+```
+
+**Expected Response (`HTTP 201 Created`):**
+
+```json
+{
+	"accessToken": "eyJhbGciOiJIUzI1NiJ9...",
+	"refreshToken": "4a2b1c8f-...",
+	"tokenType": "Bearer",
+	"expiresIn": 900,
+	"user": {
+		"id": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+		"username": "alex",
+		"email": "alex@example.com",
+		"role": "USER"
+	}
+}
+```
+
+### 2. User Sign-In (`POST /api/v1/auth/login`)
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "alex@example.com",
+    "password": "Password123"
+  }'
+```
+
+### 3. Calling an Authenticated Protected Endpoint
+
+```bash
+curl -X GET http://localhost:8080/api/v1/dashboard/links \
+  -H "Authorization: Bearer <your_access_token_here>"
+```
+
+- **With valid token:** Proceed to Gateway controller/gRPC logic.
+- **Without token / invalid signature:** `HTTP 401 Unauthorized`.
+
+---
+
+## Summary
+
+You have designed a modern, production-grade **Reactive Authentication System**:
+
+1. Non-blocking database CRUD via **R2DBC**.
+2. Password hashing via **BCrypt**.
+3. Microsecond local JWT token validation.
+4. Secure **Refresh Token Rotation (RTR)** with **UUID** keys.
+5. Extensible **OAuth2 Strategy Pattern** supporting Google, GitHub, and custom identity providers.

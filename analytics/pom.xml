@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>4.1.0</version>
+		<version>3.2.5</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.urlshortener</groupId>
@@ -17,13 +17,13 @@
 		<java.version>17</java.version>
 	</properties>
 	<dependencies>
-		<!-- 1. Spring Boot Web -->
+		<!-- 1. Spring Boot Web & Validation -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-web</artifactId>
 		</dependency>
 
-		<!-- 2. Spring Kafka (Consumer for analytics.click topic) -->
+		<!-- 2. Spring Kafka (Consumer for url-clicks topic) -->
 		<dependency>
 			<groupId>org.springframework.kafka</groupId>
 			<artifactId>spring-kafka</artifactId>
@@ -39,6 +39,10 @@
 			<artifactId>postgresql</artifactId>
 			<scope>runtime</scope>
 		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-core</artifactId>
+		</dependency>
 
 		<!-- 4. MaxMind GeoIP2 (IP to Country/City resolution) -->
 		<dependency>
@@ -53,8 +57,28 @@
 			<artifactId>grpc-server-spring-boot-starter</artifactId>
 			<version>3.1.0.RELEASE</version>
 		</dependency>
+		<dependency>
+			<groupId>io.grpc</groupId>
+			<artifactId>grpc-netty</artifactId>
+			<version>1.63.0</version>
+		</dependency>
+		<dependency>
+			<groupId>io.grpc</groupId>
+			<artifactId>grpc-protobuf</artifactId>
+			<version>1.63.0</version>
+		</dependency>
+		<dependency>
+			<groupId>io.grpc</groupId>
+			<artifactId>grpc-stub</artifactId>
+			<version>1.63.0</version>
+		</dependency>
 
-		<!-- 6. Lombok -->
+		<!-- 6. Utilities, Lombok & .env Auto-Loader -->
+		<dependency>
+			<groupId>me.paulschwarz</groupId>
+			<artifactId>spring-dotenv</artifactId>
+			<version>4.0.0</version>
+		</dependency>
 		<dependency>
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>
