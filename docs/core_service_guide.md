@@ -202,35 +202,31 @@ option java_multiple_files = true;
 option java_package = "com.urlshortener.grpc";
 
 service UrlService {
-  rpc GetUrlMapping (GetUrlMappingRequest) returns (GetUrlMappingResponse);
-  rpc CreateUrlMapping (CreateUrlMappingRequest) returns (CreateUrlMappingResponse);
+  rpc GetDestinationUrl (UrlRequest) returns (UrlResponse);
+  rpc CreateUrlMapping (CreateUrlRequest) returns (CreateUrlResponse);
 }
 
-message GetUrlMappingRequest {
+message UrlRequest {
   string short_code = 1;
 }
 
-message GetUrlMappingResponse {
-  string short_code = 1;
-  string destination_url = 2;
-  bool is_active = 3;
-  bool found = 4;
-  string user_id = 5;
+message UrlResponse {
+  string destination_url = 1;
+  bool is_active = 2;
+  bool is_found = 3;
+  string short_code = 4;
 }
 
-message CreateUrlMappingRequest {
+message CreateUrlRequest {
   string destination_url = 1;
   string custom_alias = 2;
   string user_id = 3;
-  string tenant_id = 4;
-  string expires_at = 5;
 }
 
-message CreateUrlMappingResponse {
+message CreateUrlResponse {
   string short_code = 1;
   string destination_url = 2;
   bool success = 3;
-  string error_message = 4;
 }
 ```
 
@@ -258,23 +254,22 @@ public class UrlGrpcService extends UrlServiceGrpc.UrlServiceImplBase {
     private final UrlMappingRepository urlMappingRepository;
 
     @Override
-    public void getUrlMapping(GetUrlMappingRequest request, StreamObserver<GetUrlMappingResponse> responseObserver) {
+    public void getDestinationUrl(UrlRequest request, StreamObserver<UrlResponse> responseObserver) {
         Optional<UrlMapping> mappingOpt = urlMappingRepository.findByShortCode(request.getShortCode());
 
         if (mappingOpt.isPresent()) {
             UrlMapping mapping = mappingOpt.get();
-            GetUrlMappingResponse response = GetUrlMappingResponse.newBuilder()
+            UrlResponse response = UrlResponse.newBuilder()
                     .setShortCode(mapping.getShortCode())
                     .setDestinationUrl(mapping.getDestinationUrl())
                     .setIsActive(mapping.getIsActive())
-                    .setFound(true)
-                    .setUserId(mapping.getUserId() != null ? mapping.getUserId().toString() : "")
+                    .setIsFound(true)
                     .build();
             responseObserver.onNext(response);
         } else {
-            GetUrlMappingResponse response = GetUrlMappingResponse.newBuilder()
+            UrlResponse response = UrlResponse.newBuilder()
                     .setShortCode(request.getShortCode())
-                    .setFound(false)
+                    .setIsFound(false)
                     .build();
             responseObserver.onNext(response);
         }

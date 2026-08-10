@@ -1,42 +1,16 @@
 # Project Design Document: HiClickMe (Java Spring Boot Microservices, gRPC, PostgreSQL, Redis & Apache Kafka)
 
 ## 1. Project Overview
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
 **Project Name:** HiClickMe (Multi-Tenant URL Shortener & Analytics SaaS)  
 **Purpose:** Provide a highly scalable, multi-tenant URL shortening platform featuring custom subdomains, dynamic QR code generation, UTM tracking profiles, rate limiting, and premium subscription tiers. The platform is designed using a decoupled Microservices Architecture to support massive redirect throughput, independent service scalability, and high resilience.
 
 ### Core Architecture Goals
-*   **High Performance Redirections:** Under `< 10ms` response times for cached short URLs using a reactive Redirect Microservice backed by Redis.
-*   **Decoupled Database Isolation:** Zero cross-database queries. Each microservice completely owns its database schema / logical database. For development, a single PostgreSQL server instance (port `5432`) hosts 3 logically isolated databases (`hiclickme_auth`, `hiclickme_core`, `hiclickme_analytics`). Downstream services resolve transactional fallbacks over gRPC.
-*   **Unified Edge Security & Auth:** Centralized authentication, OAuth2 login coordination, and token rotation managed by a dedicated API Gateway microservice with its own database.
-*   **Low Latency Inter-Service RPC:** High-efficiency, strongly-typed internal communication using gRPC (HTTP/2 multiplexing, Protocol Buffers binary serialization).
-*   **Write-Isolated Analytics Ingestion:** Decouple click tracking database writes from the redirection flow using Apache Kafka and a dedicated Analytics Ingestion Microservice.
-*   **Independent Scalability:** Separately scale the network-bound Redirect Service, the I/O-bound Analytics Ingestion, and the CPU/API-bound Gateway and Core Admin services.
-=======
-
-**Project Name:** URL Shortener (Multi-Tenant URL Shortener & Analytics SaaS)  
-**Purpose:** Provide a highly scalable, multi-tenant URL shortening platform featuring custom subdomains, dynamic QR code generation, UTM tracking profiles, rate limiting, and premium subscription tiers. The platform is designed using a decoupled Microservices Architecture to support massive redirect throughput, independent service scalability, and high resilience.
-
-### Core Architecture Goals
-=======
-
-**Project Name:** URL Shortener (Multi-Tenant URL Shortener & Analytics SaaS)  
-**Purpose:** Provide a highly scalable, multi-tenant URL shortening platform featuring custom subdomains, dynamic QR code generation, UTM tracking profiles, rate limiting, and premium subscription tiers. The platform is designed using a decoupled Microservices Architecture to support massive redirect throughput, independent service scalability, and high resilience.
-
-### Core Architecture Goals
->>>>>>> Stashed changes
-
 - **High Performance Redirections:** Under `< 10ms` response times for cached short URLs using a reactive Redirect Microservice backed by Redis.
 - **Decoupled Database Isolation:** Zero cross-database queries. Each microservice completely owns its database schema / logical database. For development, a single PostgreSQL server instance (port `5432`) hosts 3 logically isolated databases (`url_shortener_auth`, `url_shortener_core`, `url_shortener_analytics`). Downstream services resolve transactional fallbacks over gRPC.
 - **Unified Edge Security & Auth:** Centralized authentication, OAuth2 login coordination, and token rotation managed by a dedicated API Gateway microservice with its own database.
 - **Low Latency Inter-Service RPC:** High-efficiency, strongly-typed internal communication using gRPC (HTTP/2 multiplexing, Protocol Buffers binary serialization).
 - **Write-Isolated Analytics Ingestion:** Decouple click tracking database writes from the redirection flow using Apache Kafka and a dedicated Analytics Ingestion Microservice.
 - **Independent Scalability:** Separately scale the network-bound Redirect Service, the I/O-bound Analytics Ingestion, and the CPU/API-bound Gateway and Core Admin services.
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
 
 ---
 
@@ -106,47 +80,21 @@ graph TD
 
 ### 3.2 Component Directory & Ports
 
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
 | Service / Component | Public Port | gRPC Port | Technology | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
 | **API Gateway** | `8080` | N/A | Spring Cloud Gateway, Reactive Security | Central entrypoint, routing, rate limiting, OAuth2 Client, token rotation, and REST-to-gRPC translation. |
 | **Core Admin Service** | N/A | `9090` | Spring Boot, gRPC Server, JPA / Hibernate | Manages user metadata configurations, billing/subscriptions, URL mapping databases, and UTM profiles. |
 | **Redirect Service** | `8082` | N/A | Spring WebFlux, Redis Reactive, gRPC Client | Resolves short URLs via Redis (or gRPC Core Service fallback) and publishes click events to Apache Kafka. |
 | **Analytics Service** | N/A | `9091` | Spring Boot, Spring Kafka, MaxMind GeoIP | Consumes Kafka click streams, resolves geographic locations, detects bots, bulk-writes logs, and serves gRPC reports. |
-| **PostgreSQL Shared Instance** | `5432` | N/A | PostgreSQL 16 | Single database container hosting 3 logically isolated databases: `hiclickme_auth`, `hiclickme_core`, and `hiclickme_analytics`. |
+| **PostgreSQL Shared Instance** | `5432` | N/A | PostgreSQL 16 | Single database container hosting 3 logically isolated databases: `url_shortener_auth`, `url_shortener_core`, and `url_shortener_analytics`. |
 | **Redis Cache & Rate Store**| `6379` | N/A | Redis 7.2 | Shares rate limit statistics, redirect caches, and session contexts. |
 | **Apache Kafka Broker** | `9092` | N/A | Confluent Kafka / KRaft Mode | High-throughput streaming buffer decoupling redirection handling from analytics logging. |
-=======
-=======
->>>>>>> Stashed changes
-| Service / Component            | Public Port | gRPC Port | Technology                                  | Purpose                                                                                                                                      |
-| :----------------------------- | :---------- | :-------- | :------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------- |
-| **API Gateway**                | `8080`      | N/A       | Spring Cloud Gateway, Reactive Security     | Central entrypoint, routing, rate limiting, OAuth2 Client, token rotation, and REST-to-gRPC translation.                                     |
-| **Core Admin Service**         | N/A         | `9090`    | Spring Boot, gRPC Server, JPA / Hibernate   | Manages user metadata configurations, billing/subscriptions, URL mapping databases, and UTM profiles.                                        |
-| **Redirect Service**           | `8082`      | N/A       | Spring WebFlux, Redis Reactive, gRPC Client | Resolves short URLs via Redis (or gRPC Core Service fallback) and publishes click events to Apache Kafka.                                    |
-| **Analytics Service**          | N/A         | `9091`    | Spring Boot, Spring Kafka, MaxMind GeoIP    | Consumes Kafka click streams, resolves geographic locations, detects bots, bulk-writes logs, and serves gRPC reports.                        |
-| **PostgreSQL Shared Instance** | `5432`      | N/A       | PostgreSQL 16                               | Single database container hosting 3 logically isolated databases: `url_shortener_auth`, `url_shortener_core`, and `url_shortener_analytics`. |
-| **Redis Cache & Rate Store**   | `6379`      | N/A       | Redis 7.2                                   | Shares rate limit statistics, redirect caches, and session contexts.                                                                         |
-| **Apache Kafka Broker**        | `9092`      | N/A       | Confluent Kafka / KRaft Mode                | High-throughput streaming buffer decoupling redirection handling from analytics logging.                                                     |
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
 
 ---
 
 ## 4. Database Schema & Data Models
 
-<<<<<<< Updated upstream
-### 4.1 PostgreSQL Auth Database (Database: `hiclickme_auth` on Port `5432`)
-=======
 ### 4.1 PostgreSQL Auth Database (Database: `url_shortener_auth` on Port `5432`)
-
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
 Stores strictly credential, token, and identity mapping tables owned and managed exclusively by the `api-gateway-service`.
 
 ```sql
@@ -197,15 +145,7 @@ CREATE TABLE refresh_tokens (
 CREATE INDEX idx_refresh_tokens_token ON refresh_tokens(token);
 ```
 
-<<<<<<< Updated upstream
-### 4.2 PostgreSQL Core Database (Database: `hiclickme_core` on Port `5432`)
-=======
 ### 4.2 PostgreSQL Core Database (Database: `url_shortener_core` on Port `5432`)
-
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
 Stores business-specific URL mappings, configurations, user billing statuses, and marketing profiles owned and managed exclusively by `url-core-service`.
 
 ```sql
@@ -264,15 +204,7 @@ CREATE TABLE utm_profiles (
 CREATE INDEX idx_utm_profiles_url_mapping ON utm_profiles(url_mapping_id);
 ```
 
-<<<<<<< Updated upstream
-### 4.3 PostgreSQL Analytics Database (Database: `hiclickme_analytics` on Port `5432`)
-=======
 ### 4.3 PostgreSQL Analytics Database (Database: `url_shortener_analytics` on Port `5432`)
-
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
 Stores raw event click tracking data managed strictly by `url-analytics-service`.
 
 ```sql
@@ -722,16 +654,58 @@ public class DashboardGatewayController {
 
 ---
 
+## 5. Protocol Buffers (gRPC Service Definitions)
+
+### 5.1 `url_service.proto`
+File: `core/src/main/proto/url_service.proto` / `redirect/src/main/proto/url_service.proto`
+
+```protobuf
+syntax = "proto3";
+
+package com.urlshortener.grpc;
+
+option java_multiple_files = true;
+option java_package = "com.urlshortener.grpc";
+
+service UrlService {
+  rpc GetDestinationUrl (UrlRequest) returns (UrlResponse);
+  rpc CreateUrlMapping (CreateUrlRequest) returns (CreateUrlResponse);
+}
+
+message UrlRequest {
+  string short_code = 1;
+}
+
+message UrlResponse {
+  string destination_url = 1;
+  bool is_active = 2;
+  bool is_found = 3;
+  string short_code = 4;
+}
+
+message CreateUrlRequest {
+  string destination_url = 1;
+  string custom_alias = 2;
+  string user_id = 3;
+}
+
+message CreateUrlResponse {
+  string short_code = 1;
+  string destination_url = 2;
+  bool success = 3;
+}
+```
+
+---
+
+## 6. Microservice Implementations
+
+### 6.1 API Gateway Service (`api-gateway-service` - Port `8080`)
+Coordinates edge authentication, routing, and rate limiting.
+
 ### 6.2 Core Admin Service (`url-core-service` - Port `9090`)
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-Runs headless as an internal gRPC service without public HTTP exposure. It manages the transactional database `hiclickme_core` and executes logical CRUD rules.
-=======
-=======
->>>>>>> Stashed changes
 
 Runs headless as an internal gRPC service without public HTTP exposure. It manages the transactional database `url_shortener_core` and executes logical CRUD rules.
->>>>>>> Stashed changes
 
 #### 1. gRPC Server Implementation
 

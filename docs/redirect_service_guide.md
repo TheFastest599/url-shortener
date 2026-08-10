@@ -65,6 +65,49 @@ grpc:
 
 ## Module 2: gRPC Client Integration (Connecting to Core Service :9090)
 
+### 1. Protobuf Schema (`url_service.proto`)
+File: `redirect/src/main/proto/url_service.proto`
+
+```protobuf
+syntax = "proto3";
+
+package com.urlshortener.grpc;
+
+option java_multiple_files = true;
+option java_package = "com.urlshortener.grpc";
+
+service UrlService {
+  rpc GetDestinationUrl (UrlRequest) returns (UrlResponse);
+  rpc CreateUrlMapping (CreateUrlRequest) returns (CreateUrlResponse);
+}
+
+message UrlRequest {
+  string short_code = 1;
+}
+
+message UrlResponse {
+  string destination_url = 1;
+  bool is_active = 2;
+  bool is_found = 3;
+  string short_code = 4;
+}
+
+message CreateUrlRequest {
+  string destination_url = 1;
+  string custom_alias = 2;
+  string user_id = 3;
+}
+
+message CreateUrlResponse {
+  string short_code = 1;
+  string destination_url = 2;
+  bool success = 3;
+}
+```
+
+---
+
+### 2. gRPC Client Implementation (`CoreGrpcClient.java`)
 File: `redirect/src/main/java/com/urlshortener/redirect/grpc/CoreGrpcClient.java`
 
 ```java
