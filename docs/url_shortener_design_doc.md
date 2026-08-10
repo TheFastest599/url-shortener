@@ -1,16 +1,16 @@
-# Project Design Document: URL Shortener (Java Spring Boot Microservices, gRPC, PostgreSQL, Redis & Apache Kafka)
+# Project Design Document: HiClickMe (Java Spring Boot Microservices, gRPC, PostgreSQL, Redis & Apache Kafka)
 
 ## 1. Project Overview
-**Project Name:** URL Shortener (Multi-Tenant URL Shortener & Analytics SaaS)  
+**Project Name:** HiClickMe (Multi-Tenant URL Shortener & Analytics SaaS)  
 **Purpose:** Provide a highly scalable, multi-tenant URL shortening platform featuring custom subdomains, dynamic QR code generation, UTM tracking profiles, rate limiting, and premium subscription tiers. The platform is designed using a decoupled Microservices Architecture to support massive redirect throughput, independent service scalability, and high resilience.
 
 ### Core Architecture Goals
-*   **High Performance Redirections:** Under `< 10ms` response times for cached short URLs using a reactive Redirect Microservice backed by Redis.
-*   **Decoupled Database Isolation:** Zero cross-database queries. Each microservice completely owns its database schema / logical database. For development, a single PostgreSQL server instance (port `5432`) hosts 3 logically isolated databases (`url_shortener_auth`, `url_shortener_core`, `url_shortener_analytics`). Downstream services resolve transactional fallbacks over gRPC.
-*   **Unified Edge Security & Auth:** Centralized authentication, OAuth2 login coordination, and token rotation managed by a dedicated API Gateway microservice with its own database.
-*   **Low Latency Inter-Service RPC:** High-efficiency, strongly-typed internal communication using gRPC (HTTP/2 multiplexing, Protocol Buffers binary serialization).
-*   **Write-Isolated Analytics Ingestion:** Decouple click tracking database writes from the redirection flow using Apache Kafka and a dedicated Analytics Ingestion Microservice.
-*   **Independent Scalability:** Separately scale the network-bound Redirect Service, the I/O-bound Analytics Ingestion, and the CPU/API-bound Gateway and Core Admin services.
+- **High Performance Redirections:** Under `< 10ms` response times for cached short URLs using a reactive Redirect Microservice backed by Redis.
+- **Decoupled Database Isolation:** Zero cross-database queries. Each microservice completely owns its database schema / logical database. For development, a single PostgreSQL server instance (port `5432`) hosts 3 logically isolated databases (`url_shortener_auth`, `url_shortener_core`, `url_shortener_analytics`). Downstream services resolve transactional fallbacks over gRPC.
+- **Unified Edge Security & Auth:** Centralized authentication, OAuth2 login coordination, and token rotation managed by a dedicated API Gateway microservice with its own database.
+- **Low Latency Inter-Service RPC:** High-efficiency, strongly-typed internal communication using gRPC (HTTP/2 multiplexing, Protocol Buffers binary serialization).
+- **Write-Isolated Analytics Ingestion:** Decouple click tracking database writes from the redirection flow using Apache Kafka and a dedicated Analytics Ingestion Microservice.
+- **Independent Scalability:** Separately scale the network-bound Redirect Service, the I/O-bound Analytics Ingestion, and the CPU/API-bound Gateway and Core Admin services.
 
 ---
 
@@ -22,7 +22,6 @@ An **API Gateway** acts as the single entrypoint for all external client request
 
 1. **Reverse Proxying & Request Routing:**
    Insulates internal microservices by hiding their IP addresses and ports behind a single public URL (e.g., `https://api.hiclickme.com`). It performs path-based, host-based, or header-based routing to forward HTTP requests to the appropriate downstream service.
-   
 2. **Security & Identity Gating (AuthN & AuthZ):**
    Handles all authentication and authorization concerns at the perimeter. It integrates local email/password registration and OAuth2 authentication (Google, GitHub), issues stateless JSON Web Tokens (JWT), manages secure `HttpOnly` refresh token cookies, and performs Refresh Token Rotation (RTR). It blocks unauthorized traffic before it penetrates the internal network.
 
@@ -49,30 +48,30 @@ An **API Gateway** acts as the single entrypoint for all external client request
 
 ```mermaid
 graph TD
-    User([User Client]) -->|1. REST APIs / Auth| API_Gateway[API Gateway :8080]
-    User -->|2. Clicks Short Link| MS_Redirect[Redirect Service :8082]
-    
+    User([User Client]) -->|1. REST / Auth / Short Links /r/**| API_Gateway[API Gateway :8080]
+
     subgraph Microservices Cluster
         %% API Gateway & Auth
-        API_Gateway -->|Reads/Writes Auth| DB_Auth[(PostgreSQL Auth DB: url_shortener_auth)]
+        API_Gateway -->|Reads/Writes Auth| DB_Auth[(PostgreSQL Auth DB: hiclickme_auth)]
         API_Gateway -->|Rate Limit Checks| Redis_Shared[(Redis Cache & Rate Store :6379)]
-        
+        API_Gateway -->|Routes /r/** Redirects| MS_Redirect[Redirect Service :8082]
+
         %% gRPC Channels
         API_Gateway -.->|gRPC :9090| MS_Core[Core Admin Service :8081]
         API_Gateway -.->|gRPC :9091| MS_Analytics[Analytics Service :8083]
-        
+
         %% Redirect Service
         MS_Redirect -->|Checks Cache| Redis_Shared
         MS_Redirect -.->|gRPC: URL Resolution| MS_Core
         MS_Redirect -->|Publish Click Event| KafkaBroker[Apache Kafka Broker :9092]
     end
-    
+
     subgraph Shared PostgreSQL Instance :5432
         DB_Auth
-        DB_Core[(PostgreSQL Core DB: url_shortener_core)]
-        DB_Analytics[(PostgreSQL Analytics DB: url_shortener_analytics)]
+        DB_Core[(PostgreSQL Core DB: hiclickme_core)]
+        DB_Analytics[(PostgreSQL Analytics DB: hiclickme_analytics)]
     end
-    
+
     %% Core & Analytics DBs
     MS_Core -->|Reads/Writes Core| DB_Core
     KafkaBroker -->|Async Ingest| MS_Analytics
@@ -99,11 +98,9 @@ graph TD
 Stores strictly credential, token, and identity mapping tables owned and managed exclusively by the `api-gateway-service`.
 
 ```sql
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
 -- 1. Users Table (Core Identity Reference)
 CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id BIGSERIAL PRIMARY KEY,
     username VARCHAR(255) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
     role VARCHAR(50) DEFAULT 'USER' NOT NULL, -- USER, ADMIN
@@ -116,16 +113,16 @@ CREATE INDEX idx_users_email ON users(email);
 
 -- 2. User Passwords Table (One-to-One, populated if auth_type = 'EMAIL')
 CREATE TABLE user_passwords (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     password_hash VARCHAR(255) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 -- 3. User OAuth Credentials Table (One-to-One/Many, populated if auth_type = OAUTH)
 CREATE TABLE user_oauth_credentials (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     provider VARCHAR(100) NOT NULL, -- GOOGLE, GITHUB
     provider_user_id VARCHAR(255) NOT NULL,
     access_token TEXT,
@@ -138,9 +135,9 @@ CREATE TABLE user_oauth_credentials (
 
 -- 4. Refresh Tokens Table (Database copies for rotation & replay detection)
 CREATE TABLE refresh_tokens (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token TEXT UNIQUE NOT NULL,
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token VARCHAR(255) UNIQUE NOT NULL,
     expiry_date TIMESTAMP WITH TIME ZONE NOT NULL,
     revoked BOOLEAN DEFAULT FALSE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
@@ -152,12 +149,10 @@ CREATE INDEX idx_refresh_tokens_token ON refresh_tokens(token);
 Stores business-specific URL mappings, configurations, user billing statuses, and marketing profiles owned and managed exclusively by `url-core-service`.
 
 ```sql
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
 -- 1. User Metadata Profile Table (Corresponds to User ID in Auth Service DB)
 CREATE TABLE user_metadata (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID UNIQUE NOT NULL, -- Logical foreign key reference to Auth DB Users
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT UNIQUE NOT NULL, -- Logical foreign key reference to Auth DB Users
     tier VARCHAR(50) DEFAULT 'FREE' NOT NULL, -- FREE, PREMIUM, ENTERPRISE
     name VARCHAR(255),
     avatar_url VARCHAR(512),
@@ -169,8 +164,8 @@ CREATE INDEX idx_user_metadata_tier ON user_metadata(tier);
 
 -- 2. Subscriptions Table
 CREATE TABLE subscriptions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL, -- Logical foreign key reference to Auth DB Users
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL, -- Logical foreign key reference to Auth DB Users
     stripe_subscription_id VARCHAR(255),
     status VARCHAR(50) NOT NULL, -- ACTIVE, PAST_DUE, CANCELED
     start_date TIMESTAMP WITH TIME ZONE,
@@ -181,11 +176,11 @@ CREATE INDEX idx_subscriptions_user ON subscriptions(user_id);
 
 -- 3. URL Mappings Table
 CREATE TABLE url_mappings (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id BIGSERIAL PRIMARY KEY,
     short_code VARCHAR(10) UNIQUE NOT NULL,
     destination_url TEXT NOT NULL,
     tenant_id VARCHAR(50) NOT NULL, -- Groups resources logically
-    user_id UUID NOT NULL, -- Owner reference
+    user_id BIGINT NOT NULL, -- Owner reference
     click_count BIGINT DEFAULT 0 NOT NULL,
     is_active BOOLEAN DEFAULT TRUE NOT NULL,
     metadata JSONB,
@@ -196,8 +191,8 @@ CREATE INDEX idx_url_mappings_user ON url_mappings(user_id);
 
 -- 4. UTM Profiles Table
 CREATE TABLE utm_profiles (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    url_mapping_id UUID NOT NULL REFERENCES url_mappings(id) ON DELETE CASCADE,
+    id BIGSERIAL PRIMARY KEY,
+    url_mapping_id BIGINT NOT NULL REFERENCES url_mappings(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
     utm_source VARCHAR(100),
     utm_medium VARCHAR(100),
@@ -213,13 +208,11 @@ CREATE INDEX idx_utm_profiles_url_mapping ON utm_profiles(url_mapping_id);
 Stores raw event click tracking data managed strictly by `url-analytics-service`.
 
 ```sql
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
 -- 1. Click Analytics Table
 CREATE TABLE click_analytics (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id BIGSERIAL PRIMARY KEY,
     short_code VARCHAR(10) NOT NULL,
-    utm_profile_id UUID, -- Logical reference to utm_profiles(id) in Core DB
+    utm_profile_id BIGINT, -- Logical reference to utm_profiles(id) in Core DB
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     user_agent TEXT,
     device_type VARCHAR(50),
@@ -250,7 +243,7 @@ erDiagram
     %% PostgreSQL Auth DB (Port 5431)
     %% ==========================================
     users {
-        uuid id PK
+        bigint id PK
         varchar username UK
         varchar email UK
         varchar role
@@ -258,21 +251,21 @@ erDiagram
         timestamp created_at
     }
     user_passwords {
-        uuid id PK
-        uuid user_id FK "UK"
+        bigint id PK
+        bigint user_id FK "UK"
         varchar password_hash
     }
     user_oauth_credentials {
-        uuid id PK
-        uuid user_id FK "UK"
+        bigint id PK
+        bigint user_id FK "UK"
         varchar provider
         varchar provider_user_id UK
         text access_token
         text refresh_token
     }
     refresh_tokens {
-        uuid id PK
-        uuid user_id FK
+        bigint id PK
+        bigint user_id FK
         varchar token UK
         timestamp expiry_date
         boolean revoked
@@ -282,31 +275,31 @@ erDiagram
     %% PostgreSQL Core DB (Port 5432)
     %% ==========================================
     user_metadata {
-        uuid id PK
-        uuid user_id UK "Logical FK to Auth.users"
+        bigint id PK
+        bigint user_id UK "Logical FK to Auth.users"
         varchar tier
         varchar name
         jsonb settings
     }
     subscriptions {
-        uuid id PK
-        uuid user_id "Logical FK to Auth.users"
+        bigint id PK
+        bigint user_id "Logical FK to Auth.users"
         varchar stripe_subscription_id
         varchar status
         timestamp start_date
         timestamp end_date
     }
     url_mappings {
-        uuid id PK
+        bigint id PK
         varchar short_code UK
         text destination_url
         varchar tenant_id
-        uuid user_id "Logical FK to Auth.users"
+        bigint user_id "Logical FK to Auth.users"
         boolean is_active
     }
     utm_profiles {
-        uuid id PK
-        uuid url_mapping_id FK
+        bigint id PK
+        bigint url_mapping_id FK
         varchar name
         varchar utm_source
         varchar utm_medium
@@ -316,9 +309,9 @@ erDiagram
     %% PostgreSQL Analytics DB (Port 5433)
     %% ==========================================
     click_analytics {
-        uuid id PK
+        bigint id PK
         varchar short_code "Logical FK to Core.url_mappings"
-        uuid utm_profile_id "Logical FK to Core.utm_profiles"
+        bigint utm_profile_id "Logical FK to Core.utm_profiles"
         timestamp timestamp
         text user_agent
         varchar geo_country
@@ -375,12 +368,12 @@ message GetUrlMappingResponse {
   string destination_url = 3;
   bool is_active = 4;
   string tenant_id = 5;
-  string user_id = 6;
+  int64 user_id = 6;
   repeated UtmProfile utm_profiles = 7;
 }
 
 message UtmProfile {
-  string id = 1;
+  int64 id = 1;
   string name = 2;
   string utm_source = 3;
   string utm_medium = 4;
@@ -390,7 +383,7 @@ message UtmProfile {
 message CreateUrlMappingRequest {
   string destination_url = 1;
   string tenant_id = 2;
-  string user_id = 3;
+  int64 user_id = 3;
   string custom_short_code = 4;
 }
 
@@ -420,7 +413,7 @@ service SubscriptionService {
 
 message ValidateTenantLimitRequest {
   string tenant_id = 1;
-  string user_id = 2;
+  int64 user_id = 2;
 }
 
 message ValidateTenantLimitResponse {
@@ -431,7 +424,7 @@ message ValidateTenantLimitResponse {
 }
 
 message GetTenantSubscriptionRequest {
-  string user_id = 1;
+  int64 user_id = 1;
 }
 
 message GetTenantSubscriptionResponse {
@@ -483,37 +476,40 @@ message CountryBreakdown {
 ## 6. Microservice Implementation Specifications
 
 ### 6.1 API Gateway Service (`url-gateway-service` - Port `8080`)
+
 Exposes REST resources externally, processes auth flows with its local DB, handles rate limits with Redis, and makes gRPC requests downstream.
 
 #### 1. Routing & Security Setup (`application.yml`)
+
 ```yaml
 server:
-  port: 8080
+    port: 8080
 
 spring:
-  application:
-    name: url-gateway-service
-  r2dbc:
-    url: r2dbc:postgresql://localhost:5432/hiclickme_auth
-    username: auth_user
-    password: auth_password
-  redis:
-    host: localhost
-    port: 6379
-  cloud:
-    gateway:
-      routes:
-        - id: core_admin_rest_fallback
-          uri: noop:// # Route internally captured by REST-gRPC controllers
-          predicates:
-            - Path=/api/v1/dashboard/**
-        - id: redirect_route
-          uri: http://localhost:8082
-          predicates:
-            - Path=/r/**
+    application:
+        name: url-gateway-service
+    r2dbc:
+        url: r2dbc:postgresql://localhost:5432/hiclickme_auth
+        username: auth_user
+        password: auth_password
+    redis:
+        host: localhost
+        port: 6379
+    cloud:
+        gateway:
+            routes:
+                - id: core_admin_rest_fallback
+                  uri: noop:// # Route internally captured by REST-gRPC controllers
+                  predicates:
+                      - Path=/api/v1/dashboard/**
+                - id: redirect_route
+                  uri: http://localhost:8082
+                  predicates:
+                      - Path=/r/**
 ```
 
 #### 2. Reactive Security Configuration (Spring Security & JWT)
+
 Authenticates clients, reads access tokens, and processes secure Refresh Token Rotation inside the Gateway context.
 
 ```java
@@ -532,7 +528,6 @@ public class SecurityConfiguration {
         return http
             .csrf(ServerHttpSecurity.CsrfSpec::disable)
             .authorizeExchange(exchanges -> exchanges
-                .pathMatchers("/", "/actuator/health").permitAll()
                 .pathMatchers("/api/v1/auth/**").permitAll()
                 .pathMatchers("/r/**").permitAll()
                 .anyExchange().authenticated()
@@ -544,10 +539,13 @@ public class SecurityConfiguration {
 ```
 
 #### 3. Edge Rate Limiter (Redis Lua Token Bucket Filter)
+
 Runs reactive global rate limit evaluations on all edge routes before propagating requests downstream.
 
 ##### Redis Lua Rate Limiting Script (`request_rate_limiter.lua`)
+
 This atomic script implements a Token Bucket algorithm in Redis to prevent race conditions during concurrent requests:
+
 ```lua
 local key = KEYS[1]
 local limit = tonumber(ARGV[1])
@@ -578,6 +576,7 @@ end
 ```
 
 ##### Spring Cloud Gateway Rate Limiting Filter
+
 ```java
 @Component
 public class GatewayRateLimitingFilter implements GlobalFilter, Ordered {
@@ -617,6 +616,7 @@ public class GatewayRateLimitingFilter implements GlobalFilter, Ordered {
 ```
 
 #### 4. REST to gRPC Translation Controller
+
 Gateway translates JSON API requests from the frontend into internal gRPC payloads, queries headless services, and maps results back to client JSON.
 
 ```java
@@ -631,7 +631,7 @@ public class DashboardGatewayController {
     public ResponseEntity<UrlMappingDto> createLink(
             @RequestBody CreateLinkRequest request,
             @AuthenticationPrincipal UserPrincipal principal) {
-        
+
         // Construct protobuf message
         CreateUrlMappingRequest grpcRequest = CreateUrlMappingRequest.newBuilder()
                 .setDestinationUrl(request.destinationUrl())
@@ -654,10 +654,61 @@ public class DashboardGatewayController {
 
 ---
 
+## 5. Protocol Buffers (gRPC Service Definitions)
+
+### 5.1 `url_service.proto`
+File: `core/src/main/proto/url_service.proto` / `redirect/src/main/proto/url_service.proto`
+
+```protobuf
+syntax = "proto3";
+
+package com.urlshortener.grpc;
+
+option java_multiple_files = true;
+option java_package = "com.urlshortener.grpc";
+
+service UrlService {
+  rpc GetDestinationUrl (UrlRequest) returns (UrlResponse);
+  rpc CreateUrlMapping (CreateUrlRequest) returns (CreateUrlResponse);
+}
+
+message UrlRequest {
+  string short_code = 1;
+}
+
+message UrlResponse {
+  string destination_url = 1;
+  bool is_active = 2;
+  bool is_found = 3;
+  string short_code = 4;
+}
+
+message CreateUrlRequest {
+  string destination_url = 1;
+  string custom_alias = 2;
+  string user_id = 3;
+}
+
+message CreateUrlResponse {
+  string short_code = 1;
+  string destination_url = 2;
+  bool success = 3;
+}
+```
+
+---
+
+## 6. Microservice Implementations
+
+### 6.1 API Gateway Service (`api-gateway-service` - Port `8080`)
+Coordinates edge authentication, routing, and rate limiting.
+
 ### 6.2 Core Admin Service (`url-core-service` - Port `9090`)
+
 Runs headless as an internal gRPC service without public HTTP exposure. It manages the transactional database `url_shortener_core` and executes logical CRUD rules.
 
 #### 1. gRPC Server Implementation
+
 Handles incoming request definitions compiled from proto classes.
 
 ```java
@@ -675,7 +726,7 @@ public class UrlServiceImpl extends UrlServiceGrpc.UrlServiceImplBase {
     @Override
     public void getUrlMapping(GetUrlMappingRequest request, StreamObserver<GetUrlMappingResponse> responseObserver) {
         Optional<UrlMapping> mappingOpt = urlRepository.findByShortCode(request.getShortCode());
-        
+
         if (mappingOpt.isEmpty()) {
             responseObserver.onNext(GetUrlMappingResponse.newBuilder().setFound(false).build());
             responseObserver.onCompleted();
@@ -683,7 +734,7 @@ public class UrlServiceImpl extends UrlServiceGrpc.UrlServiceImplBase {
         }
 
         UrlMapping mapping = mappingOpt.get();
-        
+
         GetUrlMappingResponse.Builder builder = GetUrlMappingResponse.newBuilder()
                 .setFound(true)
                 .setShortCode(mapping.getShortCode())
@@ -711,9 +762,11 @@ public class UrlServiceImpl extends UrlServiceGrpc.UrlServiceImplBase {
 ---
 
 ### 6.3 Redirect Service (`url-redirect-service` - Port `8082`)
+
 A reactive WebFlux application executing redirections. It does not establish direct relational database pools.
 
 #### 1. Redirection Resolver with gRPC Fallback Client
+
 Handles redirect execution. Checks Redis cache first. If a cache miss occurs, resolves URL targets by issuing a gRPC call to `url-core-service`.
 
 ```java
@@ -723,7 +776,7 @@ public class RedirectController {
 
     private final ReactiveStringRedisTemplate redisTemplate;
     private final KafkaTemplate<String, ClickEventPayload> kafkaTemplate;
-    
+
     @GrpcClient("url-core-service")
     private UrlServiceGrpc.UrlServiceFutureStub coreServiceStub; // Asynchronous non-blocking gRPC stub
 
@@ -816,6 +869,7 @@ public class RedirectController {
 ---
 
 ### 6.4 Analytics Ingestion Service (`url-analytics-service` - Port `8083` / gRPC `9091`)
+
 Reads event messages from Apache Kafka asynchronously, resolves locations, performs bot filters, bulk-inserts traces, and implements gRPC analytics report feeds.
 
 ```java
@@ -831,14 +885,14 @@ public class ClickConsumer {
     @KafkaListener(topics = "analytics.click", groupId = "analytics-ingest-group", concurrency = "3")
     public void consume(ConsumerRecord<String, ClickEventPayload> record) {
         ClickEventPayload payload = record.value();
-        
+
         ClickAnalytics log = new ClickAnalytics();
         log.setShortCode(payload.shortCode());
         log.setUserAgent(payload.userAgent());
         log.setVisitorId(UUID.randomUUID().toString());
         log.setBot(detectBot(payload.userAgent()));
         log.setGeoCountry(resolveGeoCountry(payload.ipAddress()));
-        
+
         clickRepository.save(log);
     }
 
@@ -861,11 +915,20 @@ public class ClickConsumer {
 
 Coordinates local startup of databases, brokers, caches, and the microservices stack.
 
+### Local Development CLI Command (Memory-Optimized):
+```powershell
+$env:MAVEN_OPTS="-Xmx256m"; mvn spring-boot:run -DskipTests
+```
+
+### Full Stack Docker Orchestration (`docker-compose.yml`):
+
 ```yaml
-version: '3.8'
+version: "3.8"
 
 services:
-  # 1. Shared PostgreSQL DB Instance (Hosts 3 logical databases: url_shortener_auth, url_shortener_core, url_shortener_analytics)
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+  # 1. Shared PostgreSQL DB Instance (Hosts 3 logical databases: hiclickme_auth, hiclickme_core, hiclickme_analytics)
   postgres:
     image: postgres:16-alpine
     container_name: postgres-db
@@ -878,34 +941,56 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./scripts/init-dbs.sql:/docker-entrypoint-initdb.d/init-dbs.sql
+=======
+=======
+>>>>>>> Stashed changes
+    # 1. Shared PostgreSQL DB Instance (Hosts 3 logical databases: url_shortener_auth, url_shortener_core, url_shortener_analytics)
+    postgres:
+        image: postgres:16-alpine
+        container_name: postgres-db
+        environment:
+            POSTGRES_DB: postgres
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: postgres_password
+        ports:
+            - "5432:5432"
+        volumes:
+            - pg_data:/var/lib/postgresql/data
+            - ./scripts/init-dbs.sql:/docker-entrypoint-initdb.d/init-dbs.sql
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
 
-  # 2. Redis Cache & Limit Store
-  redis:
-    image: redis:7.2-alpine
-    container_name: redis-cache
-    ports:
-      - "6379:6379"
+    # 2. Redis Cache & Limit Store
+    redis:
+        image: redis:7.2-alpine
+        container_name: redis-cache
+        ports:
+            - "6379:6379"
 
-  # 3. Apache Kafka (KRaft mode)
-  kafka:
-    image: confluentinc/cp-kafka:7.6.0
-    container_name: kafka-broker
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: 'broker,controller'
-      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29093'
-      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092'
-      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092'
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
-      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
-      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
-      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+    # 3. Apache Kafka (KRaft mode)
+    kafka:
+        image: confluentinc/cp-kafka:7.6.0
+        container_name: kafka-broker
+        ports:
+            - "9092:9092"
+        environment:
+            KAFKA_NODE_ID: 1
+            KAFKA_PROCESS_ROLES: "broker,controller"
+            KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
+            KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092"
+            KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092"
+            KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+            KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+            KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+            KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+            KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+            KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
+            CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
 
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
   # 4. API Gateway Microservice
   url-gateway-service:
     build: ./url-gateway-service
@@ -913,7 +998,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/url_shortener_auth
+      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/hiclickme_auth
       SPRING_REDIS_HOST: redis
     depends_on:
       - postgres
@@ -926,25 +1011,77 @@ services:
     expose:
       - "9090"
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/url_shortener_core
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/hiclickme_core
       SPRING_REDIS_HOST: redis
     depends_on:
       - postgres
       - redis
+=======
+    # 4. API Gateway Microservice
+    url-gateway-service:
+        build: ./url-gateway-service
+        container_name: url-gateway
+        ports:
+            - "8080:8080"
+        environment:
+            SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/url_shortener_auth
+=======
+    # 4. API Gateway Microservice
+    url-gateway-service:
+        build: ./url-gateway-service
+        container_name: url-gateway
+        ports:
+            - "8080:8080"
+        environment:
+            SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/url_shortener_auth
+            SPRING_REDIS_HOST: redis
+        depends_on:
+            - postgres
+            - redis
 
-  # 6. Redirection Microservice
-  url-redirect-service:
-    build: ./url-redirect-service
-    container_name: url-redirect
-    ports:
-      - "8082:8082"
-    environment:
-      SPRING_REDIS_HOST: redis
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-    depends_on:
-      - redis
-      - kafka
+    # 5. Core Admin Microservice (Headless gRPC)
+    url-core-service:
+        build: ./url-core-service
+        container_name: url-core
+        expose:
+            - "9090"
+        environment:
+            SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/url_shortener_core
+>>>>>>> Stashed changes
+            SPRING_REDIS_HOST: redis
+        depends_on:
+            - postgres
+            - redis
 
+<<<<<<< Updated upstream
+    # 5. Core Admin Microservice (Headless gRPC)
+    url-core-service:
+        build: ./url-core-service
+        container_name: url-core
+        expose:
+            - "9090"
+        environment:
+            SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/url_shortener_core
+            SPRING_REDIS_HOST: redis
+        depends_on:
+            - postgres
+            - redis
+>>>>>>> Stashed changes
+
+    # 6. Redirection Microservice
+    url-redirect-service:
+        build: ./url-redirect-service
+        container_name: url-redirect
+        ports:
+            - "8082:8082"
+        environment:
+            SPRING_REDIS_HOST: redis
+            SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+        depends_on:
+            - redis
+            - kafka
+
+<<<<<<< Updated upstream
   # 7. Analytics Ingestion Microservice
   url-analytics-service:
     build: ./url-analytics-service
@@ -952,14 +1089,46 @@ services:
     expose:
       - "9091"
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/url_shortener_analytics
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/hiclickme_analytics
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
     depends_on:
       - postgres
       - kafka
+=======
+=======
+    # 6. Redirection Microservice
+    url-redirect-service:
+        build: ./url-redirect-service
+        container_name: url-redirect
+        ports:
+            - "8082:8082"
+        environment:
+            SPRING_REDIS_HOST: redis
+            SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+        depends_on:
+            - redis
+            - kafka
+
+>>>>>>> Stashed changes
+    # 7. Analytics Ingestion Microservice
+    url-analytics-service:
+        build: ./url-analytics-service
+        container_name: url-analytics
+        expose:
+            - "9091"
+        environment:
+            SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/url_shortener_analytics
+            SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+        depends_on:
+            - postgres
+            - kafka
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
 
 volumes:
-  pg_data:
+    pg_data:
 ```
 
 ---
@@ -969,48 +1138,62 @@ volumes:
 To deploy this microservice architecture into production (e.g., AWS, GCP, or Kubernetes), the following enhancements must be made:
 
 ### 8.1 Service Discovery & Service Mesh
-*   **Service Directory Registry:** Deploy a service registry like **HashiCorp Consul** or rely on **Kubernetes CoreDNS** for internal name resolution.
-*   **Service Mesh (Istio / Linkerd):** Use a service mesh sidecar proxy pattern (Envoy) to secure all internal gRPC channels with mutual TLS (mTLS), automate token distribution, and manage traffic splitting without modifying application code.
+
+- **Service Directory Registry:** Deploy a service registry like **HashiCorp Consul** or rely on **Kubernetes CoreDNS** for internal name resolution.
+- **Service Mesh (Istio / Linkerd):** Use a service mesh sidecar proxy pattern (Envoy) to secure all internal gRPC channels with mutual TLS (mTLS), automate token distribution, and manage traffic splitting without modifying application code.
 
 ### 8.2 Distributed Tracing & Observability
-*   **OpenTelemetry Integration:** Instrument all microservices with OpenTelemetry SDKs.
-*   **Trace Context Propagation:** Ingest standard W3C tracing headers (e.g., `traceparent`) at the API Gateway. Propagate this context via gRPC metadata headers (for internal queries) and Apache Kafka record headers (for ingestion logging).
-*   **Jaeger Visualization:** Export traces to a centralized **Jaeger** or AWS X-Ray collection server. This allows developers to track the exact lifecycle of a request as it hops from Gateway -> Redirect Service -> gRPC Client -> Core Service -> Kafka -> Analytics.
+
+- **OpenTelemetry Integration:** Instrument all microservices with OpenTelemetry SDKs.
+- **Trace Context Propagation:** Ingest standard W3C tracing headers (e.g., `traceparent`) at the API Gateway. Propagate this context via gRPC metadata headers (for internal queries) and Apache Kafka record headers (for ingestion logging).
+- **Jaeger Visualization:** Export traces to a centralized **Jaeger** or AWS X-Ray collection server. This allows developers to track the exact lifecycle of a request as it hops from Gateway -> Redirect Service -> gRPC Client -> Core Service -> Kafka -> Analytics.
 
 ### 8.3 gRPC Load Balancing & Client Optimization
-*   **Headless Services (Kubernetes):** gRPC keeps long-lived HTTP/2 TCP connections open. Standard L4 load balancers will route all requests down a single connection, causing load imbalances. Deploy Kubernetes headless services paired with **client-side round-robin load balancing** or use a gRPC-aware proxy like **Envoy** to route calls at the L7 layer.
-*   **Multiplexing & Connection Pooling:** Tune client-side stubs to share a single, multiplexed HTTP/2 connection channel across multiple threads, keeping latencies under `< 1ms`.
+
+- **Headless Services (Kubernetes):** gRPC keeps long-lived HTTP/2 TCP connections open. Standard L4 load balancers will route all requests down a single connection, causing load imbalances. Deploy Kubernetes headless services paired with **client-side round-robin load balancing** or use a gRPC-aware proxy like **Envoy** to route calls at the L7 layer.
+- **Multiplexing & Connection Pooling:** Tune client-side stubs to share a single, multiplexed HTTP/2 connection channel across multiple threads, keeping latencies under `< 1ms`.
 
 ### 8.4 Database Tuning & High Availability
-*   **PgBouncer Connection Poolers:** PostgreSQL creates a dedicated OS thread per connection, which consumes substantial memory. Deploy **PgBouncer** in front of each PostgreSQL database instance to manage transaction-level connection pooling.
-*   **Multi-AZ Relational Replication:** Run AWS RDS PostgreSQL in a Multi-AZ clustering setup, hosting a synchronous primary database instance alongside hot, cross-region read replicas.
-*   **Redis Sentinel or Cluster:** Replace single Redis instances with a Redis Cluster containing automatic failover support (Master-Replica configuration) to prevent session or rate limit data loss.
+
+- **PgBouncer Connection Poolers:** PostgreSQL creates a dedicated OS thread per connection, which consumes substantial memory. Deploy **PgBouncer** in front of each PostgreSQL database instance to manage transaction-level connection pooling.
+- **Multi-AZ Relational Replication:** Run AWS RDS PostgreSQL in a Multi-AZ clustering setup, hosting a synchronous primary database instance alongside hot, cross-region read replicas.
+- **Redis Sentinel or Cluster:** Replace single Redis instances with a Redis Cluster containing automatic failover support (Master-Replica configuration) to prevent session or rate limit data loss.
 
 ### 8.5 Reliable Kafka Messaging & Scale
-*   **Replication & In-Sync Replicas:** Configure Kafka topics with a `replication.factor` of 3 and `min.insync.replicas` of 2. Ensure producers use `acks=all` to guarantee click events are safely persisted before returning HTTP success values.
-*   **Partition Strategy:** Split the `analytics.click` topic into multiple partitions (e.g., 6 or 12 partitions) using the shortened URL `shortCode` as the key. This scales processing capacities by distributing event streams across concurrent consumer groups while guaranteeing strict message ordering per link.
-*   **Transactional Outbox Pattern:** Avoid two-phase commits (2PC) between database saves and Kafka publishes inside administrative services. Store changes first in a local DB transactional outbox table, and stream events to Kafka using **Debezium** Change Data Capture (CDC).
+
+- **Replication & In-Sync Replicas:** Configure Kafka topics with a `replication.factor` of 3 and `min.insync.replicas` of 2. Ensure producers use `acks=all` to guarantee click events are safely persisted before returning HTTP success values.
+- **Partition Strategy:** Split the `analytics.click` topic into multiple partitions (e.g., 6 or 12 partitions) using the shortened URL `shortCode` as the key. This scales processing capacities by distributing event streams across concurrent consumer groups while guaranteeing strict message ordering per link.
+- **Transactional Outbox Pattern:** Avoid two-phase commits (2PC) between database saves and Kafka publishes inside administrative services. Store changes first in a local DB transactional outbox table, and stream events to Kafka using **Debezium** Change Data Capture (CDC).
 
 ### 8.6 Security & Infrastructure Secrets
-*   **Internal Network Isolation:** Downstream gRPC services must be deployed within isolated private subnets, allowing connections only from the API Gateway or designated internal security groups.
-*   **Secrets Manager Configuration:** Remove plaintext database passwords and API tokens from code configurations. Retrieve them at startup from managed security systems (e.g., AWS Secrets Manager or HashiCorp Vault).
-*   **Web Application Firewall (WAF):** Place a WAF in front of the API Gateway to filter out SQL injections, Cross-Site Scripting (XSS), and automated bot floods before they reach gateway routers.
+
+- **Internal Network Isolation:** Downstream gRPC services must be deployed within isolated private subnets, allowing connections only from the API Gateway or designated internal security groups.
+- **Secrets Manager Configuration:** Remove plaintext database passwords and API tokens from code configurations. Retrieve them at startup from managed security systems (e.g., AWS Secrets Manager or HashiCorp Vault).
+- **Web Application Firewall (WAF):** Place a WAF in front of the API Gateway to filter out SQL injections, Cross-Site Scripting (XSS), and automated bot floods before they reach gateway routers.
 
 ### 8.7 User Deletion & Resource Cleanup Mechanics (Transactional Outbox vs. gRPC Sync)
 
-When a user deletes their account (initiated at the **API Gateway**), the system must cleanly delete their URL mappings in the **Core Admin Service** database (`url_shortener_core`) and evict all active short URL mappings cached in the **Redirect Service** Redis cluster. 
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+When a user deletes their account (initiated at the **API Gateway**), the system must cleanly delete their URL mappings in the **Core Admin Service** database (`hiclickme_core`) and evict all active short URL mappings cached in the **Redirect Service** Redis cluster. 
+=======
+When a user deletes their account (initiated at the **API Gateway**), the system must cleanly delete their URL mappings in the **Core Admin Service** database (`url_shortener_core`) and evict all active short URL mappings cached in the **Redirect Service** Redis cluster.
+>>>>>>> Stashed changes
+=======
+When a user deletes their account (initiated at the **API Gateway**), the system must cleanly delete their URL mappings in the **Core Admin Service** database (`url_shortener_core`) and evict all active short URL mappings cached in the **Redirect Service** Redis cluster.
+>>>>>>> Stashed changes
 
 In a distributed, production-grade microservice architecture, handling this deletion presents a choice between **Synchronous gRPC Orchestration** and **Asynchronous Message-Driven Eventual Consistency**.
 
 #### 1. Comparison: Synchronous gRPC vs. Asynchronous Message Queue
 
-| Architectural Attribute | Synchronous gRPC Orchestration | Asynchronous Message Queue (Outbox Pattern) |
-| :--- | :--- | :--- |
-| **Response Latency** | **High:** Gateway blocks client request while executing multiple synchronous downstream DB deletions and Redis evictions. | **Sub-10ms:** Gateway writes a local deletion record and returns success instantly. |
-| **Resilience & Fault Tolerance** | **Low:** If the downstream Core service or Redis is down, the user deletion fails, or leaves the system in an inconsistent state. | **High:** If downstream services are down, Kafka buffers events. Once services recover, they consume events and complete cleanup. |
-| **Consistency Guarantee** | **Strong (Dual-Write Risk):** Attempts immediate consistency but faces partial failures if one network request succeeds and another fails. | **Eventual Consistency:** Guaranteed delivery. Replay mechanics and DLQs handle edge failure cases. |
-| **Temporal Coupling** | **High:** All services must be fully operational and reachable at the exact moment of user deletion. | **Low:** Services are completely decoupled. Gateway does not need to know about URL deletion or Redis evictions. |
-| **Database Isolation** | Enforced (clean API interface boundaries). | Enforced (event-driven messaging boundaries). |
+| Architectural Attribute          | Synchronous gRPC Orchestration                                                                                                             | Asynchronous Message Queue (Outbox Pattern)                                                                                       |
+| :------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------- |
+| **Response Latency**             | **High:** Gateway blocks client request while executing multiple synchronous downstream DB deletions and Redis evictions.                  | **Sub-10ms:** Gateway writes a local deletion record and returns success instantly.                                               |
+| **Resilience & Fault Tolerance** | **Low:** If the downstream Core service or Redis is down, the user deletion fails, or leaves the system in an inconsistent state.          | **High:** If downstream services are down, Kafka buffers events. Once services recover, they consume events and complete cleanup. |
+| **Consistency Guarantee**        | **Strong (Dual-Write Risk):** Attempts immediate consistency but faces partial failures if one network request succeeds and another fails. | **Eventual Consistency:** Guaranteed delivery. Replay mechanics and DLQs handle edge failure cases.                               |
+| **Temporal Coupling**            | **High:** All services must be fully operational and reachable at the exact moment of user deletion.                                       | **Low:** Services are completely decoupled. Gateway does not need to know about URL deletion or Redis evictions.                  |
+| **Database Isolation**           | Enforced (clean API interface boundaries).                                                                                                 | Enforced (event-driven messaging boundaries).                                                                                     |
 
 #### 2. Selected Production Pattern: Asynchronous Event-Driven Cleanup (Transactional Outbox)
 
@@ -1063,13 +1246,23 @@ sequenceDiagram
 #### 3. Execution Phase Walkthrough
 
 1. **Step 1: Auth Deletion & Outbox Write (Gateway Boundary)**
-   The `url-gateway-service` initiates a single database transaction in `url_shortener_auth`. It soft-deletes or hard-deletes the user and writes a `UserDeletedEvent` to a local `outbox` table in the *same* database transaction. This guarantees that the user deletion and the event creation succeed or fail together. The API Gateway then immediately returns an HTTP `200 OK` response to the client.
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+   The `url-gateway-service` initiates a single database transaction in `hiclickme_auth`. It soft-deletes or hard-deletes the user and writes a `UserDeletedEvent` to a local `outbox` table in the *same* database transaction. This guarantees that the user deletion and the event creation succeed or fail together. The API Gateway then immediately returns an HTTP `200 OK` response to the client.
+=======
+   The `url-gateway-service` initiates a single database transaction in `url_shortener_auth`. It soft-deletes or hard-deletes the user and writes a `UserDeletedEvent` to a local `outbox` table in the _same_ database transaction. This guarantees that the user deletion and the event creation succeed or fail together. The API Gateway then immediately returns an HTTP `200 OK` response to the client.
+>>>>>>> Stashed changes
+=======
+   The `url-gateway-service` initiates a single database transaction in `url_shortener_auth`. It soft-deletes or hard-deletes the user and writes a `UserDeletedEvent` to a local `outbox` table in the _same_ database transaction. This guarantees that the user deletion and the event creation succeed or fail together. The API Gateway then immediately returns an HTTP `200 OK` response to the client.
+>>>>>>> Stashed changes
 
 2. **Step 2: CDC Publishing**
-   A Change Data Capture (CDC) tool (e.g., Debezium) mines the PostgreSQL Write-Ahead Log (WAL) of `url_shortener_auth` for changes in the `outbox` table and publishes the `UserDeletedEvent` to the `auth.user-events` Kafka topic.
+   A Change Data Capture (CDC) tool (e.g., Debezium) mines the PostgreSQL Write-Ahead Log (WAL) of `hiclickme_auth` for changes in the `outbox` table and publishes the `UserDeletedEvent` to the `auth.user-events` Kafka topic.
 
 3. **Step 3: Core Database Deletion**
-   The headless `url-core-service` consumes the `UserDeletedEvent`. It initiates a PostgreSQL transaction in `url_shortener_core` to clean up all URL mappings and subscriptions:
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+   The headless `url-core-service` consumes the `UserDeletedEvent`. It initiates a PostgreSQL transaction in `hiclickme_core` to clean up all URL mappings and subscriptions:
    ```sql
    -- Core deletes URL mappings and returns the short codes that were deleted
    DELETE FROM url_mappings 
@@ -1077,23 +1270,39 @@ sequenceDiagram
    RETURNING short_code;
    ```
    The service intercepts the list of deleted short codes and inserts a `CacheEvictionEvent` into the `core_outbox` table in the *same* PostgreSQL transaction.
+=======
+=======
+>>>>>>> Stashed changes
+   The headless `url-core-service` consumes the `UserDeletedEvent`. It initiates a PostgreSQL transaction in `url_shortener_core` to clean up all URL mappings and subscriptions:
+
+    ```sql
+    -- Core deletes URL mappings and returns the short codes that were deleted
+    DELETE FROM url_mappings
+    WHERE user_id = 123
+    RETURNING short_code;
+    ```
+
+    The service intercepts the list of deleted short codes and inserts a `CacheEvictionEvent` into the `core_outbox` table in the _same_ PostgreSQL transaction.
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
 
 4. **Step 4: Cache Eviction**
    Debezium publishes the cache eviction event containing the short codes array (e.g., `["abc", "xyz"]`) to the `url.eviction` Kafka topic.
    The reactive `url-redirect-service` consumes the event and executes an asynchronous, non-blocking Redis `UNLINK` command (which is much faster than `DEL` as it reclaims memory space in a background thread) to purge the cached redirects:
-   ```java
-   // Reactive cache purge inside url-redirect-service
-   @KafkaListener(topics = "url.eviction", groupId = "redirect-cache-eviction")
-   public Mono<Void> handleEvictionEvent(UrlEvictionEvent event) {
-       List<String> cacheKeys = event.getShortCodes().stream()
-           .map(code -> "url:redirect:" + code)
-           .collect(Collectors.toList());
-       
-       return redisTemplate.opsForValue().delete(cacheKeys) // executes non-blocking pipeline
-           .doOnSuccess(count -> log.info("Successfully evicted {} keys from Redis.", count))
-           .then();
-   }
-   ```
+    ```java
+    // Reactive cache purge inside url-redirect-service
+    @KafkaListener(topics = "url.eviction", groupId = "redirect-cache-eviction")
+    public Mono<Void> handleEvictionEvent(UrlEvictionEvent event) {
+        List<String> cacheKeys = event.getShortCodes().stream()
+            .map(code -> "url:redirect:" + code)
+            .collect(Collectors.toList());
+
+        return redisTemplate.opsForValue().delete(cacheKeys) // executes non-blocking pipeline
+            .doOnSuccess(count -> log.info("Successfully evicted {} keys from Redis.", count))
+            .then();
+    }
+    ```
 
 By utilizing this asynchronous, transaction-outbox pattern, we achieve robust database isolation, microsecond-level API Gateway responsiveness, and guaranteed eventual cache consistency even in the presence of downstream network partitions or node failures.
-

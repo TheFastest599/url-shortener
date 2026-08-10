@@ -38,7 +38,7 @@ public class SecurityConfig {
                         .accessDeniedHandler(accessDeniedHandler)
                 )
                 .authorizeExchange(exchanges -> exchanges
-                        .pathMatchers("/", "/health", "/api/v1/health", "/actuator/health").permitAll()
+                        .pathMatchers("/", "/health", "/api/v1/health", "/actuator/health", "/favicon.ico").permitAll()
                         .pathMatchers("/api/v1/auth/**").permitAll()
                         .pathMatchers("/r/**").permitAll()
                         .anyExchange().authenticated()

@@ -109,7 +109,7 @@ public class AuthService {
                 .flatMap(userPassword -> {
                     if(!passwordEncoder.matches(rawPassword, userPassword.getPasswordHash()))
                     {
-                        return Mono.error(new IllegalArgumentException("Email or password om"));
+                        return Mono.error(new IllegalArgumentException("Invalid Email or Password"));
                     }
                     return  Mono.just(user);
                 });

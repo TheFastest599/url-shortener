@@ -10,6 +10,7 @@ By following this guide, you will learn how to build a modern, high-performance 
 ---
 
 ## Table of Contents
+
 1. [Key Concepts & Architecture](#1-key-concepts--architecture)
 2. [Module 1: Database Schema Setup (`url_shortener_auth`)](#module-1-database-schema-setup-url_shortener_auth)
 3. [Module 2: R2DBC Reactive Entities & Repositories](#module-2-r2dbc-reactive-entities--repositories)
@@ -27,10 +28,10 @@ By following this guide, you will learn how to build a modern, high-performance 
 
 Before writing code, let's understand why we use these specific components:
 
-* **Reactive I/O (Spring WebFlux):** Unlike standard Spring MVC which uses one thread per request (blocking Tomcat), WebFlux runs on an event loop (Netty). It can process thousands of concurrent requests with very small memory usage.
-* **Non-Blocking Database Access (R2DBC):** JDBC is blocking, which defeats the purpose of WebFlux. R2DBC (Reactive Relational Database Connectivity) allows PostgreSQL queries to run asynchronously via reactive `Mono` and `Flux` streams.
-* **Stateless JWT Authentication:** The Gateway signs a short-lived **Access Token** (e.g. 15 mins). On every request, the Gateway verifies the token signature locally in memory **without querying PostgreSQL**, making API verification microsecond-fast.
-* **Refresh Token Rotation (RTR):** A long-lived **Refresh Token** (7 days) is stored in an `HttpOnly` secure cookie. Every time the access token expires, the client calls `/refresh`. The Gateway invalidates the old refresh token, issues a brand-new refresh token + access token pair, and saves the record in PostgreSQL.
+- **Reactive I/O (Spring WebFlux):** Unlike standard Spring MVC which uses one thread per request (blocking Tomcat), WebFlux runs on an event loop (Netty). It can process thousands of concurrent requests with very small memory usage.
+- **Non-Blocking Database Access (R2DBC):** JDBC is blocking, which defeats the purpose of WebFlux. R2DBC (Reactive Relational Database Connectivity) allows PostgreSQL queries to run asynchronously via reactive `Mono` and `Flux` streams.
+- **Stateless JWT Authentication:** The Gateway signs a short-lived **Access Token** (e.g. 15 mins). On every request, the Gateway verifies the token signature locally in memory **without querying PostgreSQL**, making API verification microsecond-fast.
+- **Refresh Token Rotation (RTR):** A long-lived **Refresh Token** (7 days) is stored in an `HttpOnly` secure cookie. Every time the access token expires, the client calls `/refresh`. The Gateway invalidates the old refresh token, issues a brand-new refresh token + access token pair, and saves the record in PostgreSQL.
 
 ---
 
@@ -98,6 +99,7 @@ CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token);
 Create package `com.urlshortener.apigateway.entity` and `com.urlshortener.apigateway.repository`.
 
 ### 1. `User.java` Entity
+
 File: `apigateway/src/main/java/com/urlshortener/apigateway/entity/User.java`
 
 ```java
@@ -142,6 +144,7 @@ public class User {
 ```
 
 ### 2. `UserPassword.java` Entity
+
 File: `apigateway/src/main/java/com/urlshortener/apigateway/entity/UserPassword.java`
 
 ```java
@@ -180,6 +183,7 @@ public class UserPassword {
 ```
 
 ### 3. `RefreshToken.java` Entity
+
 File: `apigateway/src/main/java/com/urlshortener/apigateway/entity/RefreshToken.java`
 
 ```java
@@ -222,6 +226,7 @@ public class RefreshToken {
 ```
 
 ### 4. Reactive Repositories
+
 File: `apigateway/src/main/java/com/urlshortener/apigateway/repository/UserRepository.java`
 
 ```java
@@ -358,6 +363,7 @@ public class JwtTokenProvider {
 ## Module 4: Reactive Security Configuration & Web Filter
 
 ### 1. `BearerTokenSecurityContextRepository.java`
+
 File: `apigateway/src/main/java/com/urlshortener/apigateway/security/BearerTokenSecurityContextRepository.java`
 
 Extracts `Authorization: Bearer <token>` from HTTP headers and builds the Reactive Security Context.
@@ -414,6 +420,7 @@ public class BearerTokenSecurityContextRepository implements ServerSecurityConte
 ```
 
 ### 2. `SecurityConfig.java`
+
 File: `apigateway/src/main/java/com/urlshortener/apigateway/config/SecurityConfig.java`
 
 Configures reactive route authorization, password encoder, and web filter chain.
@@ -459,7 +466,7 @@ public class SecurityConfig {
                         .accessDeniedHandler(accessDeniedHandler)
                 )
                 .authorizeExchange(exchanges -> exchanges
-                        .pathMatchers("/", "/health", "/api/v1/health", "/actuator/health").permitAll()
+                        .pathMatchers("/", "/health", "/api/v1/health", "/actuator/health", "/favicon.ico").permitAll()
                         .pathMatchers("/api/v1/auth/**").permitAll()
                         .pathMatchers("/r/**").permitAll()
                         .anyExchange().authenticated()
@@ -476,6 +483,7 @@ public class SecurityConfig {
 Create package `com.urlshortener.apigateway.dto`.
 
 ### 1. `RegisterRequest.java`
+
 ```java
 package com.urlshortener.apigateway.dto;
 
@@ -491,6 +499,7 @@ public record RegisterRequest(
 ```
 
 ### 2. `LoginRequest.java`
+
 ```java
 package com.urlshortener.apigateway.dto;
 
@@ -504,6 +513,7 @@ public record LoginRequest(
 ```
 
 ### 3. `RefreshTokenRequest.java`
+
 ```java
 package com.urlshortener.apigateway.dto;
 
@@ -515,6 +525,7 @@ public record RefreshTokenRequest(
 ```
 
 ### 4. `UserDto.java`
+
 ```java
 package com.urlshortener.apigateway.dto;
 
@@ -529,6 +540,7 @@ public record UserDto(
 ```
 
 ### 5. `AuthResponse.java`
+
 ```java
 package com.urlshortener.apigateway.dto;
 
@@ -539,7 +551,7 @@ public record AuthResponse(
     long expiresIn,
     UserDto user
 ) {
-    // Note: UserDto can be defined as a standalone file above (UserDto.java) 
+    // Note: UserDto can be defined as a standalone file above (UserDto.java)
     // or as a nested inner record here:
     // public record UserDto(UUID id, String username, String email, String role) {}
 }
@@ -627,7 +639,7 @@ public class AuthService {
 
     private Mono<Void> validateUserDoesNotExist(String email, String username) {
         return userRepository.existsByEmail(email)
-                .flatMap(emailExists -> emailExists 
+                .flatMap(emailExists -> emailExists
                         ? Mono.error(new IllegalArgumentException("Email already registered"))
                         : userRepository.existsByUsername(username))
                 .flatMap(usernameExists -> usernameExists
@@ -771,6 +783,53 @@ public class AuthController {
     public Mono<ResponseEntity<AuthResponse>> refreshToken(@Valid @RequestBody RefreshTokenRequest request) {
         return authService.refreshToken(request)
                 .map(ResponseEntity::ok);
+}
+```
+
+---
+
+### Global Reactive Exception Handler (`GlobalExceptionHandler.java`)
+
+File: `apigateway/src/main/java/com/urlshortener/apigateway/exception/GlobalExceptionHandler.java`
+
+Intercepts validation and business logic exceptions (`IllegalArgumentException`), mapping them to clean **HTTP 400 Bad Request** JSON responses instead of default HTTP 500 errors.
+
+```java
+package com.urlshortener.apigateway.exception;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.bind.support.WebExchangeBindException;
+import reactor.core.publisher.Mono;
+
+import java.util.Map;
+
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public Mono<ResponseEntity<Map<String, String>>> handleIllegalArgument(IllegalArgumentException ex) {
+        return Mono.just(ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of(
+                        "error", "Bad Request",
+                        "message", ex.getMessage()
+                )));
+    }
+
+    @ExceptionHandler(WebExchangeBindException.class)
+    public Mono<ResponseEntity<Map<String, String>>> handleValidation(WebExchangeBindException ex) {
+        String message = ex.getBindingResult().getFieldErrors().stream()
+                .map(err -> err.getField() + " " + err.getDefaultMessage())
+                .findFirst()
+                .orElse("Validation error");
+
+        return Mono.just(ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of(
+                        "error", "Validation Error",
+                        "message", message
+                )));
     }
 }
 ```
@@ -782,6 +841,7 @@ public class AuthController {
 This module provides a production-grade, extensible **OAuth2 Strategy Pattern Architecture**. Adding any new identity provider (Google, GitHub, Apple, Facebook, Okta) requires creating a single class implementing `OAuth2IdentityProvider` without modifying core authentication code.
 
 ### 1. Environment Variable Configuration (`.env` & `.env.example`)
+
 Add OAuth2 client credentials to `apigateway/.env`:
 
 ```env
@@ -798,6 +858,7 @@ OAUTH_GITHUB_REDIRECT_URI=http://localhost:8080/api/v1/auth/oauth2/callback/gith
 ---
 
 ### 2. OAuth2 User Info DTO (`OAuth2UserInfo.java`)
+
 File: `apigateway/src/main/java/com/urlshortener/apigateway/dto/OAuth2UserInfo.java`
 
 ```java
@@ -814,6 +875,7 @@ public record OAuth2UserInfo(
 ---
 
 ### 3. Extensible Provider Interface (`OAuth2IdentityProvider.java`)
+
 File: `apigateway/src/main/java/com/urlshortener/apigateway/security/oauth/OAuth2IdentityProvider.java`
 
 ```java
@@ -843,6 +905,7 @@ public interface OAuth2IdentityProvider {
 ---
 
 ### 4. Google Identity Provider Implementation (`GoogleOAuth2Provider.java`)
+
 File: `apigateway/src/main/java/com/urlshortener/apigateway/security/oauth/GoogleOAuth2Provider.java`
 
 ```java
@@ -918,6 +981,7 @@ public class GoogleOAuth2Provider implements OAuth2IdentityProvider {
 ---
 
 ### 5. GitHub Identity Provider Implementation (`GitHubOAuth2Provider.java`)
+
 File: `apigateway/src/main/java/com/urlshortener/apigateway/security/oauth/GitHubOAuth2Provider.java`
 
 ```java
@@ -992,6 +1056,7 @@ public class GitHubOAuth2Provider implements OAuth2IdentityProvider {
 ---
 
 ### 6. Provider Registry Factory (`OAuth2ProviderFactory.java`)
+
 File: `apigateway/src/main/java/com/urlshortener/apigateway/security/oauth/OAuth2ProviderFactory.java`
 
 Spring automatically autowires all components implementing `OAuth2IdentityProvider` into a map.
@@ -1031,6 +1096,7 @@ public class OAuth2ProviderFactory {
 ---
 
 ### 7. AuthService OAuth Integration (`AuthService.java`)
+
 Add `processOAuth2Login` to `AuthService.java`:
 
 ```java
@@ -1047,6 +1113,7 @@ public Mono<AuthResponse> processOAuth2Login(String providerName, String code) {
 ---
 
 ### 8. AuthController OAuth Endpoints (`AuthController.java`)
+
 Add OAuth routes to `AuthController.java`:
 
 ```java
@@ -1072,6 +1139,7 @@ public Mono<ResponseEntity<AuthResponse>> oauth2Callback(
 Once you code these files, test your API Gateway manually using `curl` or Postman:
 
 ### 1. User Registration (`POST /api/v1/auth/register`)
+
 ```bash
 curl -X POST http://localhost:8080/api/v1/auth/register \
   -H "Content-Type: application/json" \
@@ -1081,23 +1149,26 @@ curl -X POST http://localhost:8080/api/v1/auth/register \
     "password": "Password123"
   }'
 ```
+
 **Expected Response (`HTTP 201 Created`):**
+
 ```json
 {
-  "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
-  "refreshToken": "4a2b1c8f-...",
-  "tokenType": "Bearer",
-  "expiresIn": 900,
-  "user": {
-    "id": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
-    "username": "alex",
-    "email": "alex@example.com",
-    "role": "USER"
-  }
+	"accessToken": "eyJhbGciOiJIUzI1NiJ9...",
+	"refreshToken": "4a2b1c8f-...",
+	"tokenType": "Bearer",
+	"expiresIn": 900,
+	"user": {
+		"id": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+		"username": "alex",
+		"email": "alex@example.com",
+		"role": "USER"
+	}
 }
 ```
 
 ### 2. User Sign-In (`POST /api/v1/auth/login`)
+
 ```bash
 curl -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
@@ -1108,20 +1179,23 @@ curl -X POST http://localhost:8080/api/v1/auth/login \
 ```
 
 ### 3. Calling an Authenticated Protected Endpoint
+
 ```bash
 curl -X GET http://localhost:8080/api/v1/dashboard/links \
   -H "Authorization: Bearer <your_access_token_here>"
 ```
-* **With valid token:** Proceed to Gateway controller/gRPC logic.
-* **Without token / invalid signature:** `HTTP 401 Unauthorized`.
+
+- **With valid token:** Proceed to Gateway controller/gRPC logic.
+- **Without token / invalid signature:** `HTTP 401 Unauthorized`.
 
 ---
 
 ## Summary
+
 You have designed a modern, production-grade **Reactive Authentication System**:
+
 1. Non-blocking database CRUD via **R2DBC**.
 2. Password hashing via **BCrypt**.
 3. Microsecond local JWT token validation.
 4. Secure **Refresh Token Rotation (RTR)** with **UUID** keys.
 5. Extensible **OAuth2 Strategy Pattern** supporting Google, GitHub, and custom identity providers.
-

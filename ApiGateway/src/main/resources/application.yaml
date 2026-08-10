@@ -20,7 +20,7 @@ spring:
         - id: redirect-service-route
           uri: http://localhost:8082
           predicates:
-            - Path=/r/**
+            - Path=/r/**, /s/**
   r2dbc:
     url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:url_shortener_auth}
     username: ${DB_USERNAME:postgres}
