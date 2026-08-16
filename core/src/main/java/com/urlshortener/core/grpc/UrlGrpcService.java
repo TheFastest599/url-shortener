@@ -22,22 +22,27 @@ public class UrlGrpcService extends UrlServiceGrpc.UrlServiceImplBase {
     public void getDestinationUrl(UrlRequest request, StreamObserver<UrlResponse> responseObserver){
         Optional<UrlMapping> mappingOpt = urlMappingRepository.findByShortCode(request.getShortCode());
 
-        if(mappingOpt.isPresent()){
-            UrlMapping mapping = mappingOpt.get();
-            UrlResponse response = UrlResponse.newBuilder()
-                    .setShortCode(mapping.getShortCode())
-                    .setDestinationUrl(mapping.getDestinationUrl())
-                    .setIsActive(mapping.getIsActive())
-                    .setIsFound(true)
-                    .build();
-            responseObserver.onNext(response);
-        } else {
-            UrlResponse response = UrlResponse.newBuilder()
+//        Guard clause
+        if (mappingOpt.isEmpty()){
+            UrlResponse notFoundResponse = UrlResponse.newBuilder()
                     .setShortCode(request.getShortCode())
                     .setIsFound(false)
                     .build();
-            responseObserver.onNext(response);
+            responseObserver.onNext(notFoundResponse);
+            responseObserver.onCompleted();
+            return;
         }
+
+//        Happy Path
+        UrlMapping mapping = mappingOpt.get();
+        UrlResponse response = UrlResponse.newBuilder()
+                .setShortCode(mapping.getShortCode())
+                .setDestinationUrl(mapping.getDestinationUrl())
+                .setIsActive(mapping.getIsActive())
+                .setIsFound(true)
+                .build();
+        responseObserver.onNext(response);
         responseObserver.onCompleted();
+
     }
 }

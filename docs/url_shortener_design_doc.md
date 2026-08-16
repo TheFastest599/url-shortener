@@ -149,59 +149,37 @@ CREATE INDEX idx_refresh_tokens_token ON refresh_tokens(token);
 Stores business-specific URL mappings, configurations, user billing statuses, and marketing profiles owned and managed exclusively by `url-core-service`.
 
 ```sql
--- 1. User Metadata Profile Table (Corresponds to User ID in Auth Service DB)
-CREATE TABLE user_metadata (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT UNIQUE NOT NULL, -- Logical foreign key reference to Auth DB Users
-    tier VARCHAR(50) DEFAULT 'FREE' NOT NULL, -- FREE, PREMIUM, ENTERPRISE
-    name VARCHAR(255),
-    avatar_url VARCHAR(512),
-    phone VARCHAR(50),
-    settings JSONB,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
-);
-CREATE INDEX idx_user_metadata_tier ON user_metadata(tier);
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- 2. Subscriptions Table
-CREATE TABLE subscriptions (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL, -- Logical foreign key reference to Auth DB Users
-    stripe_subscription_id VARCHAR(255),
-    status VARCHAR(50) NOT NULL, -- ACTIVE, PAST_DUE, CANCELED
-    start_date TIMESTAMP WITH TIME ZONE,
-    end_date TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
-);
-CREATE INDEX idx_subscriptions_user ON subscriptions(user_id);
-
--- 3. URL Mappings Table
-CREATE TABLE url_mappings (
-    id BIGSERIAL PRIMARY KEY,
+-- 1. URL Mappings Table
+CREATE TABLE IF NOT EXISTS url_mappings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     short_code VARCHAR(10) UNIQUE NOT NULL,
     destination_url TEXT NOT NULL,
-    tenant_id VARCHAR(50) NOT NULL, -- Groups resources logically
-    user_id BIGINT NOT NULL, -- Owner reference
-    click_count BIGINT DEFAULT 0 NOT NULL,
+    tenant_id VARCHAR(50) DEFAULT 'default' NOT NULL,
+    user_id UUID NOT NULL, -- Logical FK to Auth DB users table
     is_active BOOLEAN DEFAULT TRUE NOT NULL,
-    metadata JSONB,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+    expires_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
-CREATE INDEX idx_url_mappings_short_code ON url_mappings(short_code);
-CREATE INDEX idx_url_mappings_user ON url_mappings(user_id);
+CREATE INDEX IF NOT EXISTS idx_url_mappings_short_code ON url_mappings(short_code);
+CREATE INDEX IF NOT EXISTS idx_url_mappings_user_id ON url_mappings(user_id);
 
--- 4. UTM Profiles Table
-CREATE TABLE utm_profiles (
-    id BIGSERIAL PRIMARY KEY,
-    url_mapping_id BIGINT NOT NULL REFERENCES url_mappings(id) ON DELETE CASCADE,
+-- 2. UTM Profiles Table
+CREATE TABLE IF NOT EXISTS utm_profiles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    url_mapping_id UUID NOT NULL REFERENCES url_mappings(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
     utm_source VARCHAR(100),
     utm_medium VARCHAR(100),
     utm_campaign VARCHAR(100),
     utm_term VARCHAR(100),
     utm_content VARCHAR(100),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
-CREATE INDEX idx_utm_profiles_url_mapping ON utm_profiles(url_mapping_id);
+CREATE INDEX IF NOT EXISTS idx_utm_profiles_url_mapping ON utm_profiles(url_mapping_id);
 ```
 
 ### 4.3 PostgreSQL Analytics Database (Database: `url_shortener_analytics` on Port `5432`)
@@ -703,58 +681,152 @@ message CreateUrlResponse {
 ### 6.1 API Gateway Service (`api-gateway-service` - Port `8080`)
 Coordinates edge authentication, routing, and rate limiting.
 
-### 6.2 Core Admin Service (`url-core-service` - Port `9090`)
+#### 6.2 Core Admin Service (`url-core-service` - REST Port `8081`, gRPC Port `9090`)
 
-Runs headless as an internal gRPC service without public HTTP exposure. It manages the transactional database `url_shortener_core` and executes logical CRUD rules.
+Manages URL mapping persistence, Base62 shortcode generation, UTM profiles, and runs a high-performance gRPC Server on port `9090` to serve resolution lookups.
 
-#### 1. gRPC Server Implementation
-
-Handles incoming request definitions compiled from proto classes.
+#### 1. gRPC Server Implementation (`UrlGrpcService.java`)
 
 ```java
 @GrpcService
-public class UrlServiceImpl extends UrlServiceGrpc.UrlServiceImplBase {
+@RequiredArgsConstructor
+public class UrlGrpcService extends UrlServiceGrpc.UrlServiceImplBase {
 
-    private final UrlMappingRepository urlRepository;
-    private final StringRedisTemplate redisTemplate;
-
-    public UrlServiceImpl(UrlMappingRepository urlRepository, StringRedisTemplate redisTemplate) {
-        this.urlRepository = urlRepository;
-        this.redisTemplate = redisTemplate;
-    }
+    private final UrlMappingRepository urlMappingRepository;
 
     @Override
-    public void getUrlMapping(GetUrlMappingRequest request, StreamObserver<GetUrlMappingResponse> responseObserver) {
-        Optional<UrlMapping> mappingOpt = urlRepository.findByShortCode(request.getShortCode());
+    public void getDestinationUrl(UrlRequest request, StreamObserver<UrlResponse> responseObserver) {
+        Optional<UrlMapping> mappingOpt = urlMappingRepository.findByShortCode(request.getShortCode());
 
+        // Guard Clause: Eliminate negative space (Not Found) first
         if (mappingOpt.isEmpty()) {
-            responseObserver.onNext(GetUrlMappingResponse.newBuilder().setFound(false).build());
+            UrlResponse notFoundResponse = UrlResponse.newBuilder()
+                    .setShortCode(request.getShortCode())
+                    .setIsFound(false)
+                    .build();
+            responseObserver.onNext(notFoundResponse);
             responseObserver.onCompleted();
             return;
         }
 
+        // Happy Path: Flat, clean, unnested execution
         UrlMapping mapping = mappingOpt.get();
-
-        GetUrlMappingResponse.Builder builder = GetUrlMappingResponse.newBuilder()
-                .setFound(true)
+        UrlResponse response = UrlResponse.newBuilder()
                 .setShortCode(mapping.getShortCode())
                 .setDestinationUrl(mapping.getDestinationUrl())
-                .setIsActive(mapping.isActive())
-                .setTenantId(mapping.getTenantId())
-                .setUserId(mapping.getUserId());
+                .setIsActive(mapping.getIsActive())
+                .setIsFound(true)
+                .build();
 
-        // Map internal UTM profiles list to gRPC elements
-        mapping.getUtmProfiles().forEach(p -> builder.addUtmProfiles(
-                UtmProfile.newBuilder()
-                        .setId(p.getId())
-                        .setName(p.getName())
-                        .setUtmSource(p.getUtmSource())
-                        .setUtmMedium(p.getUtmMedium())
-                        .build()
-        ));
-
-        responseObserver.onNext(builder.build());
+        responseObserver.onNext(response);
         responseObserver.onCompleted();
+    }
+}
+```
+
+#### 2. REST API Controller & Service (`UrlCoreController.java`)
+
+Provides full CRUD operations for URLs and UTM campaign profiles:
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| **`POST`** | `/api/v1/urls` | Create short URL (supports custom alias and UTM params). |
+| **`GET`** | `/api/v1/urls` | List user's URLs. |
+| **`GET`** | `/api/v1/urls/{urlId}` | Get a specific URL mapping by UUID. |
+| **`GET`** | `/api/v1/urls/short/{shortCode}` | Get URL mapping details by shortcode. |
+| **`PUT`** | `/api/v1/urls/{urlId}` | Update URL target, active state, expiration (evicts Redis cache). |
+| **`DELETE`** | `/api/v1/urls/{urlId}` | Delete shortlink & UTM profiles (evicts Redis cache). |
+| **`POST`** | `/api/v1/urls/{urlId}/utm` | Add UTM campaign profile to link. |
+| **`GET`** | `/api/v1/urls/{urlId}/utm` | List UTM profiles for link. |
+| **`GET`** | `/api/v1/urls/utm/{utmId}` | Get a specific UTM campaign profile by UUID. |
+| **`PUT`** | `/api/v1/urls/utm/{utmId}` | Update UTM campaign profile parameters. |
+| **`DELETE`** | `/api/v1/urls/utm/{utmId}` | Delete UTM campaign profile. |
+
+```java
+@RestController
+@RequestMapping("/api/v1/urls")
+@RequiredArgsConstructor
+public class UrlCoreController {
+
+    private final UrlCoreService urlCoreService;
+
+    // --- URL ENDPOINTS ---
+
+    @PostMapping
+    public ResponseEntity<UrlMapping> createShortUrl(
+            @Valid @RequestBody CreateUrlRequest request,
+            @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
+        return ResponseEntity.ok(urlCoreService.createShortUrl(request, userId));
+    }
+
+    @GetMapping
+    public ResponseEntity<List<UrlMapping>> getUserUrls(
+            @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
+        return ResponseEntity.ok(urlCoreService.getUserUrls(userId));
+    }
+
+    @GetMapping("/{urlId}")
+    public ResponseEntity<UrlMapping> getUrl(
+            @PathVariable UUID urlId,
+            @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
+        return ResponseEntity.ok(urlCoreService.getUrl(urlId, userId));
+    }
+
+    @GetMapping("/short/{shortCode}")
+    public ResponseEntity<Optional<UrlMapping>> getUrlFromShortCode(@PathVariable String shortCode) {
+        return ResponseEntity.ok(urlCoreService.getUrlFromShortCode(shortCode));
+    }
+
+    @PutMapping("/{urlId}")
+    public ResponseEntity<UrlMapping> updateShortUrl(
+            @PathVariable UUID urlId,
+            @Valid @RequestBody UpdateUrlRequest request,
+            @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
+        return ResponseEntity.ok(urlCoreService.updatedShortUrl(urlId, request, userId));
+    }
+
+    @DeleteMapping("/{urlId}")
+    public ResponseEntity<Void> deleteShortUrl(
+            @PathVariable UUID urlId,
+            @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
+        urlCoreService.deleteShortUrl(urlId, userId);
+        return ResponseEntity.noContent().build();
+    }
+
+    // --- UTM PROFILE ENDPOINTS ---
+
+    @PostMapping("/{urlId}/utm")
+    public ResponseEntity<UtmProfile> addUtmProfile(
+            @PathVariable UUID urlId,
+            @Valid @RequestBody CreateUtmRequest request) {
+        return ResponseEntity.ok(urlCoreService.addUtmProfile(urlId, request));
+    }
+
+    @GetMapping("/{urlId}/utm")
+    public ResponseEntity<List<UtmProfile>> getUtmProfiles(
+            @PathVariable UUID urlId,
+            @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
+        return ResponseEntity.ok(urlCoreService.getUtmProfiles(urlId, userId));
+    }
+
+    @GetMapping("/utm/{utmId}")
+    public ResponseEntity<UtmProfile> getUtmProfile(
+            @PathVariable UUID utmId,
+            @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
+        return ResponseEntity.ok(urlCoreService.getUtmProfile(utmId, userId));
+    }
+
+    @PutMapping("/utm/{utmId}")
+    public ResponseEntity<UtmProfile> updateUtmProfile(
+            @PathVariable UUID utmId,
+            @RequestBody UpdateUtmRequest request) {
+        return ResponseEntity.ok(urlCoreService.updateUtmProfile(utmId, request));
+    }
+
+    @DeleteMapping("/utm/{utmId}")
+    public ResponseEntity<Void> deleteUtmProfile(@PathVariable UUID utmId) {
+        urlCoreService.deleteUtmProfile(utmId);
+        return ResponseEntity.noContent().build();
     }
 }
 ```

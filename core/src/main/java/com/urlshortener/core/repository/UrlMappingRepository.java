@@ -15,4 +15,5 @@ public interface UrlMappingRepository extends JpaRepository<UrlMapping, UUID> {
     boolean existsByShortCode (String shortCode);
     List<UrlMapping> findByUserId(UUID userId);
 
+
 }
