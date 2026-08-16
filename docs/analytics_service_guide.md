@@ -151,6 +151,12 @@ public interface ClickAnalyticsRepository extends JpaRepository<ClickAnalytics, 
 
     @Query("SELECT c.browser AS browser, COUNT(c) AS count FROM ClickAnalytics c WHERE c.shortCode = :shortCode GROUP BY c.browser")
     List<Map<String, Object>> countClicksByBrowser(String shortCode);
+
+    @Query("SELECT c.deviceType AS device, COUNT(c) AS count FROM ClickAnalytics c WHERE c.shortCode = :shortCode GROUP BY c.deviceType")
+    List<Map<String, Object>> countClicksByDevice(String shortCode);
+
+    @Query("SELECT c.referrer AS referrer, COUNT(c) AS count FROM ClickAnalytics c WHERE c.shortCode = :shortCode AND c.referrer IS NOT NULL GROUP BY c.referrer")
+    List<Map<String, Object>> countClicksByReferrer(String shortCode);
 }
 ```
 
@@ -222,7 +228,9 @@ public record AnalyticsSummaryDto(
         String shortCode,
         long totalClicks,
         List<Map<String, Object>> clicksByCountry,
-        List<Map<String, Object>> clicksByBrowser
+        List<Map<String, Object>> clicksByBrowser,
+        List<Map<String, Object>> clicksByDevice,
+        List<Map<String, Object>> clicksByReferrer
 ) {}
 ```
 
@@ -255,8 +263,10 @@ public class AnalyticsController {
         long total = repository.countByShortCode(shortCode);
         var countries = repository.countClicksByCountry(shortCode);
         var browsers = repository.countClicksByBrowser(shortCode);
+        var devices = repository.countClicksByDevice(shortCode);
+        var referrers = repository.countClicksByReferrer(shortCode);
 
-        return ResponseEntity.ok(new AnalyticsSummaryDto(shortCode, total, countries, browsers));
+        return ResponseEntity.ok(new AnalyticsSummaryDto(shortCode, total, countries, browsers, devices, referrers));
     }
 }
 ```
