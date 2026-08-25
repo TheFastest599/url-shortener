@@ -18,6 +18,7 @@ public class ClickAnalytics {
 
     @Id
     @GeneratedValue(strategy = GenerationType.AUTO)
+    @Column(name = "id")
     private UUID uuid;
 
     @Column(name = "short_code", nullable = false, length = 10)
