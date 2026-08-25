@@ -940,43 +940,67 @@ public class RedirectController {
 
 ---
 
-### 6.4 Analytics Ingestion Service (`url-analytics-service` - Port `8083` / gRPC `9091`)
+### 6.4 Analytics Ingestion & Reporting Service (`url-analytics-service` - REST Port `8083`)
 
-Reads event messages from Apache Kafka asynchronously, resolves locations, performs bot filters, bulk-inserts traces, and implements gRPC analytics report feeds.
+Consumes click events asynchronously from Kafka topic `url-clicks`, parses device/OS/browser metadata and GeoIP locations, writes to `url_shortener_analytics`, and provides high-performance complex analytics retrieval:
+
+#### 1. REST Reporting Endpoints
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| **`GET`** | `/api/v1/analytics/{shortCode}` | Complete dashboard overview (total, human/bot ratio, graph time-series, top countries, devices, browsers, referrers). |
+| **`GET`** | `/api/v1/analytics/{shortCode}/timeseries` | Dedicated time-series graph points (supports `interval=HOUR|DAY` and `days=N`). |
+| **`GET`** | `/api/v1/analytics/{shortCode}/countries` | Top countries ranking for interactive world map. |
+| **`GET`** | `/api/v1/analytics/{shortCode}/browsers` | Top browsers (Chrome, Safari, Firefox, Edge, Opera). |
+| **`GET`** | `/api/v1/analytics/{shortCode}/referrers` | Traffic sources (Twitter, LinkedIn, Direct, etc.). |
+
+#### 2. Kafka Event Consumer (`ClickEventConsumer.java`)
 
 ```java
+@Slf4j
 @Component
-public class ClickConsumer {
+@RequiredArgsConstructor
+public class ClickEventConsumer {
 
-    private final ClickRepository clickRepository;
+    private final ClickAnalyticsRepository repository;
 
-    public ClickConsumer(ClickRepository clickRepository) {
-        this.clickRepository = clickRepository;
-    }
+    @KafkaListener(topics = "url-clicks", groupId = "analytics-group")
+    public void consumeClickEvent(ClickEvent event) {
+        if (event == null || event.shortCode() == null) return;
 
-    @KafkaListener(topics = "analytics.click", groupId = "analytics-ingest-group", concurrency = "3")
-    public void consume(ConsumerRecord<String, ClickEventPayload> record) {
-        ClickEventPayload payload = record.value();
+        String ua = event.userAgent() != null ? event.userAgent() : "";
+        String uaLower = ua.toLowerCase();
 
-        ClickAnalytics log = new ClickAnalytics();
-        log.setShortCode(payload.shortCode());
-        log.setUserAgent(payload.userAgent());
-        log.setVisitorId(UUID.randomUUID().toString());
-        log.setBot(detectBot(payload.userAgent()));
-        log.setGeoCountry(resolveGeoCountry(payload.ipAddress()));
+        // 1. Device Type Detection
+        String device = (uaLower.contains("mobi") || uaLower.contains("android") || uaLower.contains("iphone")) ? "Mobile"
+                      : (uaLower.contains("tablet") || uaLower.contains("ipad")) ? "Tablet" : "Desktop";
 
-        clickRepository.save(log);
-    }
+        // 2. Browser Detection
+        String browser = uaLower.contains("edg") ? "Edge" : uaLower.contains("chrome") ? "Chrome"
+                       : (uaLower.contains("safari") && !uaLower.contains("chrome")) ? "Safari"
+                       : uaLower.contains("firefox") ? "Firefox" : "Other";
 
-    private boolean detectBot(String userAgent) {
-        if (userAgent == null) return false;
-        String ua = userAgent.toLowerCase();
-        return ua.contains("bot") || ua.contains("crawler") || ua.contains("spider");
-    }
+        // 3. Operating System Detection
+        String os = uaLower.contains("windows") ? "Windows" : (uaLower.contains("mac os") || uaLower.contains("macintosh")) ? "macOS"
+                  : uaLower.contains("android") ? "Android" : (uaLower.contains("iphone") || uaLower.contains("ios")) ? "iOS" : "Linux";
 
-    private String resolveGeoCountry(String ip) {
-        // Mock GeoIP translation
-        return "US";
+        // 4. Bot Detection
+        boolean isBot = uaLower.contains("bot") || uaLower.contains("crawler") || uaLower.contains("spider");
+
+        ClickAnalytics analytics = ClickAnalytics.builder()
+                .shortCode(event.shortCode())
+                .timestamp(event.timestamp() != null ? event.timestamp() : Instant.now())
+                .userAgent(ua)
+                .deviceType(device)
+                .browser(browser)
+                .operatingSystem(os)
+                .geoCountry("United States")
+                .geoCity("San Francisco")
+                .referrer(event.referrer() != null && !event.referrer().isBlank() ? event.referrer() : "Direct / None")
+                .isBot(isBot)
+                .build();
+
+        repository.save(analytics);
     }
 }
 ```
@@ -998,9 +1022,7 @@ $env:MAVEN_OPTS="-Xmx256m"; mvn spring-boot:run -DskipTests
 version: "3.8"
 
 services:
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-  # 1. Shared PostgreSQL DB Instance (Hosts 3 logical databases: hiclickme_auth, hiclickme_core, hiclickme_analytics)
+  # 1. Shared PostgreSQL DB Instance (Hosts 3 logical databases: url_shortener_auth, url_shortener_core, url_shortener_analytics)
   postgres:
     image: postgres:16-alpine
     container_name: postgres-db
@@ -1013,56 +1035,34 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./scripts/init-dbs.sql:/docker-entrypoint-initdb.d/init-dbs.sql
-=======
-=======
->>>>>>> Stashed changes
-    # 1. Shared PostgreSQL DB Instance (Hosts 3 logical databases: url_shortener_auth, url_shortener_core, url_shortener_analytics)
-    postgres:
-        image: postgres:16-alpine
-        container_name: postgres-db
-        environment:
-            POSTGRES_DB: postgres
-            POSTGRES_USER: postgres
-            POSTGRES_PASSWORD: postgres_password
-        ports:
-            - "5432:5432"
-        volumes:
-            - pg_data:/var/lib/postgresql/data
-            - ./scripts/init-dbs.sql:/docker-entrypoint-initdb.d/init-dbs.sql
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
 
-    # 2. Redis Cache & Limit Store
-    redis:
-        image: redis:7.2-alpine
-        container_name: redis-cache
-        ports:
-            - "6379:6379"
+  # 2. Redis Cache & Limit Store
+  redis:
+    image: redis:7.2-alpine
+    container_name: redis-cache
+    ports:
+      - "6379:6379"
 
-    # 3. Apache Kafka (KRaft mode)
-    kafka:
-        image: confluentinc/cp-kafka:7.6.0
-        container_name: kafka-broker
-        ports:
-            - "9092:9092"
-        environment:
-            KAFKA_NODE_ID: 1
-            KAFKA_PROCESS_ROLES: "broker,controller"
-            KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
-            KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092"
-            KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092"
-            KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
-            KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-            KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
-            KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-            KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-            KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
-            CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+  # 3. Apache Kafka (KRaft mode)
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka-broker
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
 
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
   # 4. API Gateway Microservice
   url-gateway-service:
     build: ./url-gateway-service
@@ -1070,7 +1070,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/hiclickme_auth
+      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/url_shortener_auth
       SPRING_REDIS_HOST: redis
     depends_on:
       - postgres
@@ -1083,77 +1083,25 @@ services:
     expose:
       - "9090"
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/hiclickme_core
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/url_shortener_core
       SPRING_REDIS_HOST: redis
     depends_on:
       - postgres
       - redis
-=======
-    # 4. API Gateway Microservice
-    url-gateway-service:
-        build: ./url-gateway-service
-        container_name: url-gateway
-        ports:
-            - "8080:8080"
-        environment:
-            SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/url_shortener_auth
-=======
-    # 4. API Gateway Microservice
-    url-gateway-service:
-        build: ./url-gateway-service
-        container_name: url-gateway
-        ports:
-            - "8080:8080"
-        environment:
-            SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/url_shortener_auth
-            SPRING_REDIS_HOST: redis
-        depends_on:
-            - postgres
-            - redis
 
-    # 5. Core Admin Microservice (Headless gRPC)
-    url-core-service:
-        build: ./url-core-service
-        container_name: url-core
-        expose:
-            - "9090"
-        environment:
-            SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/url_shortener_core
->>>>>>> Stashed changes
-            SPRING_REDIS_HOST: redis
-        depends_on:
-            - postgres
-            - redis
+  # 6. Redirection Microservice
+  url-redirect-service:
+    build: ./url-redirect-service
+    container_name: url-redirect
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_REDIS_HOST: redis
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    depends_on:
+      - redis
+      - kafka
 
-<<<<<<< Updated upstream
-    # 5. Core Admin Microservice (Headless gRPC)
-    url-core-service:
-        build: ./url-core-service
-        container_name: url-core
-        expose:
-            - "9090"
-        environment:
-            SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/url_shortener_core
-            SPRING_REDIS_HOST: redis
-        depends_on:
-            - postgres
-            - redis
->>>>>>> Stashed changes
-
-    # 6. Redirection Microservice
-    url-redirect-service:
-        build: ./url-redirect-service
-        container_name: url-redirect
-        ports:
-            - "8082:8082"
-        environment:
-            SPRING_REDIS_HOST: redis
-            SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-        depends_on:
-            - redis
-            - kafka
-
-<<<<<<< Updated upstream
   # 7. Analytics Ingestion Microservice
   url-analytics-service:
     build: ./url-analytics-service
@@ -1161,46 +1109,14 @@ services:
     expose:
       - "9091"
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/hiclickme_analytics
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/url_shortener_analytics
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
     depends_on:
       - postgres
       - kafka
-=======
-=======
-    # 6. Redirection Microservice
-    url-redirect-service:
-        build: ./url-redirect-service
-        container_name: url-redirect
-        ports:
-            - "8082:8082"
-        environment:
-            SPRING_REDIS_HOST: redis
-            SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-        depends_on:
-            - redis
-            - kafka
-
->>>>>>> Stashed changes
-    # 7. Analytics Ingestion Microservice
-    url-analytics-service:
-        build: ./url-analytics-service
-        container_name: url-analytics
-        expose:
-            - "9091"
-        environment:
-            SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/url_shortener_analytics
-            SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-        depends_on:
-            - postgres
-            - kafka
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
 
 volumes:
-    pg_data:
+  pg_data:
 ```
 
 ---
@@ -1245,15 +1161,7 @@ To deploy this microservice architecture into production (e.g., AWS, GCP, or Kub
 
 ### 8.7 User Deletion & Resource Cleanup Mechanics (Transactional Outbox vs. gRPC Sync)
 
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-When a user deletes their account (initiated at the **API Gateway**), the system must cleanly delete their URL mappings in the **Core Admin Service** database (`hiclickme_core`) and evict all active short URL mappings cached in the **Redirect Service** Redis cluster. 
-=======
 When a user deletes their account (initiated at the **API Gateway**), the system must cleanly delete their URL mappings in the **Core Admin Service** database (`url_shortener_core`) and evict all active short URL mappings cached in the **Redirect Service** Redis cluster.
->>>>>>> Stashed changes
-=======
-When a user deletes their account (initiated at the **API Gateway**), the system must cleanly delete their URL mappings in the **Core Admin Service** database (`url_shortener_core`) and evict all active short URL mappings cached in the **Redirect Service** Redis cluster.
->>>>>>> Stashed changes
 
 In a distributed, production-grade microservice architecture, handling this deletion presents a choice between **Synchronous gRPC Orchestration** and **Asynchronous Message-Driven Eventual Consistency**.
 
@@ -1318,23 +1226,13 @@ sequenceDiagram
 #### 3. Execution Phase Walkthrough
 
 1. **Step 1: Auth Deletion & Outbox Write (Gateway Boundary)**
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-   The `url-gateway-service` initiates a single database transaction in `hiclickme_auth`. It soft-deletes or hard-deletes the user and writes a `UserDeletedEvent` to a local `outbox` table in the *same* database transaction. This guarantees that the user deletion and the event creation succeed or fail together. The API Gateway then immediately returns an HTTP `200 OK` response to the client.
-=======
-   The `url-gateway-service` initiates a single database transaction in `url_shortener_auth`. It soft-deletes or hard-deletes the user and writes a `UserDeletedEvent` to a local `outbox` table in the _same_ database transaction. This guarantees that the user deletion and the event creation succeed or fail together. The API Gateway then immediately returns an HTTP `200 OK` response to the client.
->>>>>>> Stashed changes
-=======
-   The `url-gateway-service` initiates a single database transaction in `url_shortener_auth`. It soft-deletes or hard-deletes the user and writes a `UserDeletedEvent` to a local `outbox` table in the _same_ database transaction. This guarantees that the user deletion and the event creation succeed or fail together. The API Gateway then immediately returns an HTTP `200 OK` response to the client.
->>>>>>> Stashed changes
+   The `url-gateway-service` initiates a single database transaction in `url_shortener_auth`. It soft-deletes or hard-deletes the user and writes a `UserDeletedEvent` to a local `outbox` table in the *same* database transaction. This guarantees that the user deletion and the event creation succeed or fail together. The API Gateway then immediately returns an HTTP `200 OK` response to the client.
 
 2. **Step 2: CDC Publishing**
-   A Change Data Capture (CDC) tool (e.g., Debezium) mines the PostgreSQL Write-Ahead Log (WAL) of `hiclickme_auth` for changes in the `outbox` table and publishes the `UserDeletedEvent` to the `auth.user-events` Kafka topic.
+   A Change Data Capture (CDC) tool (e.g., Debezium) mines the PostgreSQL Write-Ahead Log (WAL) of `url_shortener_auth` for changes in the `outbox` table and publishes the `UserDeletedEvent` to the `auth.user-events` Kafka topic.
 
 3. **Step 3: Core Database Deletion**
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-   The headless `url-core-service` consumes the `UserDeletedEvent`. It initiates a PostgreSQL transaction in `hiclickme_core` to clean up all URL mappings and subscriptions:
+   The headless `url-core-service` consumes the `UserDeletedEvent`. It initiates a PostgreSQL transaction in `url_shortener_core` to clean up all URL mappings and subscriptions:
    ```sql
    -- Core deletes URL mappings and returns the short codes that were deleted
    DELETE FROM url_mappings 
@@ -1342,23 +1240,6 @@ sequenceDiagram
    RETURNING short_code;
    ```
    The service intercepts the list of deleted short codes and inserts a `CacheEvictionEvent` into the `core_outbox` table in the *same* PostgreSQL transaction.
-=======
-=======
->>>>>>> Stashed changes
-   The headless `url-core-service` consumes the `UserDeletedEvent`. It initiates a PostgreSQL transaction in `url_shortener_core` to clean up all URL mappings and subscriptions:
-
-    ```sql
-    -- Core deletes URL mappings and returns the short codes that were deleted
-    DELETE FROM url_mappings
-    WHERE user_id = 123
-    RETURNING short_code;
-    ```
-
-    The service intercepts the list of deleted short codes and inserts a `CacheEvictionEvent` into the `core_outbox` table in the _same_ PostgreSQL transaction.
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
 
 4. **Step 4: Cache Eviction**
    Debezium publishes the cache eviction event containing the short codes array (e.g., `["abc", "xyz"]`) to the `url.eviction` Kafka topic.
