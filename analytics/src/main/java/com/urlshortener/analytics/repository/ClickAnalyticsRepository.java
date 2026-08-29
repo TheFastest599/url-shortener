@@ -50,16 +50,16 @@ public interface ClickAnalyticsRepository extends JpaRepository<ClickAnalytics, 
     List<TimeSeriesProjection> findDailyTimeSeries(@Param("shortCode") String shortCode, @Param("since")Instant since);
 
 
-//    ---CATEGORIAL METRICS---
+    // --- CATEGORICAL METRICS ---
 
     @Query(value = """
     SELECT COALESCE(geo_country, 'Unknown') AS name, COUNT(*) AS count
     FROM click_analytics
     WHERE short_code = :shortCode AND (:includeBots = true OR is_bot = false)
     GROUP BY geo_country
-    ORDER BY couunt DESC
+    ORDER BY count DESC
     LIMIT :limit
-""", nativeQuery = true)
+    """, nativeQuery = true)
     List<StatProjection> findTopCountries(@Param("shortCode") String shortCode, @Param("includeBots") boolean includeBots, @Param("limit") int limit);
 
     @Query(value = """
@@ -77,30 +77,29 @@ public interface ClickAnalyticsRepository extends JpaRepository<ClickAnalytics, 
     FROM click_analytics
     WHERE short_code = :shortCode AND (:includeBots = true OR is_bot = false)
     GROUP BY browser
-    ORDER BY couunt DESC
+    ORDER BY count DESC
     LIMIT :limit
-""", nativeQuery = true)
+    """, nativeQuery = true)
     List<StatProjection> findTopBrowsers(@Param("shortCode") String shortCode, @Param("includeBots") boolean includeBots, @Param("limit") int limit);
 
     @Query(value = """
-    SELECT COALESCE(device_type, 'Other') AS name, COUNT(*) AS count
+    SELECT COALESCE(operating_system, 'Other') AS name, COUNT(*) AS count
     FROM click_analytics
     WHERE short_code = :shortCode AND (:includeBots = true OR is_bot = false)
     GROUP BY operating_system
-    ORDER BY couunt DESC
+    ORDER BY count DESC
     LIMIT :limit
-""", nativeQuery = true)
+    """, nativeQuery = true)
     List<StatProjection> findTopOperatingSystems(@Param("shortCode") String shortCode, @Param("includeBots") boolean includeBots, @Param("limit") int limit);
-
 
     @Query(value = """
     SELECT COALESCE(device_type, 'Desktop') AS name, COUNT(*) AS count
     FROM click_analytics
     WHERE short_code = :shortCode AND (:includeBots = true OR is_bot = false)
     GROUP BY device_type
-    ORDER BY couunt DESC
+    ORDER BY count DESC
     LIMIT :limit
-""", nativeQuery = true)
+    """, nativeQuery = true)
     List<StatProjection> findTopDeviceTypes(@Param("shortCode") String shortCode, @Param("includeBots") boolean includeBots, @Param("limit") int limit);
 
     @Query(value = """
@@ -108,8 +107,8 @@ public interface ClickAnalyticsRepository extends JpaRepository<ClickAnalytics, 
     FROM click_analytics
     WHERE short_code = :shortCode AND (:includeBots = true OR is_bot = false)
     GROUP BY referrer
-    ORDER BY couunt DESC
+    ORDER BY count DESC
     LIMIT :limit
-""", nativeQuery = true)
+    """, nativeQuery = true)
     List<StatProjection> findTopReferrers(@Param("shortCode") String shortCode, @Param("includeBots") boolean includeBots, @Param("limit") int limit);
 }

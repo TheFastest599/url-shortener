@@ -115,7 +115,7 @@ public class AnalyticsService {
     private List<CityStatDto> mapCityMetrics(List<CityStatProjection> list, long denominator) {
         return list.stream()
                 .map(p -> {
-                    double pct = Math.round(((double) p.getCount() / denominator * 1000.0) / 10.0);
+                    double pct = Math.round(((double) p.getCount() / denominator) * 1000.0) / 10.0;
                     return new CityStatDto(p.getCity(), p.getCountry(), p.getCount(), pct);
                 }).toList();
     }

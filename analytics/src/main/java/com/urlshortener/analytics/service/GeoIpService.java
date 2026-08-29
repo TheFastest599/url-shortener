@@ -21,7 +21,7 @@ public class GeoIpService {
     @PostConstruct
     public void init() {
         try {
-            ClassPathResource resource = new ClassPathResource("geoip/GeoLIte2-City.mmdb");
+            ClassPathResource resource = new ClassPathResource("geoip/GeoLite2-City.mmdb");
             if (resource.exists()) {
                 try (InputStream inputStream = resource.getInputStream()) {
                     this.databaseReader = new DatabaseReader.Builder(inputStream).build();
