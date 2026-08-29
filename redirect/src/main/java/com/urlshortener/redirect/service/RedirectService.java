@@ -52,7 +52,7 @@ public class RedirectService {
                 })
                 .doOnNext(destinationUrl -> {
                     // Fire-and-Forget kafka Click Tracking Event
-                    ClickEvent event = new ClickEvent(shortCode, userAgent, ip, referrer, Instant.now());
+                    ClickEvent event = new ClickEvent(shortCode, Instant.now(), ip, userAgent, referrer);
                     clickEventProducer.publishClickEvent(event);
                 });
     };

@@ -4,9 +4,8 @@ import java.time.Instant;
 
 public record ClickEvent(
         String shortCode,
-        String userAgent,
+        Instant timestamp,
         String ipAddress,
-        String referrer,
-        Instant timestamp
-) {
-}
+        String userAgent,
+        String referrer
+) {}
