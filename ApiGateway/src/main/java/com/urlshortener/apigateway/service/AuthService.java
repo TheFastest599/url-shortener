@@ -28,11 +28,11 @@ public class AuthService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
-    private final OAuth2ProviderFactory oAuth2ProviderFactory;
+    private final OAuth2ProviderFactory OAuth2ProviderFactory;
 
 //    1. Public Authentication APIs
 
-//    @Transactional
+   @Transactional
     public Mono<AuthResponse> register(RegisterRequest request){
         return validateUserDoesNotExist(request.email(), request.username())
                 .then(saveUser(request))
@@ -56,7 +56,7 @@ public class AuthService {
 
     @Transactional
     public Mono<AuthResponse> processOAuth2Login(String providerName, String code) {
-        OAuth2IdentityProvider provider =oAuth2ProviderFactory.getProvider(providerName);
+        OAuth2IdentityProvider provider = OAuth2ProviderFactory.getProvider(providerName);
 
         return provider.processAuthorizationCode(code)
                 .flatMap(this::findOrCreateAuthUser)
