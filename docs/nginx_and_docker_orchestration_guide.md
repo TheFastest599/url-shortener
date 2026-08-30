@@ -382,6 +382,220 @@ volumes:
 
 ---
 
+## Module 5.1: Production Cloud Configuration (`docker-compose.prod.yml`)
+
+In cloud production environments (AWS, GCP, DigitalOcean, Azure), you typically use **managed cloud infrastructure** rather than containerized databases:
+* **Managed PostgreSQL:** AWS RDS / Supabase / Neon / Azure Database
+* **Managed Redis:** AWS ElastiCache / Redis Cloud / Upstash
+* **Managed Kafka:** Confluent Cloud / AWS MSK / Upstash Kafka
+
+In this setup, `docker-compose.prod.yml` runs **only** the application microservices, the React frontend, and Nginx, injecting all external connection strings and credentials securely from a `.env` file.
+
+### 1. Production Docker Compose (`docker-compose.prod.yml`)
+
+```yaml
+version: '3.8'
+
+services:
+  # ==========================================
+  # 1. APPLICATION MICROSERVICES
+  # ==========================================
+
+  api-gateway:
+    build:
+      context: ./apigateway
+      dockerfile: Dockerfile
+    container_name: api-gateway-prod
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # External Managed PostgreSQL (Auth DB)
+      DB_HOST: ${AUTH_DB_HOST}
+      DB_PORT: ${AUTH_DB_PORT:-5432}
+      DB_NAME: ${AUTH_DB_NAME:-url_shortener_auth}
+      DB_USERNAME: ${AUTH_DB_USER}
+      DB_PASSWORD: ${AUTH_DB_PASSWORD}
+      # External Managed Redis
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # JWT & Security
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
+      # Internal Service Routing
+      CORE_SERVICE_URL: http://url-core:8081
+      REDIRECT_SERVICE_URL: http://url-redirect:8082
+      ANALYTICS_SERVICE_URL: http://url-analytics:8083
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+  url-core:
+    build:
+      context: ./core
+      dockerfile: Dockerfile
+    container_name: url-core-prod
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+      - "9090:9090"
+    environment:
+      # External Managed PostgreSQL (Core DB)
+      DB_HOST: ${CORE_DB_HOST}
+      DB_PORT: ${CORE_DB_PORT:-5432}
+      DB_NAME: ${CORE_DB_NAME:-url_shortener_core}
+      DB_USERNAME: ${CORE_DB_USER}
+      DB_PASSWORD: ${CORE_DB_PASSWORD}
+      # External Managed Redis
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+  url-redirect:
+    build:
+      context: ./redirect
+      dockerfile: Dockerfile
+    container_name: url-redirect-prod
+    restart: unless-stopped
+    ports:
+      - "8082:8082"
+    environment:
+      # External Managed Redis
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # Internal gRPC Client to Core
+      CORE_GRPC_HOST: url-core
+      CORE_GRPC_PORT: 9090
+      # External Managed Kafka (Confluent Cloud / AWS MSK)
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 512M
+
+  url-analytics:
+    build:
+      context: ./analytics
+      dockerfile: Dockerfile
+    container_name: url-analytics-prod
+    restart: unless-stopped
+    ports:
+      - "8083:8083"
+      - "9091:9091"
+    environment:
+      # External Managed PostgreSQL (Analytics DB)
+      DB_HOST: ${ANALYTICS_DB_HOST}
+      DB_PORT: ${ANALYTICS_DB_PORT:-5432}
+      DB_NAME: ${ANALYTICS_DB_NAME:-url_shortener_analytics}
+      DB_USERNAME: ${ANALYTICS_DB_USER}
+      DB_PASSWORD: ${ANALYTICS_DB_PASSWORD}
+      # External Managed Kafka
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+  # ==========================================
+  # 2. FRONTEND & NGINX INGRESS
+  # ==========================================
+
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: react-frontend-prod
+    restart: unless-stopped
+    expose:
+      - "3000"
+
+  nginx-ingress:
+    image: nginx:alpine
+    container_name: nginx-ingress-prod
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - frontend
+      - api-gateway
+```
+
+---
+
+### 2. Production Environment Template (`.env.production.example`)
+
+Create `.env.production` on your deployment server:
+
+```properties
+# ==========================================
+# 1. MANAGED POSTGRESQL (AWS RDS / Supabase / Neon)
+# ==========================================
+AUTH_DB_HOST=postgres-prod.your-cloud.com
+AUTH_DB_PORT=5432
+AUTH_DB_NAME=url_shortener_auth
+AUTH_DB_USER=cloud_admin
+AUTH_DB_PASSWORD=SecureProductionPassword123!
+
+CORE_DB_HOST=postgres-prod.your-cloud.com
+CORE_DB_PORT=5432
+CORE_DB_NAME=url_shortener_core
+CORE_DB_USER=cloud_admin
+CORE_DB_PASSWORD=SecureProductionPassword123!
+
+ANALYTICS_DB_HOST=postgres-prod.your-cloud.com
+ANALYTICS_DB_PORT=5432
+ANALYTICS_DB_NAME=url_shortener_analytics
+ANALYTICS_DB_USER=cloud_admin
+ANALYTICS_DB_PASSWORD=SecureProductionPassword123!
+
+# ==========================================
+# 2. MANAGED REDIS (ElastiCache / Redis Cloud)
+# ==========================================
+REDIS_HOST=redis-prod.your-cloud.com
+REDIS_PORT=6379
+REDIS_PASSWORD=YourRedisSecretToken123!
+
+# ==========================================
+# 3. MANAGED APACHE KAFKA (Confluent / AWS MSK)
+# ==========================================
+KAFKA_BOOTSTRAP_SERVERS=pkc-xxxx.us-east-1.aws.confluent.cloud:9092
+
+# ==========================================
+# 4. SECURITY & AUTH
+# ==========================================
+JWT_SECRET=superSecretProductionJwtKeyAtLeast256BitsLongAndCompletelyRandom!
+JWT_EXPIRATION_MS=86400000
+```
+
+---
+
+### 3. How to Deploy in Production:
+
+```powershell
+# 1. Create .env from template
+cp .env.production.example .env.production
+
+# 2. Launch production stack with env file
+docker compose -f docker-compose.prod.yml --env-file .env.production up --build -d
+```
+
+---
+
 ## Module 6: Local Development Setup & Vite Proxy
 
 When developing locally (running Vite `npm run dev` on port `5173`), configure `client/vite.config.js` to proxy `/api` and `/r` directly to Spring Cloud Gateway (`http://localhost:8080`):
