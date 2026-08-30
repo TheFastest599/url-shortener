@@ -7,6 +7,7 @@ import { LoginPage } from "@/pages/Login";
 import { SignupPage } from "@/pages/Signup";
 import { OAuthCallbackPage } from "@/pages/OAuthCallback";
 import { DashboardPage } from "@/pages/Dashboard";
+import { ProfilePage } from "@/pages/Profile";
 import { NotFoundPage } from "@/pages/NotFound";
 
 /**
@@ -47,6 +48,14 @@ export function AppRoutes() {
 					element={
 						<ProtectedRoute>
 							<DashboardPage />
+						</ProtectedRoute>
+					}
+				/>
+				<Route
+					path={ROUTES.PROFILE}
+					element={
+						<ProtectedRoute>
+							<ProfilePage />
 						</ProtectedRoute>
 					}
 				/>
