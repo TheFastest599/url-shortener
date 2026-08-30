@@ -13,7 +13,21 @@ export default defineConfig({
 	],
 	resolve: {
 		alias: {
-			"@": path.resolve(__dirname, "./src"),
+			"@": path.resolve(import.meta.dirname, "./src"),
+		},
+	},
+	server: {
+		port: 5173,
+		proxy: {
+			"/api": {
+				target: "http://localhost:8080",
+				changeOrigin: true,
+			},
+			"/r": {
+				target: "http://localhost:8080",
+				changeOrigin: true,
+			},
 		},
 	},
 });
+

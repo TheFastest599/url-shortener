@@ -19,7 +19,7 @@ public class GitHubOAuth2Provider implements OAuth2IdentityProvider {
     @Value("${oauth.github.client-secret:${OAUTH_GITHUB_CLIENT_SECRET:github-client-secret-fallback}}")
     private String clientSecret;
 
-    @Value("${oauth.github.redirect-uri:${OAUTH_GITHUB_REDIRECT_URI:http://localhost:8080/api/v1/auth/oauth2/callback/github}}")
+    @Value("${oauth.github.redirect-uri:${OAUTH_GITHUB_REDIRECT_URI:http://localhost:8080/api/v1/auth/oauth2/github/callback}}")
     private String redirectUri;
 
     @Override
