@@ -65,6 +65,48 @@ CREATE INDEX IF NOT EXISTS idx_click_analytics_timestamp ON click_analytics(time
 
 ---
 
+### 2. Configuration (`application.yaml`)
+
+File: `analytics/src/main/resources/application.yaml`
+
+```yaml
+server:
+  port: ${PORT:8083}
+
+grpc:
+  server:
+    port: ${GRPC_PORT:9091}
+
+spring:
+  application:
+    name: url-analytics-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:url_shortener_analytics}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres_password}
+    driver-class-name: org.postgresql.Driver
+  flyway:
+    enabled: true
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:url_shortener_analytics}
+    user: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres_password}
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: analytics-ingest-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.urlshortener.*"
+        spring.json.value.default.type: "com.urlshortener.analytics.dto.ClickEvent"
+        spring.json.use.type.headers: false
+```
+
+---
+
 ## Module 2: JPA Entities, Projections & Repositories
 
 ### 1. `ClickAnalytics.java` Entity

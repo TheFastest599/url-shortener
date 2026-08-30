@@ -831,6 +831,46 @@ public class UrlCoreController {
 
 ---
 
+### 4. `SecurityConfig.java` (Permit Internal Gateway Traffic)
+File: `core/src/main/java/com/urlshortener/core/config/SecurityConfig.java`
+
+Since authentication and JWT verification are handled centrally at the **API Gateway**, this configuration disables default HTTP Basic auth and allows internal Gateway communication over port `8081`:
+
+```java
+package com.urlshortener.core.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        return http
+                .csrf(AbstractHttpConfigurer::disable)
+                .httpBasic(AbstractHttpConfigurer::disable)
+                .formLogin(AbstractHttpConfigurer::disable)
+                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                .build();
+    }
+}
+```
+
+---
+
 ## Module 6: Step-by-Step Testing & Verification Guide
 
 ### 1. Test gRPC Endpoint via `grpcurl`

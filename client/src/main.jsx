@@ -8,6 +8,6 @@ import App from "./App.jsx";
 createRoot(document.getElementById("root")).render(
 	<QueryClientProvider client={queryClient}>
 		<App />
-		<Toaster richColors position="bottom-right" closeButton />
+		<Toaster position="bottom-right" richColors />
 	</QueryClientProvider>,
 );

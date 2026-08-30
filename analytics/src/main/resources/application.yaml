@@ -41,3 +41,5 @@ spring:
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
         spring.json.trusted.packages: "com.urlshortener.*"
+        spring.json.value.default.type: "com.urlshortener.analytics.dto.ClickEvent"
+        spring.json.use.type.headers: false
