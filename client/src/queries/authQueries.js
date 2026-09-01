@@ -62,12 +62,6 @@ export function useLoginMutation(options = {}) {
 				onSuccess?.(data, variables, context);
 			},
 			onError: (err, variables, context) => {
-				const message =
-					err?.response?.data?.message ||
-					err?.response?.data?.error ||
-					err?.message ||
-					"Login failed";
-				toast.error(message);
 				onError?.(err, variables, context);
 			},
 		}),
@@ -101,12 +95,6 @@ export function useSignupMutation(options = {}) {
 				onSuccess?.(data, variables, context);
 			},
 			onError: (err, variables, context) => {
-				const message =
-					err?.response?.data?.message ||
-					err?.response?.data?.error ||
-					err?.message ||
-					"Registration failed";
-				toast.error(message);
 				onError?.(err, variables, context);
 			},
 		}),
@@ -131,11 +119,6 @@ export function useOAuthMutation(options = {}) {
 				onSuccess?.(data, variables, context);
 			},
 			onError: (err, variables, context) => {
-				const message =
-					err?.response?.data?.message ||
-					err?.message ||
-					"Failed to initiate OAuth login";
-				toast.error(message);
 				onError?.(err, variables, context);
 			},
 		}),

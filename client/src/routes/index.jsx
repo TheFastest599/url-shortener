@@ -37,28 +37,28 @@ export function AppRoutes() {
 			{/* OAuth2 Callback Handler */}
 			<Route path={ROUTES.OAUTH_CALLBACK} element={<OAuthCallbackPage />} />
 
-			{/* Main Application Layout (Navbar + Footer) */}
+			{/* Protected Internal App Pages (Own full-height dashboard shell) */}
+			<Route
+				path={ROUTES.DASHBOARD}
+				element={
+					<ProtectedRoute>
+						<DashboardPage />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path={ROUTES.PROFILE}
+				element={
+					<ProtectedRoute>
+						<ProfilePage />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Main Marketing Layout (Navbar + Footer) */}
 			<Route element={<RootLayout />}>
 				{/* Unprotected Home / Landing */}
 				<Route path={ROUTES.HOME} element={<HomePage />} />
-
-				{/* Protected Internal App Pages */}
-				<Route
-					path={ROUTES.DASHBOARD}
-					element={
-						<ProtectedRoute>
-							<DashboardPage />
-						</ProtectedRoute>
-					}
-				/>
-				<Route
-					path={ROUTES.PROFILE}
-					element={
-						<ProtectedRoute>
-							<ProfilePage />
-						</ProtectedRoute>
-					}
-				/>
 
 				{/* 404 Catch-All */}
 				<Route path="*" element={<NotFoundPage />} />

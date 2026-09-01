@@ -5,7 +5,7 @@ export const createShortUrl = async (payload) => {
 };
 
 export const getMyUrls = async () => {
-	return apiHelpers.get("/api/v1/urls/my-urls");
+	return apiHelpers.get("/api/v1/urls");
 };
 
 export const getUrlByShortCode = async (shortCode) => {

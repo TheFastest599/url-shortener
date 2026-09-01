@@ -92,26 +92,28 @@ apiClient.interceptors.response.use(
 			}
 		}
 
-		// Handle other standard HTTP error codes
-		if (error.response) {
-			const { status, data } = error.response;
-			switch (status) {
-				case 403:
-					toast.error(data?.message || "Access forbidden");
-					break;
-				case 429:
-					toast.error("Too many requests — please slow down");
-					break;
-				case 500:
-					toast.error("Internal server error — please try again later");
-					break;
-				default:
-					if (status !== 401) {
-						toast.error(data?.message || data?.detail || "An error occurred");
-					}
+		// Handle other standard HTTP error codes (unless skipToast: true is set)
+		if (!originalRequest?.skipToast) {
+			if (error.response) {
+				const { status, data } = error.response;
+				switch (status) {
+					case 403:
+						toast.error(data?.message || "Access forbidden");
+						break;
+					case 429:
+						toast.error("Too many requests — please slow down");
+						break;
+					case 500:
+						toast.error("Internal server error — please try again later");
+						break;
+					default:
+						if (status !== 401) {
+							toast.error(data?.message || data?.detail || "An error occurred");
+						}
+				}
+			} else if (error.request) {
+				toast.error("Network error — cannot reach server");
 			}
-		} else if (error.request) {
-			toast.error("Network error — cannot reach server");
 		}
 
 		return Promise.reject(error);
