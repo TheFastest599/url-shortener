@@ -1,4 +1,7 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { ROUTES } from "@/routes/paths";
+import { useAuthStore } from "@/store/authStore";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +23,10 @@ import {
 } from "@tabler/icons-react";
 
 export function HeroSection() {
+	const navigate = useNavigate();
+	const { logged, isLogged, user } = useAuthStore();
+	const isAuthenticated = !!(logged || isLogged || user);
+
 	const [urlInput, setUrlInput] = useState(
 		"https://github.com/EnterpriseCorp/nextgen-cloud-infrastructure-deep-dive-2026?ref=newsletter"
 	);
@@ -120,22 +127,11 @@ export function HeroSection() {
 						size="lg"
 						className="gap-2 shadow-md cursor-pointer text-base"
 						onClick={() => {
-							window.location.href = "#signup";
+							navigate(isAuthenticated ? ROUTES.DASHBOARD : ROUTES.SIGNUP);
 						}}
 					>
-						<span>Deploy Links Free</span>
+						<span>{isAuthenticated ? "Go to Dashboard" : "Get Started Free"}</span>
 						<IconArrowRight className="size-4" />
-					</Button>
-					<Button
-						variant="outline"
-						size="lg"
-						className="gap-2 cursor-pointer text-base"
-						onClick={() => {
-							window.location.href = "#architecture";
-						}}
-					>
-						<IconBolt className="size-4 text-primary" />
-						<span>Explore Architecture</span>
 					</Button>
 				</div>
 
