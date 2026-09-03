@@ -14,10 +14,10 @@ import { queryKeys } from "./queryKeys";
 // 1. QUERY OPTIONS (URLS)
 // ==========================================
 export const urlQueryOptions = {
-	list: ({ enabled = true } = {}) => ({
-		queryKey: queryKeys.urls.all,
+	list: (params = {}, { enabled = true } = {}) => ({
+		queryKey: queryKeys.urls.list(params),
 		queryFn: async () => {
-			const response = await getMyUrls();
+			const response = await getMyUrls(params);
 			return response || [];
 		},
 		enabled,
@@ -75,6 +75,20 @@ export const urlMutationOptions = {
 		onError,
 	}),
 
+	updateByCode: (queryClient, shortCode, { onSuccess, onError } = {}) => ({
+		mutationFn: (payload) => updateUrlByCode(shortCode, payload),
+		onSuccess: async (data, variables, context) => {
+			await queryClient.invalidateQueries({
+				queryKey: queryKeys.urls.all,
+			});
+			await queryClient.invalidateQueries({
+				queryKey: queryKeys.urls.byCode(shortCode),
+			});
+			onSuccess?.(data, variables, context);
+		},
+		onError,
+	}),
+
 	delete: (queryClient, { onSuccess, onError } = {}) => ({
 		mutationFn: (id) => deleteUrl(id),
 		onSuccess: async (data, id, context) => {
@@ -104,8 +118,8 @@ export const urlMutationOptions = {
 // ==========================================
 // 3. CONVENIENCE REACT QUERY HOOKS
 // ==========================================
-export function useUrlsQuery(options = {}) {
-	return useQuery(urlQueryOptions.list(options));
+export function useUrlsQuery(params = {}, options = {}) {
+	return useQuery(urlQueryOptions.list(params, options));
 }
 
 export function useUrlByCodeQuery(shortCode, options = {}) {
@@ -120,4 +134,9 @@ export function useCreateUrlMutation(options = {}) {
 export function useDeleteUrlMutation(options = {}) {
 	const queryClient = useQueryClient();
 	return useMutation(urlMutationOptions.delete(queryClient, options));
+}
+
+export function useUpdateUrlByCodeMutation(shortCode, options = {}) {
+	const queryClient = useQueryClient();
+	return useMutation(urlMutationOptions.updateByCode(queryClient, shortCode, options));
 }

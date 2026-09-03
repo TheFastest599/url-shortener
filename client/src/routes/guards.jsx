@@ -13,7 +13,7 @@ export function ProtectedRoute({ children }) {
 	const isInitializing = useAuthStore((state) => state.isInitializing);
 	const location = useLocation();
 
-	if (isInitializing) {
+	if (isInitializing || (isLogged && !token)) {
 		return (
 			<div className="flex min-h-[70vh] flex-col items-center justify-center gap-3">
 				<IconLoader2 className="size-6 animate-spin text-primary" />
@@ -39,7 +39,7 @@ export function PublicOnlyRoute({ children }) {
 	const isInitializing = useAuthStore((state) => state.isInitializing);
 	const location = useLocation();
 
-	if (isInitializing) {
+	if (isInitializing || (isLogged && !token)) {
 		return (
 			<div className="flex min-h-[70vh] flex-col items-center justify-center gap-3">
 				<IconLoader2 className="size-6 animate-spin text-primary" />

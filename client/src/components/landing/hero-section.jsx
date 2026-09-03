@@ -52,18 +52,12 @@ export function HeroSection() {
 	const createUrlMutation = useCreateUrlMutation({
 		onSuccess: (data) => {
 			const slug = data?.shortCode || customSlug.trim();
-			setShortenedResult({
-				shortUrl: `http://localhost:8080/r/${slug}`,
-				originalUrl: fullTargetUrl,
-				clicks: 0,
-				createdAt: "Just now",
-			});
 			setIsShortening(false);
-			toast.success("Short link created and added to your dashboard!");
+			toast.success("Short link created!");
+			navigate(`/redirect-links/${slug}`);
 		},
-		onError: (err) => {
+		onError: () => {
 			setIsShortening(false);
-			toast.error(err?.response?.data?.message || "Failed to create short link");
 		},
 	});
 

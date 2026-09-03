@@ -43,9 +43,6 @@ export function LinksTable({
 			toast.success("Short URL deleted");
 			setDeleteTarget(null);
 		},
-		onError: (err) => {
-			toast.error(err?.response?.data?.message || "Failed to delete URL");
-		},
 	});
 
 	const handleCopy = (shortCode, id) => {

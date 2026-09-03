@@ -4,12 +4,20 @@ export const createShortUrl = async (payload) => {
 	return apiHelpers.post("/api/v1/urls", payload);
 };
 
-export const getMyUrls = async () => {
-	return apiHelpers.get("/api/v1/urls");
+export const getMyUrls = async (params = {}) => {
+	return apiHelpers.get("/api/v1/urls", { params });
 };
 
 export const getUrlByShortCode = async (shortCode) => {
-	return apiHelpers.get(`/api/v1/urls/short/${shortCode}`);
+	return apiHelpers.get(`/api/v1/urls/code/${shortCode}`);
+};
+
+export const getUrlByCode = async (shortCode) => {
+	return apiHelpers.get(`/api/v1/urls/code/${shortCode}`);
+};
+
+export const updateUrlByCode = async (shortCode, payload) => {
+	return apiHelpers.put(`/api/v1/urls/code/${shortCode}`, payload);
 };
 
 export const updateUrl = async (id, payload) => {

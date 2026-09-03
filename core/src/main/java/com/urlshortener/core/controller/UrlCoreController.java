@@ -2,6 +2,7 @@ package com.urlshortener.core.controller;
 
 import com.urlshortener.core.dto.CreateUrlRequest;
 import com.urlshortener.core.dto.CreateUtmRequest;
+import com.urlshortener.core.dto.PagedResponse;
 import com.urlshortener.core.dto.UpdateUrlRequest;
 import com.urlshortener.core.dto.UpdateUtmRequest;
 import com.urlshortener.core.entity.UrlMapping;
@@ -9,6 +10,10 @@ import com.urlshortener.core.entity.UtmProfile;
 import com.urlshortener.core.service.UrlCoreService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -35,9 +40,36 @@ public class UrlCoreController {
     }
 
     @GetMapping
-    public ResponseEntity<List<UrlMapping>> getUserUrls(
+    public ResponseEntity<?> getUserUrls(
+            @RequestParam(value = "search", required = false) String search,
+            @RequestParam(value = "status", required = false) String status,
+            @RequestParam(value = "sortBy", defaultValue = "createdAt") String sortBy,
+            @RequestParam(value = "direction", defaultValue = "DESC") String direction,
+            @RequestParam(value = "page", required = false) Integer page,
+            @RequestParam(value = "size", required = false) Integer size,
             @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
-        return ResponseEntity.ok(urlCoreService.getUserUrls(userId));
+
+        if (page == null) {
+            return ResponseEntity.ok(urlCoreService.getUserUrls(userId));
+        }
+
+        Boolean isActive = null;
+        if ("active".equalsIgnoreCase(status)) {
+            isActive = true;
+        } else if ("inactive".equalsIgnoreCase(status)) {
+            isActive = false;
+        }
+
+        Sort.Direction sortDirection = "ASC".equalsIgnoreCase(direction)
+                ? Sort.Direction.ASC
+                : Sort.Direction.DESC;
+
+        String sortField = "shortCode".equalsIgnoreCase(sortBy) ? "shortCode" : "createdAt";
+        Pageable pageable = PageRequest.of(page, size != null ? size : 10, Sort.by(sortDirection, sortField));
+
+        Page<UrlMapping> pagedResult = urlCoreService.getUserUrlsPaged(userId, search, isActive, pageable);
+
+        return ResponseEntity.ok(PagedResponse.from(pagedResult));
     }
 
     @GetMapping("/{urlId}")
@@ -50,6 +82,25 @@ public class UrlCoreController {
     @GetMapping("/short/{shortCode}")
     public ResponseEntity<Optional<UrlMapping>> getUrlFromShortCode(@PathVariable String shortCode) {
         return ResponseEntity.ok(urlCoreService.getUrlFromShortCode(shortCode));
+    }
+
+    @GetMapping("/code/{shortCode}")
+    public ResponseEntity<UrlMapping> getUrlByCode(
+            @PathVariable String shortCode,
+            @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
+        UrlMapping mapping = urlCoreService.getUrlFromShortCode(shortCode)
+                .orElseThrow(() -> new IllegalArgumentException("Short code not found: " + shortCode));
+        return ResponseEntity.ok(mapping);
+    }
+
+    @PutMapping("/code/{shortCode}")
+    public ResponseEntity<UrlMapping> updateUrlByCode(
+            @PathVariable String shortCode,
+            @Valid @RequestBody UpdateUrlRequest request,
+            @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
+        UrlMapping mapping = urlCoreService.getUrlFromShortCode(shortCode)
+                .orElseThrow(() -> new IllegalArgumentException("Short code not found: " + shortCode));
+        return ResponseEntity.ok(urlCoreService.updatedShortUrl(mapping.getId(), request, userId));
     }
 
     @PutMapping("/{urlId}")

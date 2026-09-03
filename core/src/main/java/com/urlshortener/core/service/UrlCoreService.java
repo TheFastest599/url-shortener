@@ -10,6 +10,8 @@ import com.urlshortener.core.repository.UrlMappingRepository;
 import com.urlshortener.core.repository.UtmProfileRepository;
 import com.urlshortener.core.util.Base62;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -114,6 +116,14 @@ public class UrlCoreService {
 
     public List<UrlMapping> getUserUrls(UUID userId) {
         return urlRepository.findByUserId(userId);
+    }
+
+    public Page<UrlMapping> getUserUrlsPaged(
+            UUID userId,
+            String search,
+            Boolean isActive,
+            Pageable pageable) {
+        return urlRepository.findByUserIdWithFilters(userId, search, isActive, pageable);
     }
 
     public UrlMapping getUrl(UUID urlId, UUID userId) {

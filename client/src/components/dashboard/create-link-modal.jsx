@@ -50,13 +50,6 @@ export function CreateLinkModal({
 			setCreatedResult(data);
 			toast.success("Short URL created successfully!");
 		},
-		onError: (err) => {
-			const msg =
-				err?.response?.data?.message ||
-				err?.response?.data?.error ||
-				"Failed to create short URL";
-			toast.error(msg);
-		},
 	});
 
 	const handleReset = () => {

@@ -167,6 +167,8 @@ export const useAuthStore = create(
 				}
 			},
 
+			refresh: () => get().refreshAccessToken(),
+
 			// Logout
 			logout: async () => {
 				try {
@@ -193,13 +195,20 @@ export const useAuthStore = create(
 					isLogged: false,
 					error: null,
 				});
-				toast.error(message || "Session expired. Please log in again.");
+				toast.error(message || "Session expired. Please log in again.", {
+					id: "session-expired",
+				});
 			},
 		}),
 		{
 			name: "url-shortener-authStore",
 			storage: createJSONStorage(() => localStorage),
 			partialize: (state) => ({ isLogged: state.isLogged }),
+			onRehydrateStorage: () => (state) => {
+				if (state?.isLogged && !state?.token) {
+					state.isInitializing = true;
+				}
+			},
 		}
 	)
 );

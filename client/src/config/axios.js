@@ -37,7 +37,7 @@ apiClient.interceptors.request.use(
 		config.metadata = { startTime: new Date() };
 		return config;
 	},
-	(error) => Promise.reject(error)
+	(error) => Promise.reject(error),
 );
 
 // ==========================================
@@ -47,12 +47,16 @@ apiClient.interceptors.response.use(
 	(response) => {
 		const duration = new Date() - response.config.metadata?.startTime;
 		if (import.meta.env.DEV) {
-			console.log(`[API] ${response.config.method?.toUpperCase()} ${response.config.url} - ${response.status} in ${duration}ms`);
+			console.log(
+				`[API] ${response.config.method?.toUpperCase()} ${response.config.url} - ${response.status} in ${duration}ms`,
+			);
 		}
 		return response;
 	},
 	async (error) => {
-		const { unAuthorisedLogout, refreshToken } = useAuthStore.getState();
+		const store = useAuthStore.getState();
+		const unAuthorisedLogout = store.unAuthorisedLogout;
+		const refreshFn = store.refreshAccessToken || store.refreshToken;
 		const originalRequest = error.config;
 
 		// Handle 401 Unauthorized with Token Refresh Queue
@@ -77,7 +81,7 @@ apiClient.interceptors.response.use(
 			isRefreshing = true;
 
 			try {
-				const newToken = await refreshToken();
+				const newToken = typeof refreshFn === "function" ? await refreshFn() : null;
 				processQueue(null, newToken);
 				if (newToken) {
 					originalRequest.headers.Authorization = `Bearer ${newToken}`;
@@ -104,11 +108,17 @@ apiClient.interceptors.response.use(
 						toast.error("Too many requests — please slow down");
 						break;
 					case 500:
-						toast.error("Internal server error — please try again later");
+						toast.error(
+							"Internal server error — please try again later",
+						);
 						break;
 					default:
 						if (status !== 401) {
-							toast.error(data?.message || data?.detail || "An error occurred");
+							toast.error(
+								data?.message ||
+									data?.detail ||
+									"An error occurred",
+							);
 						}
 				}
 			} else if (error.request) {
@@ -117,7 +127,7 @@ apiClient.interceptors.response.use(
 		}
 
 		return Promise.reject(error);
-	}
+	},
 );
 
 // Helper methods returning response.data directly
