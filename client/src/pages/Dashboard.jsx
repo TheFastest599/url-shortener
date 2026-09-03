@@ -41,7 +41,7 @@ export function DashboardPage() {
 	const { data: urls = [], isLoading: isLoadingUrls, refetch: refetchUrls, isRefetching } = useUrlsQuery();
 
 	// Fetch primary overview analytics for the first link or test link
-	const activeShortCode = selectedAnalyticsCode || (urls.length > 0 ? urls[0].shortCode : "e2e-4968");
+	const activeShortCode = selectedAnalyticsCode || (urls.length > 0 ? urls[0].shortCode : "");
 	const { data: analytics } = useAnalyticsOverview(activeShortCode, {
 		days: 30,
 		includeBots: true,

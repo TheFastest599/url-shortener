@@ -15,11 +15,11 @@ export const queryKeys = {
 	},
 	analytics: {
 		all: (shortCode) => ["analytics", shortCode],
-		overview: (shortCode, days = 30, includeBots = false) => [
+		overview: (shortCode, days = 30, includeBots = false, interval = null) => [
 			"analytics",
 			shortCode,
 			"overview",
-			{ days, includeBots },
+			{ days, includeBots, interval },
 		],
 		timeSeries: (shortCode, interval = "DAY", days = 30) => [
 			"analytics",

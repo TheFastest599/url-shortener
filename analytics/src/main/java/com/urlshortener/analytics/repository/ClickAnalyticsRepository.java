@@ -30,24 +30,24 @@ public interface ClickAnalyticsRepository extends JpaRepository<ClickAnalytics, 
 
 //    --- TIME-SERIES GRAPH DATA ---
     @Query(value = """
-        SELECT to_char(date_trunc('hour', timestamp), 'YYYY-MM-DD"T"HH24:00:00"Z"') AS label,
+        SELECT to_char(date_trunc('hour', timezone('UTC', timestamp)), 'YYYY-MM-DD"T"HH24:00:00"Z"') AS label,
         COUNT(*) AS count
         FROM click_analytics
         WHERE short_code = :shortCode AND timestamp >= :since
-        GROUP BY date_trunc('hour', timestamp)
-        ORDER BY date_trunc('hour', timestamp) ASC
-""",nativeQuery = true )
-    List<TimeSeriesProjection> findHourlyTimeSeries(@Param("shortCode") String shortCode, @Param("since")Instant since);
+        GROUP BY date_trunc('hour', timezone('UTC', timestamp))
+        ORDER BY date_trunc('hour', timezone('UTC', timestamp)) ASC
+""", nativeQuery = true)
+    List<TimeSeriesProjection> findHourlyTimeSeries(@Param("shortCode") String shortCode, @Param("since") Instant since);
 
     @Query(value = """
-        SELECT to_char(date_trunc('day', timestamp), 'YYYY-MM-DD"T"HH24:00:00"Z"') AS label,
+        SELECT to_char(date_trunc('day', timestamp), 'YYYY-MM-DD"T"00:00:00"Z"') AS label,
         COUNT(*) AS count
         FROM click_analytics
         WHERE short_code = :shortCode AND timestamp >= :since
         GROUP BY date_trunc('day', timestamp)
         ORDER BY date_trunc('day', timestamp) ASC
-""",nativeQuery = true )
-    List<TimeSeriesProjection> findDailyTimeSeries(@Param("shortCode") String shortCode, @Param("since")Instant since);
+""", nativeQuery = true)
+    List<TimeSeriesProjection> findDailyTimeSeries(@Param("shortCode") String shortCode, @Param("since") Instant since);
 
 
     // --- CATEGORICAL METRICS ---

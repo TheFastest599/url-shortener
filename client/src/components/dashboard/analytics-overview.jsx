@@ -28,9 +28,9 @@ import { toast } from "sonner";
 
 export function AnalyticsOverview({ urls = [], selectedShortCode: initialShortCode }) {
 	const [selectedCode, setSelectedCode] = React.useState(
-		initialShortCode || (urls.length > 0 ? urls[0].shortCode : "e2e-4968")
+		initialShortCode || (urls.length > 0 ? urls[0].shortCode : "")
 	);
-	const [days, setDays] = React.useState(30);
+	const [days, setDays] = React.useState(7);
 	const [isSimulating, setIsSimulating] = React.useState(false);
 
 	React.useEffect(() => {
@@ -41,17 +41,44 @@ export function AnalyticsOverview({ urls = [], selectedShortCode: initialShortCo
 		}
 	}, [initialShortCode, urls]);
 
+	const interval = days <= 2 ? "HOUR" : "DAY";
+
 	const {
 		data: analytics,
 		isLoading,
 		isRefetching,
 		refetch,
-	} = useAnalyticsOverview(selectedCode, { days, includeBots: true });
+	} = useAnalyticsOverview(selectedCode, { days, interval, includeBots: true });
 
 	const formatChartDate = (dateStr) => {
 		try {
 			const date = new Date(dateStr);
+			if (days <= 2) {
+				return date.toLocaleTimeString("en-US", { hour: "numeric", hour12: true });
+			}
 			return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+		} catch {
+			return dateStr;
+		}
+	};
+
+	const formatTooltipDate = (dateStr) => {
+		try {
+			const date = new Date(dateStr);
+			if (days <= 2) {
+				return date.toLocaleString("en-US", {
+					month: "short",
+					day: "numeric",
+					hour: "numeric",
+					minute: "2-digit",
+					hour12: true,
+				});
+			}
+			return date.toLocaleDateString("en-US", {
+				month: "short",
+				day: "numeric",
+				year: "numeric",
+			});
 		} catch {
 			return dateStr;
 		}
@@ -59,6 +86,7 @@ export function AnalyticsOverview({ urls = [], selectedShortCode: initialShortCo
 
 	const timeSeriesData = (analytics?.timeSeries || []).map((pt) => ({
 		date: formatChartDate(pt.timestamp),
+		fullDate: formatTooltipDate(pt.timestamp),
 		clicks: pt.clicks,
 	}));
 
@@ -81,14 +109,15 @@ export function AnalyticsOverview({ urls = [], selectedShortCode: initialShortCo
 	};
 
 	// Custom Glassmorphic Tooltip
-	const CustomTooltip = ({ active, payload, label }) => {
+	const CustomTooltip = ({ active, payload }) => {
 		if (active && payload && payload.length) {
+			const pt = payload[0].payload;
 			return (
 				<div className="rounded-xl border border-border bg-card/95 p-3 shadow-xl backdrop-blur-md text-xs space-y-1">
-					<div className="font-semibold text-foreground font-mono">{label}</div>
+					<div className="font-semibold text-foreground font-mono">{pt.fullDate || pt.date}</div>
 					<div className="flex items-center gap-2 text-primary">
 						<span className="size-2 rounded-full bg-primary" />
-						<span className="font-bold">{payload[0].value} clicks</span>
+						<span className="font-bold">{payload[0].value} {payload[0].value === 1 ? "click" : "clicks"}</span>
 					</div>
 				</div>
 			);
@@ -145,17 +174,22 @@ export function AnalyticsOverview({ urls = [], selectedShortCode: initialShortCo
 
 				<div className="flex items-center gap-2">
 					<div className="flex items-center rounded-lg border border-border bg-muted/40 p-0.5">
-						{[7, 14, 30].map((d) => (
+						{[
+							{ label: "24H", value: 1 },
+							{ label: "7D", value: 7 },
+							{ label: "14D", value: 14 },
+							{ label: "30D", value: 30 },
+						].map((item) => (
 							<button
-								key={d}
-								onClick={() => setDays(d)}
+								key={item.value}
+								onClick={() => setDays(item.value)}
 								className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
-									days === d
+									days === item.value
 										? "bg-background text-foreground shadow-2xs font-semibold"
 										: "text-muted-foreground hover:text-foreground"
 								}`}
 							>
-								{d}D
+								{item.label}
 							</button>
 						))}
 					</div>
@@ -243,7 +277,8 @@ export function AnalyticsOverview({ urls = [], selectedShortCode: initialShortCo
 						</Badge>
 					</CardTitle>
 					<CardDescription className="text-xs">
-						Historical traffic distribution over the selected {days}-day window for <span className="font-mono font-medium text-foreground">/r/{selectedCode}</span>
+						Historical traffic distribution over the {days === 1 ? "past 24 hours" : `past ${days} days`} for{" "}
+						<span className="font-mono font-medium text-foreground">/r/{selectedCode}</span>
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="pt-4">

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ROUTES } from "@/routes/paths";
 import { useAuthStore } from "@/store/authStore";
+import { useCreateUrlMutation } from "@/queries";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -37,8 +38,9 @@ export function HeroSection() {
 	const [utmCampaign, setUtmCampaign] = useState("summer_launch");
 
 	const [isShortening, setIsShortening] = useState(false);
+	const [fullTargetUrl, setFullTargetUrl] = useState("");
 	const [shortenedResult, setShortenedResult] = useState({
-		shortUrl: "https://urlshortener.io/r/cloud-summit",
+		shortUrl: "http://localhost:8080/r/cloud-summit",
 		originalUrl:
 			"https://github.com/EnterpriseCorp/nextgen-cloud-infrastructure-deep-dive-2026?ref=newsletter&utm_source=twitter&utm_medium=social&utm_campaign=summer_launch",
 		clicks: 1420,
@@ -47,6 +49,24 @@ export function HeroSection() {
 	const [copied, setCopied] = useState(false);
 	const [showQr, setShowQr] = useState(false);
 
+	const createUrlMutation = useCreateUrlMutation({
+		onSuccess: (data) => {
+			const slug = data?.shortCode || customSlug.trim();
+			setShortenedResult({
+				shortUrl: `http://localhost:8080/r/${slug}`,
+				originalUrl: fullTargetUrl,
+				clicks: 0,
+				createdAt: "Just now",
+			});
+			setIsShortening(false);
+			toast.success("Short link created and added to your dashboard!");
+		},
+		onError: (err) => {
+			setIsShortening(false);
+			toast.error(err?.response?.data?.message || "Failed to create short link");
+		},
+	});
+
 	const handleShorten = (e) => {
 		e?.preventDefault();
 		if (!urlInput.trim()) {
@@ -54,22 +74,33 @@ export function HeroSection() {
 			return;
 		}
 
-		setIsShortening(true);
-		setTimeout(() => {
-			const slug = customSlug.trim() || Math.random().toString(36).substring(2, 8);
-			const fullTarget = showUtm && (utmSource || utmMedium || utmCampaign)
-				? `${urlInput.split("?")[0]}?utm_source=${utmSource}&utm_medium=${utmMedium}&utm_campaign=${utmCampaign}`
-				: urlInput;
+		const slug = customSlug.trim();
+		const fullTarget = showUtm && (utmSource || utmMedium || utmCampaign)
+			? `${urlInput.split("?")[0]}?utm_source=${utmSource}&utm_medium=${utmMedium}&utm_campaign=${utmCampaign}`
+			: urlInput;
+		setFullTargetUrl(fullTarget);
 
-			setShortenedResult({
-				shortUrl: `https://urlshortener.io/r/${slug}`,
-				originalUrl: fullTarget,
-				clicks: 1,
-				createdAt: "Just now",
+		if (isAuthenticated) {
+			setIsShortening(true);
+			createUrlMutation.mutate({
+				destinationUrl: fullTarget,
+				customShortCode: slug || undefined,
+				title: slug ? `Campaign: ${slug}` : "Hero Shortened Link",
 			});
-			setIsShortening(false);
-			toast.success("Short link created with sub-5ms Redis cache TTL!");
-		}, 350);
+		} else {
+			setIsShortening(true);
+			setTimeout(() => {
+				const generatedSlug = slug || Math.random().toString(36).substring(2, 8);
+				setShortenedResult({
+					shortUrl: `http://localhost:8080/r/${generatedSlug}`,
+					originalUrl: fullTarget,
+					clicks: 1,
+					createdAt: "Just now",
+				});
+				setIsShortening(false);
+				toast.success("Demo link preview created! Sign up to save links permanently.");
+			}, 350);
+		}
 	};
 
 	const handleCopy = () => {

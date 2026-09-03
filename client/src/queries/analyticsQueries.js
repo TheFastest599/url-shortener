@@ -12,9 +12,9 @@ import { queryKeys } from "./queryKeys";
 // 1. QUERY OPTIONS (ANALYTICS)
 // ==========================================
 export const analyticsQueryOptions = {
-	overview: (shortCode, { days = 30, includeBots = false, enabled = true } = {}) => ({
-		queryKey: queryKeys.analytics.overview(shortCode, days, includeBots),
-		queryFn: async () => getOverview(shortCode, days, includeBots),
+	overview: (shortCode, { days = 30, interval = null, includeBots = false, enabled = true } = {}) => ({
+		queryKey: queryKeys.analytics.overview(shortCode, days, includeBots, interval),
+		queryFn: async () => getOverview(shortCode, days, includeBots, interval),
 		enabled: enabled && !!shortCode,
 		staleTime: 1000 * 30, // 30 seconds for analytics
 		refetchInterval: 1000 * 60, // Auto-poll every 60 seconds when dashboard is open

@@ -1,14 +1,30 @@
 import { apiHelpers } from "@/config/axios";
 
-export const getOverview = async (shortCode, days = 30, includeBots = false) => {
+export const getOverview = async (
+	shortCode,
+	days = 30,
+	includeBots = false,
+	interval = null,
+	timezone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC"
+) => {
 	return apiHelpers.get(`/api/v1/analytics/${shortCode}`, {
-		params: { days, includeBots },
+		params: {
+			days,
+			includeBots,
+			timezone,
+			...(interval ? { interval } : {}),
+		},
 	});
 };
 
-export const getTimeSeries = async (shortCode, interval = "DAY", days = 30) => {
+export const getTimeSeries = async (
+	shortCode,
+	interval = "DAY",
+	days = 30,
+	timezone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC"
+) => {
 	return apiHelpers.get(`/api/v1/analytics/${shortCode}/timeseries`, {
-		params: { interval, days },
+		params: { interval, days, timezone },
 	});
 };
 

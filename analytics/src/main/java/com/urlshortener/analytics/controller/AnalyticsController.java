@@ -26,9 +26,11 @@ public class AnalyticsController {
     public ResponseEntity<AnalyticsOverviewDto> getOverview(
             @PathVariable String shortCode,
             @RequestParam(defaultValue = "30") int days,
+            @RequestParam(required = false) String interval,
+            @RequestParam(defaultValue = "UTC") String timezone,
             @RequestParam(defaultValue = "false") boolean includeBots
     ) {
-        return ResponseEntity.ok(analyticsService.getOverview(shortCode, days, includeBots));
+        return ResponseEntity.ok(analyticsService.getOverview(shortCode, days, interval, timezone, includeBots));
     }
 
     /**
@@ -38,9 +40,10 @@ public class AnalyticsController {
     public ResponseEntity<List<TimeSeriesPoint>> getTimeSeries(
             @PathVariable String shortCode,
             @RequestParam(defaultValue = "DAY") String interval,
-            @RequestParam(defaultValue = "30") int days
+            @RequestParam(defaultValue = "30") int days,
+            @RequestParam(defaultValue = "UTC") String timezone
     ) {
-        return ResponseEntity.ok(analyticsService.getTimeSeries(shortCode, interval, days));
+        return ResponseEntity.ok(analyticsService.getTimeSeries(shortCode, interval, days, timezone));
     }
 
     /**
@@ -80,5 +83,4 @@ public class AnalyticsController {
     ) {
         return ResponseEntity.ok(analyticsService.getReferrers(shortCode, includeBots, limit));
     }
-
 }
