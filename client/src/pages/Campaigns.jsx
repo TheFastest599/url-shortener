@@ -29,7 +29,9 @@ import {
 import { toast } from "sonner";
 
 export function CampaignsPage() {
-	const { urls = [], onOpenCreateModal } = useOutletContext() || {};
+	const { onOpenCreateModal } = useOutletContext() || {};
+	const { data: serverUrls = [] } = useUrlsQuery();
+	const urls = Array.isArray(serverUrls) ? serverUrls : serverUrls?.content || [];
 	const [searchQuery, setSearchQuery] = React.useState("");
 	const [copiedId, setCopiedId] = React.useState(null);
 	const [isUtmBuilderOpen, setIsUtmBuilderOpen] = React.useState(false);
@@ -142,55 +144,55 @@ export function CampaignsPage() {
 				</div>
 			</div>
 
-			{/* Overview KPI Cards */}
-			<div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+			{/* Overview KPI Cards (2 per row on mobile) */}
+			<div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-4">
 				<Card className="border-border/70 bg-card shadow-xs">
-					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
-						<div>
-							<div className="text-xs font-medium text-muted-foreground">Active Marketing Campaigns</div>
-							<div className="text-2xl sm:text-3xl font-bold font-heading text-foreground mt-1">
+					<CardContent className="p-3 sm:p-4 lg:p-5 flex items-start sm:items-center justify-between gap-2">
+						<div className="min-w-0">
+							<div className="text-[11px] sm:text-xs font-medium text-muted-foreground truncate">Active Campaigns</div>
+							<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-foreground mt-0.5 sm:mt-1">
 								{uniqueCampaigns}
 							</div>
-							<div className="text-[11px] text-muted-foreground mt-0.5">
-								Distinct campaign tags active
+							<div className="text-[10px] sm:text-[11px] text-muted-foreground mt-0.5 truncate">
+								Distinct campaign tags
 							</div>
 						</div>
-						<div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary border border-primary/20">
-							<IconTag className="size-5" />
+						<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-primary/10 text-primary border border-primary/20">
+							<IconTag className="size-3.5 sm:size-4.5 lg:size-5" />
 						</div>
 					</CardContent>
 				</Card>
 
 				<Card className="border-border/70 bg-card shadow-xs">
-					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
-						<div>
-							<div className="text-xs font-medium text-muted-foreground">Tagged Campaign Links</div>
-							<div className="text-2xl sm:text-3xl font-bold font-heading text-emerald-500 mt-1">
+					<CardContent className="p-3 sm:p-4 lg:p-5 flex items-start sm:items-center justify-between gap-2">
+						<div className="min-w-0">
+							<div className="text-[11px] sm:text-xs font-medium text-muted-foreground truncate">Campaign Links</div>
+							<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-emerald-500 mt-0.5 sm:mt-1">
 								{campaignLinks.length}
 							</div>
-							<div className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 font-medium">
-								{urls.length > 0 ? Math.round((campaignLinks.length / urls.length) * 100) : 0}% of all short URLs
+							<div className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 font-medium truncate">
+								{urls.length > 0 ? Math.round((campaignLinks.length / urls.length) * 100) : 0}% of all URLs
 							</div>
 						</div>
-						<div className="flex size-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
-							<IconAdjustments className="size-5" />
+						<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+							<IconAdjustments className="size-3.5 sm:size-4.5 lg:size-5" />
 						</div>
 					</CardContent>
 				</Card>
 
-				<Card className="border-border/70 bg-card shadow-xs">
-					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
-						<div>
-							<div className="text-xs font-medium text-muted-foreground">Total Campaign Clicks</div>
-							<div className="text-2xl sm:text-3xl font-bold font-heading text-blue-500 mt-1">
+				<Card className="border-border/70 bg-card shadow-xs col-span-2 sm:col-span-1">
+					<CardContent className="p-3 sm:p-4 lg:p-5 flex items-start sm:items-center justify-between gap-2">
+						<div className="min-w-0">
+							<div className="text-[11px] sm:text-xs font-medium text-muted-foreground truncate">Total Campaign Clicks</div>
+							<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-blue-500 mt-0.5 sm:mt-1">
 								{campaignLinks.reduce((acc, curr) => acc + (curr.clickCount || 0), 0)}
 							</div>
-							<div className="text-[11px] text-muted-foreground mt-0.5">
-								Recorded across tagged channels
+							<div className="text-[10px] sm:text-[11px] text-muted-foreground mt-0.5 truncate">
+								Tagged channels
 							</div>
 						</div>
-						<div className="flex size-10 items-center justify-center rounded-xl bg-blue-500/10 text-blue-500 border border-blue-500/20">
-							<IconShare className="size-5" />
+						<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-blue-500/10 text-blue-500 border border-blue-500/20">
+							<IconShare className="size-3.5 sm:size-4.5 lg:size-5" />
 						</div>
 					</CardContent>
 				</Card>
@@ -246,13 +248,26 @@ export function CampaignsPage() {
 													</div>
 												</td>
 												<td className="py-3.5 px-4 font-mono">
-													/r/{link.shortCode}
+													<Link
+														to={`/redirect-links/${link.shortCode}`}
+														className="font-semibold text-primary hover:underline transition-colors"
+														title="Configure link"
+													>
+														/r/{link.shortCode}
+													</Link>
 												</td>
 												<td className="py-3.5 px-4 text-center font-mono">
 													<Badge variant="secondary">{link.clickCount ?? 0}</Badge>
 												</td>
 												<td className="py-3.5 px-4 text-right">
 													<div className="flex items-center justify-end gap-1.5">
+														<Link
+															to={`/redirect-links/${link.shortCode}`}
+															className="inline-flex size-7 items-center justify-center rounded-md border border-border bg-card text-muted-foreground hover:text-primary transition-colors"
+															title="Configure link"
+														>
+															<IconAdjustments className="size-3.5" />
+														</Link>
 														<Link
 															to={`/analytics/${link.shortCode}`}
 															className="inline-flex size-7 items-center justify-center rounded-md border border-border bg-card text-muted-foreground hover:text-primary transition-colors"
@@ -262,7 +277,7 @@ export function CampaignsPage() {
 														</Link>
 														<button
 															onClick={() => handleCopy(`http://localhost:8080/r/${link.shortCode}`, id)}
-															className="inline-flex size-7 items-center justify-center rounded-md border border-border bg-card text-muted-foreground hover:text-foreground transition-colors"
+															className="inline-flex size-7 items-center justify-center rounded-md border border-border bg-card text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
 															title="Copy short link"
 														>
 															{copiedId === id ? (

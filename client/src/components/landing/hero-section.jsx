@@ -1,407 +1,639 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import * as React from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { ROUTES } from "@/routes/paths";
 import { useAuthStore } from "@/store/authStore";
 import { useCreateUrlMutation } from "@/queries";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import {
 	IconLink,
 	IconCopy,
 	IconCheck,
 	IconQrcode,
-	IconSparkles,
 	IconArrowRight,
-	IconChartBar,
+	IconSparkles,
+	IconTag,
+	IconRocket,
 	IconBolt,
-	IconAdjustments,
-	IconExternalLink,
-	IconShieldCheck,
-	IconFlame,
+	IconChartBar,
+	IconDeviceMobile,
+	IconWorld,
+	IconArrowUpRight,
 } from "@tabler/icons-react";
 
+/**
+ * Showcase presets representing real use cases.
+ * Switched instantly via clicks with zero animation jitter.
+ */
+const SHOWCASE_CARDS = [
+	{
+		id: "launch",
+		tab: "Product Launch",
+		tag: "Campaign",
+		badgeColor: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+		title: "Summer Release 2026",
+		shortSlug: "sho.rt/launch-2026",
+		fullUrl: "http://localhost:8080/r/launch-2026",
+		targetUrl: "https://brand.com/products/launch-2026?ref=press",
+		qrCodeSlug: "launch-2026",
+		metricLabel: "Top Locations",
+		metricValue: "842 Clicks",
+		pill1: "🇺🇸 54%",
+		pill2: "🇩🇪 22%",
+		pill3: "🇬🇧 14%",
+		bgTrend: "+34% this week",
+		bgClicks: "1,420 total clicks",
+		bgDevice: "72% mobile",
+	},
+	{
+		id: "creator",
+		tab: "Creator Bio",
+		tag: "Social Bio",
+		badgeColor: "bg-primary/10 text-primary border-primary/20",
+		title: "Main Channel & Portfolio",
+		shortSlug: "sho.rt/creator-bio",
+		fullUrl: "http://localhost:8080/r/creator-bio",
+		targetUrl: "https://youtube.com/@creativecraft?sub_confirmation=1",
+		qrCodeSlug: "creator-bio",
+		metricLabel: "Traffic Channels",
+		metricValue: "2,190 Clicks",
+		pill1: "YouTube 68%",
+		pill2: "IG 21%",
+		pill3: "X 11%",
+		bgTrend: "+58% this week",
+		bgClicks: "2,190 total clicks",
+		bgDevice: "91% mobile",
+	},
+	{
+		id: "event",
+		tab: "Event Pass",
+		tag: "Dynamic QR",
+		badgeColor: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+		title: "Tech Summit Badge Pass",
+		shortSlug: "sho.rt/summit-pass",
+		fullUrl: "http://localhost:8080/r/summit-pass",
+		targetUrl: "https://summit.example.com/tickets/vip-access?badge=true",
+		qrCodeSlug: "summit-pass",
+		metricLabel: "Badge Check-ins",
+		metricValue: "620 Scans",
+		pill1: "📍 In-Person 94%",
+		pill2: "⚡ Sub-second scan",
+		pill3: "Verified",
+		bgTrend: "100% attendance sync",
+		bgClicks: "620 badge scans",
+		bgDevice: "100% camera scan",
+	},
+];
+
+/**
+ * Hallmark · Clean Studio Hero Section (Motion-Cut / No Animations)
+ * Features live interactive shortener on left, instant tactile card preview on right,
+ * and zero fake metrics or star ratings.
+ */
 export function HeroSection() {
 	const navigate = useNavigate();
 	const { logged, isLogged, user } = useAuthStore();
 	const isAuthenticated = !!(logged || isLogged || user);
 
-	const [urlInput, setUrlInput] = useState(
-		"https://github.com/EnterpriseCorp/nextgen-cloud-infrastructure-deep-dive-2026?ref=newsletter"
-	);
-	const [customSlug, setCustomSlug] = useState("cloud-summit");
-	const [showUtm, setShowUtm] = useState(false);
-	const [utmSource, setUtmSource] = useState("twitter");
-	const [utmMedium, setUtmMedium] = useState("social");
-	const [utmCampaign, setUtmCampaign] = useState("summer_launch");
-
-	const [isShortening, setIsShortening] = useState(false);
-	const [fullTargetUrl, setFullTargetUrl] = useState("");
-	const [shortenedResult, setShortenedResult] = useState({
-		shortUrl: "http://localhost:8080/r/cloud-summit",
-		originalUrl:
-			"https://github.com/EnterpriseCorp/nextgen-cloud-infrastructure-deep-dive-2026?ref=newsletter&utm_source=twitter&utm_medium=social&utm_campaign=summer_launch",
-		clicks: 1420,
-		createdAt: "Just now",
+	// Consolidated single state object to minimize re-renders and memory allocations
+	const [form, setForm] = React.useState({
+		urlInput: "",
+		customSlug: "",
+		showCustomAlias: false,
+		showUtm: false,
+		utmSource: "",
+		utmMedium: "",
+		utmCampaign: "",
+		isShortening: false,
+		shortenedResult: null,
+		copied: false,
+		showQr: false,
+		activeCardIndex: 0,
 	});
-	const [copied, setCopied] = useState(false);
-	const [showQr, setShowQr] = useState(false);
+
+	const update = React.useCallback((updates) => {
+		setForm((prev) => ({ ...prev, ...updates }));
+	}, []);
+
+	const {
+		urlInput,
+		customSlug,
+		showCustomAlias,
+		showUtm,
+		utmSource,
+		utmMedium,
+		utmCampaign,
+		isShortening,
+		shortenedResult,
+		copied,
+		showQr,
+		activeCardIndex,
+	} = form;
+
+	const currentCard = SHOWCASE_CARDS[activeCardIndex] || SHOWCASE_CARDS[0];
 
 	const createUrlMutation = useCreateUrlMutation({
 		onSuccess: (data) => {
 			const slug = data?.shortCode || customSlug.trim();
-			setIsShortening(false);
-			toast.success("Short link created!");
-			navigate(`/redirect-links/${slug}`);
+			const fullShortUrl = `http://localhost:8080/r/${slug}`;
+			update({
+				isShortening: false,
+				shortenedResult: {
+					shortCode: slug,
+					shortUrl: fullShortUrl,
+					destinationUrl: data?.destinationUrl || urlInput.trim(),
+					isReal: true,
+				},
+			});
+			toast.success("Short link created successfully!");
 		},
-		onError: () => {
-			setIsShortening(false);
+		onError: (err) => {
+			update({ isShortening: false });
+			toast.error(err?.response?.data?.message || "Failed to shorten URL");
 		},
 	});
 
 	const handleShorten = (e) => {
 		e?.preventDefault();
-		if (!urlInput.trim()) {
-			toast.error("Please enter a valid target URL");
+		let target = urlInput.trim();
+		if (!target) {
+			toast.error("Please enter a destination URL");
 			return;
 		}
 
-		const slug = customSlug.trim();
-		const fullTarget = showUtm && (utmSource || utmMedium || utmCampaign)
-			? `${urlInput.split("?")[0]}?utm_source=${utmSource}&utm_medium=${utmMedium}&utm_campaign=${utmCampaign}`
-			: urlInput;
-		setFullTargetUrl(fullTarget);
-
-		if (isAuthenticated) {
-			setIsShortening(true);
-			createUrlMutation.mutate({
-				destinationUrl: fullTarget,
-				customShortCode: slug || undefined,
-				title: slug ? `Campaign: ${slug}` : "Hero Shortened Link",
-			});
-		} else {
-			setIsShortening(true);
-			setTimeout(() => {
-				const generatedSlug = slug || Math.random().toString(36).substring(2, 8);
-				setShortenedResult({
-					shortUrl: `http://localhost:8080/r/${generatedSlug}`,
-					originalUrl: fullTarget,
-					clicks: 1,
-					createdAt: "Just now",
-				});
-				setIsShortening(false);
-				toast.success("Demo link preview created! Sign up to save links permanently.");
-			}, 350);
+		if (!target.startsWith("http://") && !target.startsWith("https://")) {
+			target = "https://" + target;
 		}
+
+		// Compose UTM parameters if provided
+		let finalUrl = target;
+		if (showUtm && (utmSource.trim() || utmMedium.trim() || utmCampaign.trim())) {
+			try {
+				const parsed = new URL(target);
+				if (utmSource.trim()) parsed.searchParams.set("utm_source", utmSource.trim());
+				if (utmMedium.trim()) parsed.searchParams.set("utm_medium", utmMedium.trim());
+				if (utmCampaign.trim()) parsed.searchParams.set("utm_campaign", utmCampaign.trim());
+				finalUrl = parsed.toString();
+			} catch {
+				finalUrl = target;
+			}
+		}
+
+		const slug = customSlug.trim() || undefined;
+
+		if (!isAuthenticated) {
+			toast.info("Please sign in or create an account to shorten and track links.");
+			navigate(ROUTES.LOGIN, { state: { targetUrl: finalUrl } });
+			return;
+		}
+
+		update({ isShortening: true });
+		createUrlMutation.mutate({
+			destinationUrl: finalUrl,
+			customAlias: slug,
+		});
 	};
 
-	const handleCopy = () => {
-		if (!shortenedResult) return;
-		navigator.clipboard.writeText(shortenedResult.shortUrl);
-		setCopied(true);
-		toast.success("Short URL copied to clipboard!");
-		setTimeout(() => setCopied(false), 2000);
+	const handleCopy = (text) => {
+		const targetText = text || shortenedResult?.shortUrl || currentCard.fullUrl;
+		if (!targetText) return;
+		navigator.clipboard.writeText(targetText);
+		update({ copied: true });
+		toast.success("Link copied to clipboard");
+		setTimeout(() => update({ copied: false }), 2000);
 	};
 
-	const handleSimulateClick = () => {
-		setShortenedResult((prev) => ({
-			...prev,
-			clicks: prev.clicks + 1,
-		}));
-		toast.info("Simulated 302 Redirection: +1 event sent to Kafka (url-clicks)");
-	};
+	// Memoize QR URL to prevent unnecessary image downloads on unrelated re-renders
+	const qrTarget = shortenedResult?.shortUrl || currentCard.fullUrl;
+	const qrImageUrl = React.useMemo(() => {
+		return `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(
+			qrTarget,
+		)}&margin=10`;
+	}, [qrTarget]);
 
 	return (
-		<section className="relative overflow-hidden py-16 sm:py-24 lg:py-28">
-			{/* Subtle ambient gradient mesh */}
-			<div className="pointer-events-none absolute inset-0 -z-10 flex items-center justify-center overflow-hidden">
-				<div className="size-[500px] rounded-full bg-primary/10 blur-3xl" />
-				<div className="size-[350px] -translate-x-32 translate-y-24 rounded-full bg-emerald-500/5 blur-3xl" />
-			</div>
+		<section className="relative overflow-hidden pt-12 pb-16 sm:pt-20 sm:pb-24 lg:pt-24 lg:pb-28">
+			{/* Static ambient background glow */}
+			<div className="pointer-events-none absolute -top-40 left-1/2 -translate-x-1/2 -z-10 size-[800px] rounded-full bg-primary/6 blur-[120px]" />
 
 			<div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-				{/* Top Pill / Badge */}
-				<div className="flex justify-center">
-					<div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3.5 py-1 text-xs font-medium text-primary shadow-xs transition-colors">
-						<IconSparkles className="size-3.5" />
-						<span>High-Throughput Reactive URL Engine</span>
-						<span className="text-muted-foreground">·</span>
-						<span className="font-mono">&lt; 5ms Latency</span>
-					</div>
-				</div>
-
-				{/* Main Headline & Value Proposition */}
-				<div className="mx-auto mt-6 max-w-4xl text-center">
-					<h1 className="font-heading text-4xl font-bold tracking-tight text-foreground sm:text-5xl lg:text-6xl">
-						Enterprise URL Infrastructure.{" "}
-						<span className="text-primary block sm:inline">
-							Sub-5ms Redirection
-						</span>{" "}
-						& Real-Time Stream Analytics.
-					</h1>
-					<p className="mt-6 text-lg sm:text-xl text-muted-foreground leading-relaxed">
-						Shorten, brand, and track millions of links with Spring WebFlux, Reactive Redis, and Kafka event streaming. Built for performance, security, and deep geographic intelligence.
-					</p>
-				</div>
-
-				{/* CTA Buttons */}
-				<div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-					<Button
-						size="lg"
-						className="gap-2 shadow-md cursor-pointer text-base"
-						onClick={() => {
-							navigate(isAuthenticated ? ROUTES.DASHBOARD : ROUTES.SIGNUP);
-						}}
-					>
-						<span>{isAuthenticated ? "Go to Dashboard" : "Get Started Free"}</span>
-						<IconArrowRight className="size-4" />
-					</Button>
-				</div>
-
-				{/* Interactive Live URL Shortener Widget */}
-				<div className="mx-auto mt-12 max-w-3xl">
-					<div className="rounded-3xl border border-border/80 bg-card/95 p-4 sm:p-6 shadow-xl backdrop-blur-xl transition-all">
-						{/* Widget Header */}
-						<div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-4">
-							<div className="flex items-center gap-2">
-								<div className="size-2.5 rounded-full bg-primary animate-pulse" />
-								<span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-									Live Shortening Simulator
-								</span>
-							</div>
-							<div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
-								<span className="rounded-md bg-muted px-2 py-0.5">Base62 Bijective</span>
-								<span className="rounded-md bg-muted px-2 py-0.5">Redis Cached</span>
-							</div>
+				{/* 2-Column Asymmetric Grid */}
+				<div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
+					{/* Left Column: Headline, Copy, and Interactive Shortener */}
+					<div className="lg:col-span-7 space-y-6 text-left">
+						{/* Status Pill */}
+						<div className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-muted/40 px-3 py-1 text-xs font-medium text-foreground/80 shadow-2xs">
+							<span className="size-2 rounded-full bg-emerald-500" />
+							<span>Free to use · Instant link shortening & dynamic QR</span>
 						</div>
 
-						{/* Form Inputs */}
-						<form onSubmit={handleShorten} className="mt-4 space-y-3">
-							<div className="flex flex-col sm:flex-row gap-2">
-								<div className="relative flex-1">
-									<IconLink className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-									<Input
-										value={urlInput}
-										onChange={(e) => setUrlInput(e.target.value)}
-										placeholder="Paste long destination URL (e.g. https://example.com/deep/page)..."
-										className="pl-9 h-11 text-sm bg-background border-border"
-									/>
-								</div>
-								<Button
-									type="submit"
-									disabled={isShortening}
-									className="h-11 px-6 gap-2 cursor-pointer shrink-0"
-								>
-									{isShortening ? (
-										<span>Shortening...</span>
-									) : (
-										<>
-											<IconSparkles className="size-4" />
-											<span>Shorten URL</span>
-										</>
-									)}
-								</Button>
-							</div>
+						{/* Display Headline with Inline Tactile Icon Badges */}
+						<h1 className="font-heading text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-foreground leading-[1.12]">
+							Shorten{" "}
+							<span className="inline-flex items-center justify-center size-9 sm:size-11 rounded-2xl bg-primary/10 text-primary align-middle mx-1 border border-primary/20 shadow-2xs">
+								<IconLink className="size-5 sm:size-6" />
+							</span>{" "}
+							Links
+							<br />
+							That Build Trust,
+							<br />
+							Go{" "}
+							<span className="inline-flex items-center justify-center size-9 sm:size-11 rounded-2xl bg-amber-500/10 text-amber-500 align-middle mx-1 border border-amber-500/20 shadow-2xs">
+								<IconRocket className="size-5 sm:size-6" />
+							</span>{" "}
+							Further.
+						</h1>
 
-							{/* Custom Slug & UTM Controls Bar */}
-							<div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-xs">
-								<div className="flex items-center gap-2">
-									<span className="text-muted-foreground font-medium">Custom Alias:</span>
-									<div className="flex items-center rounded-xl bg-background border border-border px-2.5 py-1">
-										<span className="text-muted-foreground font-mono text-[11px]">/r/</span>
-										<input
-											type="text"
-											value={customSlug}
-											onChange={(e) => setCustomSlug(e.target.value)}
-											placeholder="alias (optional)"
-											className="bg-transparent text-xs font-mono outline-none text-foreground w-28 ml-1"
-										/>
-									</div>
-								</div>
+						{/* Subtitle with bolded value propositions */}
+						<p className="text-base sm:text-lg text-muted-foreground max-w-xl leading-relaxed">
+							Turn unwieldy URLs into{" "}
+							<strong className="text-foreground font-semibold">clean branded links</strong>,
+							generate{" "}
+							<strong className="text-foreground font-semibold">print-ready QR codes</strong>,
+							and track{" "}
+							<strong className="text-foreground font-semibold">real-time clicks</strong> without
+							tedious spreadsheets.
+						</p>
 
-								<Button
-									type="button"
-									variant="ghost"
-									size="xs"
-									onClick={() => setShowUtm(!showUtm)}
-									className="gap-1.5 text-muted-foreground hover:text-foreground cursor-pointer"
-								>
-									<IconAdjustments className="size-3.5 text-primary" />
-									<span>{showUtm ? "Hide UTM Tags" : "Add UTM Parameters"}</span>
-								</Button>
-							</div>
+						{/* The Quick Shortener Input Card */}
+						<div className="pt-2 max-w-xl">
+							<div className="rounded-2xl border border-border/80 bg-card p-3 sm:p-4 shadow-md backdrop-blur-xs">
+								<form onSubmit={handleShorten} className="space-y-3">
+									{/* Main Input + Action Button */}
+									<div className="flex flex-col sm:flex-row gap-2">
+										<div className="relative flex-1">
+											<IconLink className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+											<Input
+												type="text"
+												value={urlInput}
+												onChange={(e) => update({ urlInput: e.target.value })}
+												placeholder="Paste your link here (e.g. https://mybrand.com/launch)..."
+												className="pl-10 h-11 text-sm bg-background border-border/70 focus-visible:ring-1 focus-visible:ring-primary font-normal"
+											/>
+										</div>
+										<Button
+											type="submit"
+											disabled={isShortening}
+											className="h-11 px-5 font-semibold cursor-pointer shrink-0 shadow-xs"
+										>
+											{isShortening ? "Shortening..." : "Shorten"}
+											{!isShortening && <IconArrowRight className="size-4 ml-1.5" />}
+										</Button>
+									</div>
 
-							{/* Expandable UTM Builder */}
-							{showUtm && (
-								<div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 rounded-2xl bg-muted/40 p-3 border border-border/40 text-xs animate-in fade-in-50 duration-200">
-									<div>
-										<label className="text-[11px] font-medium text-muted-foreground mb-1 block">
-											UTM Source
-										</label>
-										<Input
-											value={utmSource}
-											onChange={(e) => setUtmSource(e.target.value)}
-											placeholder="twitter, google, email"
-											className="h-8 text-xs bg-background"
-										/>
-									</div>
-									<div>
-										<label className="text-[11px] font-medium text-muted-foreground mb-1 block">
-											UTM Medium
-										</label>
-										<Input
-											value={utmMedium}
-											onChange={(e) => setUtmMedium(e.target.value)}
-											placeholder="social, cpc, banner"
-											className="h-8 text-xs bg-background"
-										/>
-									</div>
-									<div>
-										<label className="text-[11px] font-medium text-muted-foreground mb-1 block">
-											UTM Campaign
-										</label>
-										<Input
-											value={utmCampaign}
-											onChange={(e) => setUtmCampaign(e.target.value)}
-											placeholder="spring_launch"
-											className="h-8 text-xs bg-background"
-										/>
-									</div>
-								</div>
-							)}
-						</form>
-
-						{/* Result Display Card */}
-						{shortenedResult && (
-							<div className="mt-5 rounded-2xl border border-primary/20 bg-primary/5 p-4 transition-all">
-								<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-									<div className="space-y-1 min-w-0">
+									{/* Quick Expanders: Custom Slug & UTM */}
+									<div className="flex items-center justify-between pt-0.5 text-xs">
 										<div className="flex items-center gap-2">
-											<span className="text-[11px] uppercase tracking-wider font-semibold text-primary">
-												Generated Short Link
-											</span>
-											<Badge variant="outline" className="text-[10px] py-0 border-primary/30 text-primary">
-												HTTP 302
-											</Badge>
+											<button
+												type="button"
+												onClick={() => update({ showCustomAlias: !showCustomAlias })}
+												className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors cursor-pointer border text-xs ${
+													showCustomAlias
+														? "bg-primary/10 border-primary/30 text-primary font-medium"
+														: "bg-muted/40 border-border/50 text-muted-foreground hover:text-foreground"
+												}`}
+											>
+												<IconBolt className="size-3" />
+												<span>Custom slug</span>
+											</button>
+
+											<button
+												type="button"
+												onClick={() => update({ showUtm: !showUtm })}
+												className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors cursor-pointer border text-xs ${
+													showUtm
+														? "bg-primary/10 border-primary/30 text-primary font-medium"
+														: "bg-muted/40 border-border/50 text-muted-foreground hover:text-foreground"
+												}`}
+											>
+												<IconTag className="size-3" />
+												<span>Campaign tags</span>
+											</button>
 										</div>
-										<p className="font-mono text-base font-bold text-foreground truncate select-all">
-											{shortenedResult.shortUrl}
-										</p>
-										<p className="text-xs text-muted-foreground truncate max-w-md">
-											Destination: {shortenedResult.originalUrl}
-										</p>
+
+										<span className="text-[11px] text-muted-foreground hidden sm:inline">
+											Instant 1-click generation
+										</span>
 									</div>
 
-									{/* Action buttons */}
-									<div className="flex items-center gap-2 shrink-0">
-										<Button
-											variant="outline"
-											size="sm"
-											onClick={() => setShowQr(!showQr)}
-											className="gap-1.5 cursor-pointer"
-											title="Toggle QR Code"
-										>
-											<IconQrcode className="size-4" />
-											<span className="hidden sm:inline">QR</span>
-										</Button>
-
-										<Button
-											variant="secondary"
-											size="sm"
-											onClick={handleCopy}
-											className="gap-1.5 cursor-pointer font-medium"
-										>
-											{copied ? (
-												<>
-													<IconCheck className="size-4 text-primary" />
-													<span>Copied!</span>
-												</>
-											) : (
-												<>
-													<IconCopy className="size-4" />
-													<span>Copy</span>
-												</>
-											)}
-										</Button>
-
-										<Button
-											variant="default"
-											size="sm"
-											onClick={handleSimulateClick}
-											className="gap-1.5 cursor-pointer shadow-xs"
-											title="Simulate a click to trigger reactive redirect & Kafka logging"
-										>
-											<IconFlame className="size-4" />
-											<span>Simulate ({shortenedResult.clicks})</span>
-										</Button>
-									</div>
-								</div>
-
-								{/* QR Code Container */}
-								{showQr && (
-									<div className="mt-4 pt-4 border-t border-primary/20 flex flex-col sm:flex-row items-center gap-4 animate-in fade-in-50 duration-200">
-										<div className="size-24 rounded-xl bg-white p-2 flex items-center justify-center shadow-md">
-											{/* Clean SVG QR mockup representation */}
-											<svg viewBox="0 0 100 100" className="size-full fill-black">
-												<rect x="0" y="0" width="30" height="30" />
-												<rect x="5" y="5" width="20" height="20" fill="white" />
-												<rect x="9" y="9" width="12" height="12" />
-												
-												<rect x="70" y="0" width="30" height="30" />
-												<rect x="75" y="5" width="20" height="20" fill="white" />
-												<rect x="79" y="9" width="12" height="12" />
-												
-												<rect x="0" y="70" width="30" height="30" />
-												<rect x="5" y="75" width="20" height="20" fill="white" />
-												<rect x="9" y="79" width="12" height="12" />
-												
-												<rect x="40" y="10" width="20" height="10" />
-												<rect x="40" y="30" width="10" height="20" />
-												<rect x="60" y="40" width="20" height="10" />
-												<rect x="40" y="70" width="20" height="20" />
-												<rect x="70" y="70" width="15" height="15" />
-											</svg>
+									{/* Custom Slug Input */}
+									{showCustomAlias && (
+										<div className="pt-1">
+											<div className="flex items-center rounded-lg border border-border/70 bg-background px-3 h-9 text-xs">
+												<span className="text-muted-foreground font-mono select-none">
+													localhost:8080/r/
+												</span>
+												<input
+													type="text"
+													value={customSlug}
+													onChange={(e) => update({ customSlug: e.target.value })}
+													placeholder="custom-slug (optional)"
+													className="bg-transparent text-xs font-mono outline-none text-foreground flex-1 ml-1"
+												/>
+											</div>
 										</div>
-										<div className="text-center sm:text-left space-y-1">
-											<p className="text-xs font-semibold text-foreground">
-												Instant Dynamic QR Code
-											</p>
-											<p className="text-[11px] text-muted-foreground">
-												Print or embed directly in campaigns. Always routes to your latest redirect configuration.
-											</p>
+									)}
+
+									{/* UTM Builder */}
+									{showUtm && (
+										<div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-xs">
+											<div>
+												<label className="text-[10px] font-medium text-muted-foreground mb-1 block">
+													utm_source
+												</label>
+												<Input
+													value={utmSource}
+													onChange={(e) => update({ utmSource: e.target.value })}
+													placeholder="twitter, newsletter"
+													className="h-8 text-xs bg-background"
+												/>
+											</div>
+											<div>
+												<label className="text-[10px] font-medium text-muted-foreground mb-1 block">
+													utm_medium
+												</label>
+												<Input
+													value={utmMedium}
+													onChange={(e) => update({ utmMedium: e.target.value })}
+													placeholder="social, email"
+													className="h-8 text-xs bg-background"
+												/>
+											</div>
+											<div>
+												<label className="text-[10px] font-medium text-muted-foreground mb-1 block">
+													utm_campaign
+												</label>
+												<Input
+													value={utmCampaign}
+													onChange={(e) => update({ utmCampaign: e.target.value })}
+													placeholder="launch2026"
+													className="h-8 text-xs bg-background"
+												/>
+											</div>
 										</div>
+									)}
+								</form>
+
+								{/* If Shortened: Active Result Card */}
+								{shortenedResult && (
+									<div className="mt-4 pt-3 border-t border-border/60 space-y-3">
+										<div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-primary/5 border border-primary/20">
+											<div className="min-w-0">
+												<span className="text-[10px] uppercase font-semibold text-primary block">
+													Your Short Link
+												</span>
+												<span className="font-mono text-xs sm:text-sm font-bold text-foreground truncate block">
+													{shortenedResult.shortUrl}
+												</span>
+											</div>
+											<div className="flex items-center gap-1.5 shrink-0">
+												<Button
+													size="sm"
+													onClick={() => handleCopy(shortenedResult.shortUrl)}
+													className="h-8 px-3 text-xs gap-1 cursor-pointer"
+												>
+													{copied ? <IconCheck className="size-3.5" /> : <IconCopy className="size-3.5" />}
+													<span>{copied ? "Copied" : "Copy"}</span>
+												</Button>
+												<Button
+													size="sm"
+													variant="outline"
+													onClick={() => update({ showQr: !showQr })}
+													className="h-8 px-2.5 text-xs cursor-pointer bg-background"
+												>
+													<IconQrcode className="size-3.5" />
+												</Button>
+											</div>
+										</div>
+
+										{showQr && (
+											<div className="flex items-center gap-4 p-3 rounded-xl bg-background border border-border/70">
+												<img
+													src={qrImageUrl}
+													alt="QR Code"
+													className="size-16 rounded-md border border-border"
+												/>
+												<div className="text-xs">
+													<p className="font-semibold text-foreground">Scannable QR Code</p>
+													<p className="text-muted-foreground text-[11px]">
+														Ready to download for print, slides, or menus.
+													</p>
+												</div>
+											</div>
+										)}
 									</div>
 								)}
 							</div>
-						)}
+
+							{/* Guest Prompt helper */}
+							{!isAuthenticated && (
+								<p className="mt-2.5 text-xs text-muted-foreground">
+									Want to track analytics and manage links?{" "}
+									<Link
+										to={ROUTES.SIGNUP}
+										className="text-primary hover:underline font-semibold"
+									>
+										Create free account →
+									</Link>
+								</p>
+							)}
+						</div>
+					</div>
+
+					{/* Right Column: Layered Static Preview Cards (Instant Click Switcher) */}
+					<div className="lg:col-span-5 relative flex flex-col items-center lg:items-end">
+						{/* Clean Tab Selector */}
+						<div className="flex items-center justify-center gap-1.5 mb-4 p-1 rounded-xl bg-muted/50 border border-border/60">
+							{SHOWCASE_CARDS.map((card, idx) => (
+								<button
+									key={card.id}
+									type="button"
+									onClick={() => update({ activeCardIndex: idx })}
+									className={`px-3 py-1 rounded-lg text-xs transition-colors cursor-pointer ${
+										activeCardIndex === idx
+											? "bg-background text-foreground shadow-xs border border-border/70 font-semibold"
+											: "text-muted-foreground hover:text-foreground"
+									}`}
+								>
+									{card.tab}
+								</button>
+							))}
+						</div>
+
+						<div className="relative w-full max-w-[440px]">
+							{/* Background Tilted Analytics Card (Layer 1 - Static) */}
+							<div className="absolute -top-6 -left-4 sm:-left-6 w-full rounded-2xl border border-border/60 bg-muted/50 p-5 shadow-md -rotate-2 scale-95 pointer-events-none opacity-80 dark:opacity-60 hidden sm:block">
+								<div className="flex items-center justify-between pb-3 border-b border-border/40">
+									<div className="flex items-center gap-2">
+										<IconChartBar className="size-4 text-primary" />
+										<span className="text-xs font-semibold text-foreground">
+											Live Engagement
+										</span>
+									</div>
+									<span className="text-[11px] font-mono text-emerald-500 font-semibold">
+										{currentCard.bgTrend}
+									</span>
+								</div>
+								<div className="pt-3 flex items-center justify-between text-xs text-muted-foreground">
+									<span>{currentCard.bgClicks}</span>
+									<span className="flex items-center gap-1 font-mono">
+										<IconDeviceMobile className="size-3.5" /> {currentCard.bgDevice}
+									</span>
+								</div>
+							</div>
+
+							{/* Front Main Showcase Card (Layer 2 - Static & Instant) */}
+							<div className="relative rounded-3xl border border-border/80 bg-card p-6 shadow-xl backdrop-blur-md">
+								{/* Card Top Header */}
+								<div className="flex items-center justify-between pb-4 border-b border-border/50">
+									<div className="flex items-center gap-2.5">
+										<div className="size-8 rounded-xl bg-primary/10 flex items-center justify-center text-primary font-bold">
+											<IconSparkles className="size-4.5" />
+										</div>
+										<div>
+											<p className="text-xs font-bold text-foreground leading-none">
+												{currentCard.title}
+											</p>
+											<p className="text-[10px] text-muted-foreground mt-0.5">
+												Dynamic QR & Real-time Telemetry
+											</p>
+										</div>
+									</div>
+									<span
+										className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${currentCard.badgeColor}`}
+									>
+										<span className="size-1.5 rounded-full bg-current" />
+										{currentCard.tag}
+									</span>
+								</div>
+
+								{/* Link Details Body */}
+								<div className="mt-4 space-y-3">
+									{/* Destination URL preview */}
+									<div className="space-y-1">
+										<span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+											Target Destination
+										</span>
+										<p className="text-xs font-mono text-muted-foreground truncate bg-muted/30 px-2.5 py-1.5 rounded-lg border border-border/50">
+											{currentCard.targetUrl}
+										</p>
+									</div>
+
+									{/* Short URL with live Copy Button */}
+									<div className="space-y-1">
+										<span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+											Shortened URL
+										</span>
+										<div className="flex items-center justify-between rounded-xl bg-primary/5 border border-primary/20 px-3 py-2">
+											<span className="font-mono text-xs sm:text-sm font-bold text-primary">
+												{currentCard.shortSlug}
+											</span>
+											<button
+												type="button"
+												onClick={() => handleCopy(currentCard.fullUrl)}
+												className="inline-flex items-center gap-1 text-[11px] font-semibold text-foreground/80 hover:text-primary transition-colors cursor-pointer bg-background/80 px-2 py-1 rounded-md border border-border/60 shadow-2xs"
+											>
+												{copied ? (
+													<IconCheck className="size-3 text-emerald-500" />
+												) : (
+													<IconCopy className="size-3" />
+												)}
+												<span>{copied ? "Copied" : "Copy"}</span>
+											</button>
+										</div>
+									</div>
+
+									{/* QR Code & Location Breakdown Strip */}
+									<div className="pt-2 flex items-center gap-4 bg-muted/20 p-3 rounded-xl border border-border/50">
+										<div className="size-16 rounded-lg bg-white p-1 shadow-2xs shrink-0 flex items-center justify-center border border-border/40">
+											<img
+												src={qrImageUrl}
+												alt={`QR for ${currentCard.shortSlug}`}
+												className="size-full object-contain"
+											/>
+										</div>
+										<div className="min-w-0 flex-1 space-y-1">
+											<div className="flex items-center justify-between text-xs">
+												<span className="font-semibold text-foreground flex items-center gap-1">
+													<IconWorld className="size-3 text-primary" /> {currentCard.metricLabel}
+												</span>
+												<span className="font-mono font-bold text-xs text-foreground">
+													{currentCard.metricValue}
+												</span>
+											</div>
+											<div className="flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+												<span className="bg-background px-1.5 py-0.5 rounded border border-border/50">
+													{currentCard.pill1}
+												</span>
+												<span className="bg-background px-1.5 py-0.5 rounded border border-border/50">
+													{currentCard.pill2}
+												</span>
+												<span className="bg-background px-1.5 py-0.5 rounded border border-border/50">
+													{currentCard.pill3}
+												</span>
+											</div>
+											<p className="text-[10px] text-muted-foreground pt-0.5">
+												Dynamic QR updates automatically
+											</p>
+										</div>
+									</div>
+								</div>
+
+								{/* Bottom Link Action */}
+								<div className="mt-4 pt-3 border-t border-border/40 flex items-center justify-between text-xs">
+									<span className="text-muted-foreground text-[11px]">
+										Ready to share anywhere
+									</span>
+									<Link
+										to={ROUTES.DASHBOARD}
+										className="inline-flex items-center gap-1 font-semibold text-primary hover:underline text-xs"
+									>
+										<span>View live stats</span>
+										<IconArrowUpRight className="size-3.5" />
+									</Link>
+								</div>
+							</div>
+						</div>
 					</div>
 				</div>
 
-				{/* Tech Stacks Strip */}
-				<div className="mt-12 flex flex-wrap items-center justify-center gap-3 text-xs text-muted-foreground">
-					<span className="font-semibold text-foreground/80">Powered By:</span>
-					<span className="rounded-full border border-border bg-muted/30 px-3 py-1 font-mono">
-						Spring Boot 3.3
-					</span>
-					<span className="rounded-full border border-border bg-muted/30 px-3 py-1 font-mono">
-						Reactive WebFlux
-					</span>
-					<span className="rounded-full border border-border bg-muted/30 px-3 py-1 font-mono">
-						Apache Kafka KRaft
-					</span>
-					<span className="rounded-full border border-border bg-muted/30 px-3 py-1 font-mono">
-						Redis 7.2
-					</span>
-					<span className="rounded-full border border-border bg-muted/30 px-3 py-1 font-mono">
-						PostgreSQL 16
-					</span>
-					<span className="rounded-full border border-border bg-muted/30 px-3 py-1 font-mono">
-						MaxMind GeoIP2
-					</span>
+				{/* Full-width Clean Capabilities Strip (Zero Fake Ratings) */}
+				<div className="mt-16 sm:mt-20 pt-8 border-t border-border/50 flex flex-col md:flex-row items-center justify-between gap-6">
+					{/* Honest Platform Highlights */}
+					<div className="flex items-center gap-3 text-xs text-muted-foreground">
+						<span className="size-2 rounded-full bg-emerald-500" />
+						<span className="font-medium text-foreground">
+							Purpose-built for modern campaigns
+						</span>
+						<span className="text-border">·</span>
+						<span>Zero tracking cookies</span>
+						<span className="text-border">·</span>
+						<span>Clean redirection</span>
+					</div>
+
+					{/* Use-Case Badges */}
+					<div className="flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
+						<span className="rounded-full bg-muted/40 border border-border/60 px-3 py-1">
+							Social Bios
+						</span>
+						<span className="rounded-full bg-muted/40 border border-border/60 px-3 py-1">
+							Product Launches
+						</span>
+						<span className="rounded-full bg-muted/40 border border-border/60 px-3 py-1">
+							Packaging & Menus
+						</span>
+						<span className="rounded-full bg-muted/40 border border-border/60 px-3 py-1">
+							Email Newsletters
+						</span>
+						<span className="rounded-full bg-muted/40 border border-border/60 px-3 py-1">
+							Event Badges
+						</span>
+					</div>
 				</div>
 			</div>
 		</section>
 	);
 }
+
+export default HeroSection;

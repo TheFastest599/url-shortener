@@ -245,16 +245,46 @@ All `/api/v1/urls/**` requests are routed via Gateway with JWT verification and 
 
 ---
 
-### 3.7 UTM Profile Sub-Resources
-- **`POST /api/v1/urls/{urlId}/utm`**: Add a UTM campaign profile.
-- **`GET /api/v1/urls/{urlId}/utm`**: List UTM profiles for a URL.
-- **`GET /api/v1/urls/utm/{utmId}`**: Get specific UTM profile.
-- **`PUT /api/v1/urls/utm/{utmId}`**: Update UTM profile.
-- **`DELETE /api/v1/urls/utm/{utmId}`**: Delete UTM profile.
+### 3.7 Campaign Management
+- **`POST /api/v1/campaigns`**: Create a new marketing campaign folder.
+  ```json
+  {
+    "name": "Summer Launch 2026",
+    "description": "Multi-channel launch campaign",
+    "defaultUtmSource": "twitter",
+    "defaultUtmMedium": "social"
+  }
+  ```
+- **`GET /api/v1/campaigns`**: List all campaigns owned by the user.
+- **`GET /api/v1/campaigns/{id}`**: Get specific campaign details and its associated short URLs.
+- **`DELETE /api/v1/campaigns/{id}`**: Delete campaign (associated links are unassigned, not deleted).
 
 ---
 
-### 3.8 gRPC Server Interface (`port: 9090`)
+### 3.8 A/B/n Multivariate Testing Management
+- **`POST /api/v1/urls/{shortCode}/ab-test`**: Configure or start an A/B/n test.
+  ```json
+  {
+    "name": "Landing Page Copy Test",
+    "variants": [
+      { "key": "A", "destinationUrl": "https://site.com/v1", "weight": 50, "isControl": true },
+      { "key": "B", "destinationUrl": "https://site.com/v2", "weight": 25, "isControl": false },
+      { "key": "C", "destinationUrl": "https://site.com/v3", "weight": 25, "isControl": false }
+    ]
+  }
+  ```
+- **`GET /api/v1/urls/{shortCode}/ab-test`**: Get active A/B test status and variant weights.
+- **`PUT /api/v1/urls/{shortCode}/ab-test/status`**: Update test status (`ACTIVE`, `PAUSED`, `CONCLUDED`).
+  ```json
+  {
+    "status": "CONCLUDED",
+    "winningVariant": "B"
+  }
+  ```
+
+---
+
+### 3.9 gRPC Server Interface (`port: 9090`)
 Core hosts the binary **`UrlService`** interface defined in `url_service.proto`:
 
 ```protobuf
@@ -262,9 +292,18 @@ service UrlService {
   rpc GetDestinationUrl (UrlRequest) returns (UrlResponse);
   rpc CreateUrlMapping (CreateUrlRequest) returns (CreateUrlResponse);
 }
+
+message UrlResponse {
+  string destination_url = 1;
+  bool is_active = 2;
+  bool is_found = 3;
+  string short_code = 4;
+  string ab_rules_json = 5;      // Optional: A/B variant JSON configuration
+  string smart_rules_json = 6;   // Optional: Device and Geo targeting rules
+}
 ```
 
-- **`GetDestinationUrl`**: Used by Redirect service to fetch destination URLs on Redis cache misses.
+- **`GetDestinationUrl`**: Used by Redirect service to fetch destination URLs and active rules on Redis cache misses.
 - **`CreateUrlMapping`**: Programmatic creation via gRPC RPC.
 
 ---
@@ -381,11 +420,44 @@ Routed via Gateway at `http://localhost:8080/api/v1/analytics/**`.
     "shortCode": "e2e-4968",
     "timestamp": "2026-08-31T01:54:00Z",
     "ipAddress": "192.168.1.100",
-    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36...",
-    "referrer": "https://github.com"
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)...",
+    "referrer": "https://github.com",
+    "variant": "B",
+    "utmSource": "twitter",
+    "utmMedium": "social",
+    "utmCampaign": "summer_launch"
   }
   ```
 - **Processing:** Resolves GeoIP country & city via MaxMind GeoLite2, detects bot scrapers, classifies device/browser/OS, and inserts into `click_analytics`.
+
+---
+
+### 5.7 A/B Testing Variant Split Analytics
+- **Method / Path:** `GET /api/v1/analytics/{shortCode}/ab-test`
+- **Header:** `Authorization: Bearer <token>`
+- **Description:** Returns real-time click counts and conversion/traffic distribution across Variant A, B, C...
+- **Response (`200 OK`):**
+  ```json
+  [
+    { "name": "A", "count": 5012, "percentage": 50.1 },
+    { "name": "B", "count": 4988, "percentage": 49.9 }
+  ]
+  ```
+
+---
+
+### 5.8 Inbound UTM Traffic Source Attribution
+- **Method / Path:** `GET /api/v1/analytics/{shortCode}/utm-sources?limit=10`
+- **Header:** `Authorization: Bearer <token>`
+- **Description:** Returns ranking of inbound traffic channels dynamically extracted from visitor query strings.
+- **Response (`200 OK`):**
+  ```json
+  [
+    { "name": "twitter", "count": 4500, "percentage": 45.0 },
+    { "name": "newsletter", "count": 3200, "percentage": 32.0 },
+    { "name": "direct", "count": 2300, "percentage": 23.0 }
+  ]
+  ```
 
 ---
 

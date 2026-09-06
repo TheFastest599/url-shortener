@@ -22,6 +22,7 @@ import {
 	IconCheck,
 	IconQrcode,
 	IconChartBar,
+	IconAdjustments,
 	IconExternalLink,
 	IconTrash,
 	IconChevronLeft,
@@ -237,7 +238,6 @@ export function RedirectLinksPage() {
 							<tr className="border-b border-border/70 bg-muted/40 text-muted-foreground font-medium">
 								<th className="py-3 px-4">Shortcode & Target</th>
 								<th className="py-3 px-4 hidden md:table-cell">Host Domain</th>
-								<th className="py-3 px-4 text-center">Clicks</th>
 								<th className="py-3 px-4 hidden sm:table-cell">Created</th>
 								<th className="py-3 px-4 text-center">Status</th>
 								<th className="py-3 px-4 text-right">Actions</th>
@@ -297,13 +297,6 @@ export function RedirectLinksPage() {
 												</span>
 											</td>
 
-											{/* Clicks */}
-											<td className="py-3.5 px-4 text-center whitespace-nowrap">
-												<Badge variant="secondary" className="font-mono text-[11px] px-2 py-0.5">
-													{url.clickCount ?? 0}
-												</Badge>
-											</td>
-
 											{/* Created Date */}
 											<td className="py-3.5 px-4 hidden sm:table-cell text-muted-foreground whitespace-nowrap">
 												{formatDate(url.createdAt)}
@@ -326,6 +319,15 @@ export function RedirectLinksPage() {
 											{/* Actions Cluster */}
 											<td className="py-3.5 px-4 text-right whitespace-nowrap">
 												<div className="flex items-center justify-end gap-1 sm:gap-1.5">
+													{/* Configure Link Settings */}
+													<Link
+														to={`/redirect-links/${url.shortCode}`}
+														className="inline-flex size-7 sm:size-8 items-center justify-center rounded-lg border border-border bg-card text-muted-foreground hover:text-primary hover:border-primary/40 transition-colors cursor-pointer"
+														title="Configure link settings"
+													>
+														<IconAdjustments className="size-3.5 sm:size-4" />
+													</Link>
+
 													{/* View Analytics Button */}
 													<Link
 														to={`/analytics/${url.shortCode}`}
@@ -370,7 +372,7 @@ export function RedirectLinksPage() {
 								})
 							) : (
 								<tr>
-									<td colSpan={6} className="py-12 text-center">
+									<td colSpan={5} className="py-12 text-center">
 										<div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground mb-3">
 											<IconLink className="size-6" />
 										</div>

@@ -22,14 +22,17 @@ export function Footer() {
 						</Link>
 						<span className="text-muted-foreground/60">·</span>
 						<span className="text-xs text-muted-foreground">
-							Enterprise Reactive URL Infrastructure
+							Fast, reliable links with real-time analytics
 						</span>
 					</div>
 
-					{/* Links & Cluster Status */}
+					{/* Links & Status */}
 					<div className="flex items-center gap-6 text-xs text-muted-foreground">
 						<Link to={ROUTES.DASHBOARD} className="hover:text-foreground transition-colors">
 							Dashboard
+						</Link>
+						<Link to={ROUTES.REDIRECT_LINKS} className="hover:text-foreground transition-colors">
+							Links
 						</Link>
 						<a
 							href="https://github.com"
@@ -42,7 +45,7 @@ export function Footer() {
 						</a>
 						<div className="inline-flex items-center gap-1.5 rounded-full border border-border/80 bg-muted/40 px-2.5 py-0.5 text-[11px]">
 							<span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-							<span className="font-mono">Gateway :8080</span>
+							<span className="text-muted-foreground">Operational</span>
 						</div>
 					</div>
 				</div>
@@ -50,7 +53,7 @@ export function Footer() {
 				{/* Copyright Line */}
 				<div className="mt-6 pt-4 border-t border-border/40 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-muted-foreground">
 					<p>© {new Date().getFullYear()} urlShortener. All rights reserved.</p>
-					<span className="font-mono">Spring Boot 3 · Kafka KRaft · Redis 7 · React 19</span>
+					<span>Built for speed, simplicity, and privacy.</span>
 				</div>
 			</div>
 		</footer>

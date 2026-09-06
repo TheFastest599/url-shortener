@@ -1,6 +1,9 @@
 import * as React from "react";
 import { useParams, Link, useNavigate, useOutletContext } from "react-router-dom";
-import { useUrlByCodeQuery, useUpdateUrlByCodeMutation, useDeleteUrlMutation, useAnalyticsOverview } from "@/queries";
+import { useQueryClient, useMutation } from "@tanstack/react-query";
+import { useUrlByCodeQuery, useDeleteUrlMutation, useAnalyticsOverview } from "@/queries";
+import { queryKeys } from "@/queries/queryKeys";
+import { updateUrl } from "@/api/url";
 import { ROUTES } from "@/routes/paths";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,12 +42,20 @@ import { toast } from "sonner";
 export function LinkDetailPage() {
 	const { shortCode } = useParams();
 	const navigate = useNavigate();
+	const queryClient = useQueryClient();
 	const { onOpenQrModal } = useOutletContext() || {};
 
-	const { data: urlData, isLoading, refetch } = useUrlByCodeQuery(shortCode);
-	const updateMutation = useUpdateUrlByCodeMutation(shortCode, {
+	const [isDeleting, setIsDeleting] = React.useState(false);
+
+	const { data: urlData, isLoading, refetch } = useUrlByCodeQuery(shortCode, {
+		enabled: !isDeleting && !!shortCode,
+	});
+	const updateMutation = useMutation({
+		mutationFn: (payload) => updateUrl(urlData?.id, payload),
 		onSuccess: () => {
 			toast.success("Short URL updated successfully");
+			queryClient.invalidateQueries({ queryKey: queryKeys.urls.lists() });
+			queryClient.invalidateQueries({ queryKey: queryKeys.urls.byCode(shortCode) });
 			refetch();
 		},
 	});
@@ -52,17 +63,35 @@ export function LinkDetailPage() {
 	const deleteMutation = useDeleteUrlMutation({
 		onSuccess: () => {
 			toast.success("Short URL deleted");
-			navigate(ROUTES.REDIRECT_LINKS);
+			navigate(ROUTES.DASHBOARD);
+		},
+		onError: (err) => {
+			setIsDeleting(false);
+			toast.error(err?.response?.data?.message || "Failed to delete short URL");
 		},
 	});
 
 	// Analytics preview
-	const { data: analytics } = useAnalyticsOverview(shortCode, { days: 7, includeBots: true });
+	const { data: analytics } = useAnalyticsOverview(shortCode, {
+		days: 7,
+		includeBots: true,
+		enabled: !isDeleting && !!shortCode,
+	});
 
 	const [destinationUrl, setDestinationUrl] = React.useState("");
 	const [isEditing, setIsEditing] = React.useState(false);
 	const [copied, setCopied] = React.useState(false);
 	const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false);
+
+	const handleDelete = () => {
+		if (!urlData?.id) return;
+		setIsDeleting(true);
+		setDeleteDialogOpen(false);
+		queryClient.cancelQueries({ queryKey: queryKeys.urls.byCode(shortCode) });
+		queryClient.removeQueries({ queryKey: queryKeys.urls.byCode(shortCode) });
+		queryClient.removeQueries({ queryKey: queryKeys.analytics.all(shortCode) });
+		deleteMutation.mutate(urlData.id);
+	};
 
 	React.useEffect(() => {
 		if (urlData?.destinationUrl) {
@@ -102,17 +131,26 @@ export function LinkDetailPage() {
 
 	const handleSaveDestination = (e) => {
 		e.preventDefault();
-		if (!destinationUrl.trim()) {
+		const trimmedUrl = destinationUrl.trim();
+		if (!trimmedUrl) {
 			toast.error("Destination URL cannot be empty");
 			return;
 		}
-		updateMutation.mutate({ destinationUrl: destinationUrl.trim() });
+		updateMutation.mutate({
+			id: urlData?.id,
+			destinationUrl: trimmedUrl,
+			isActive: urlData?.isActive !== false,
+		});
 		setIsEditing(false);
 	};
 
 	const handleToggleActive = () => {
 		const nextState = urlData?.isActive === false;
-		updateMutation.mutate({ isActive: nextState });
+		updateMutation.mutate({
+			id: urlData?.id,
+			destinationUrl: destinationUrl || urlData?.destinationUrl,
+			isActive: nextState,
+		});
 	};
 
 	const formatDate = (dateStr) => {
@@ -441,7 +479,7 @@ export function LinkDetailPage() {
 							variant="destructive"
 							size="sm"
 							disabled={deleteMutation.isPending}
-							onClick={() => urlData?.id && deleteMutation.mutate(urlData.id)}
+							onClick={handleDelete}
 							className="text-xs font-semibold"
 						>
 							{deleteMutation.isPending ? "Deleting..." : "Confirm Delete"}

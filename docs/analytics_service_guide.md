@@ -63,6 +63,22 @@ CREATE INDEX IF NOT EXISTS idx_click_analytics_short_code ON click_analytics(sho
 CREATE INDEX IF NOT EXISTS idx_click_analytics_timestamp ON click_analytics(timestamp);
 ```
 
+#### Migration V2: Adding A/B Variant and Inbound UTM Attribution
+Create Flyway migration at `analytics/src/main/resources/db/migration/V2__add_variant_and_utm.sql`:
+
+```sql
+-- V2__add_variant_and_utm.sql: Add A/B Variant and Inbound UTM Tracking
+ALTER TABLE click_analytics
+    ADD COLUMN variant VARCHAR(50) DEFAULT NULL,
+    ADD COLUMN utm_source VARCHAR(100) DEFAULT NULL,
+    ADD COLUMN utm_medium VARCHAR(100) DEFAULT NULL,
+    ADD COLUMN utm_campaign VARCHAR(100) DEFAULT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_click_analytics_short_code_variant ON click_analytics(short_code, variant);
+CREATE INDEX IF NOT EXISTS idx_click_analytics_utm_campaign ON click_analytics(short_code, utm_campaign);
+CREATE INDEX IF NOT EXISTS idx_click_analytics_utm_source ON click_analytics(short_code, utm_source);
+```
+
 ---
 
 ### 2. Configuration (`application.yaml`)
@@ -160,6 +176,18 @@ public class ClickAnalytics {
 
     @Column(name = "referrer", columnDefinition = "TEXT")
     private String referrer;
+
+    @Column(name = "variant")
+    private String variant;
+
+    @Column(name = "utm_source")
+    private String utmSource;
+
+    @Column(name = "utm_medium")
+    private String utmMedium;
+
+    @Column(name = "utm_campaign")
+    private String utmCampaign;
 
     @Column(name = "is_bot", nullable = false)
     private Boolean isBot;
@@ -315,6 +343,25 @@ public interface ClickAnalyticsRepository extends JpaRepository<ClickAnalytics, 
         LIMIT :limit
         """, nativeQuery = true)
     List<StatProjection> findTopReferrers(@Param("shortCode") String shortCode, @Param("includeBots") boolean includeBots, @Param("limit") int limit);
+
+    @Query(value = """
+        SELECT COALESCE(variant, 'Control') AS name, COUNT(*) AS count
+        FROM click_analytics
+        WHERE short_code = :shortCode AND variant IS NOT NULL
+        GROUP BY variant
+        ORDER BY count DESC
+        """, nativeQuery = true)
+    List<StatProjection> findVariantBreakdown(@Param("shortCode") String shortCode);
+
+    @Query(value = """
+        SELECT COALESCE(utm_source, 'Direct') AS name, COUNT(*) AS count
+        FROM click_analytics
+        WHERE short_code = :shortCode AND utm_source IS NOT NULL
+        GROUP BY utm_source
+        ORDER BY count DESC
+        LIMIT :limit
+        """, nativeQuery = true)
+    List<StatProjection> findTopUtmSources(@Param("shortCode") String shortCode, @Param("limit") int limit);
 }
 ```
 
@@ -335,7 +382,11 @@ public record ClickEvent(
         Instant timestamp,
         String ipAddress,
         String userAgent,
-        String referrer
+        String referrer,
+        String variant,         // e.g. "A", "B", "control"
+        String utmSource,       // e.g. "twitter", "reddit"
+        String utmMedium,       // e.g. "social", "email"
+        String utmCampaign      // e.g. "summer_launch"
 ) {}
 ```
 
@@ -512,12 +563,16 @@ public class ClickEventConsumer {
                 .geoCountry(location.country())
                 .geoCity(location.city())
                 .referrer(cleanReferrer)
+                .variant(event.variant())
+                .utmSource(event.utmSource())
+                .utmMedium(event.utmMedium())
+                .utmCampaign(event.utmCampaign())
                 .isBot(isBot)
                 .build();
 
         repository.save(analytics);
-        log.info("Logged click for [{}] | Country: [{}] | City: [{}] | Device: [{}] | Browser: [{}]",
-                event.shortCode(), location.country(), location.city(), device, browser);
+        log.info("Logged click for [{}] | Variant: [{}] | Country: [{}] | Device: [{}]",
+                event.shortCode(), event.variant(), location.country(), device);
     }
 }
 ```
@@ -795,6 +850,18 @@ public class AnalyticsService {
                     return new CityStatDto(p.getCity(), p.getCountry(), p.getCount(), pct);
                 }).toList();
     }
+
+    public List<StatMetricDto> getVariantBreakdown(String shortCode) {
+        long total = repository.countByShortCode(shortCode);
+        if (total == 0) return List.of();
+        return mapMetrics(repository.findVariantBreakdown(shortCode), total);
+    }
+
+    public List<StatMetricDto> getUtmSources(String shortCode, int limit) {
+        long total = repository.countByShortCode(shortCode);
+        if (total == 0) return List.of();
+        return mapMetrics(repository.findTopUtmSources(shortCode, limit), total);
+    }
 }
 ```
 
@@ -885,14 +952,31 @@ public class AnalyticsController {
     ) {
         return ResponseEntity.ok(analyticsService.getReferrers(shortCode, includeBots, limit));
     }
+
+    /**
+     * A/B Testing Variant Split Analytics (Conversion / Click share for Variant A, B, C...)
+     */
+    @GetMapping("/{shortCode}/ab-test")
+    public ResponseEntity<List<StatMetricDto>> getVariantBreakdown(@PathVariable String shortCode) {
+        return ResponseEntity.ok(analyticsService.getVariantBreakdown(shortCode));
+    }
+
+    /**
+     * Inbound UTM Traffic Source Attribution (twitter, reddit, newsletter, etc.)
+     */
+    @GetMapping("/{shortCode}/utm-sources")
+    public ResponseEntity<List<StatMetricDto>> getUtmSources(
+            @PathVariable String shortCode,
+            @RequestParam(defaultValue = "10") int limit
+    ) {
+        return ResponseEntity.ok(analyticsService.getUtmSources(shortCode, limit));
+    }
 }
 ```
 
 ---
 
 ## Module 5: Step-by-Step Testing & Verification Guide
-
-### 1. Query Comprehensive Analytics Overview (`GET /api/v1/analytics/{shortCode}`)
 
 Supports parameters:
 - `days` (default `30`): Range window in days.
