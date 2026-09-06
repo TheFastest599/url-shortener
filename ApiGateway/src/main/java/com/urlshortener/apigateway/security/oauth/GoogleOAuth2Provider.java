@@ -19,7 +19,7 @@ public class GoogleOAuth2Provider implements OAuth2IdentityProvider {
     @Value("${oauth.google.client-secret:${OAUTH_GOOGLE_CLIENT_SECRET:google-client-secret-fallback}}")
     private String clientSecret;
 
-    @Value("${oauth.google.redirect-uri:${OAUTH_GOOGLE_REDIRECT_URI:http://localhost:8080/api/v1/auth/oauth2/callback/google}}")
+    @Value("${oauth.google.redirect-uri:${OAUTH_GOOGLE_REDIRECT_URI:http://localhost:8080/api/v1/auth/oauth2/google/callback}}")
     private String redirectUri;
 
     @Override

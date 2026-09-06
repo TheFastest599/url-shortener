@@ -65,6 +65,48 @@ CREATE INDEX IF NOT EXISTS idx_click_analytics_timestamp ON click_analytics(time
 
 ---
 
+### 2. Configuration (`application.yaml`)
+
+File: `analytics/src/main/resources/application.yaml`
+
+```yaml
+server:
+  port: ${PORT:8083}
+
+grpc:
+  server:
+    port: ${GRPC_PORT:9091}
+
+spring:
+  application:
+    name: url-analytics-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:url_shortener_analytics}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres_password}
+    driver-class-name: org.postgresql.Driver
+  flyway:
+    enabled: true
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:url_shortener_analytics}
+    user: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres_password}
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: analytics-ingest-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.urlshortener.*"
+        spring.json.value.default.type: "com.urlshortener.analytics.dto.ClickEvent"
+        spring.json.use.type.headers: false
+```
+
+---
+
 ## Module 2: JPA Entities, Projections & Repositories
 
 ### 1. `ClickAnalytics.java` Entity
@@ -194,22 +236,22 @@ public interface ClickAnalyticsRepository extends JpaRepository<ClickAnalytics, 
     // --- TIME-SERIES GRAPH DATA ---
 
     @Query(value = """
-        SELECT to_char(date_trunc('hour', timestamp), 'YYYY-MM-DD"T"HH24:00:00"Z"') AS label,
+        SELECT to_char(date_trunc('hour', timezone('UTC', timestamp)), 'YYYY-MM-DD"T"HH24:00:00"Z"') AS label,
                COUNT(*) AS count
         FROM click_analytics
         WHERE short_code = :shortCode AND timestamp >= :since
-        GROUP BY date_trunc('hour', timestamp)
-        ORDER BY date_trunc('hour', timestamp) ASC
+        GROUP BY date_trunc('hour', timezone('UTC', timestamp))
+        ORDER BY date_trunc('hour', timezone('UTC', timestamp)) ASC
         """, nativeQuery = true)
     List<TimeSeriesProjection> findHourlyTimeSeries(@Param("shortCode") String shortCode, @Param("since") Instant since);
 
     @Query(value = """
-        SELECT to_char(date_trunc('day', timestamp), 'YYYY-MM-DD') AS label,
+        SELECT to_char(date_trunc('day', timezone('UTC', timestamp)), 'YYYY-MM-DD"T"00:00:00"Z"') AS label,
                COUNT(*) AS count
         FROM click_analytics
         WHERE short_code = :shortCode AND timestamp >= :since
-        GROUP BY date_trunc('day', timestamp)
-        ORDER BY date_trunc('day', timestamp) ASC
+        GROUP BY date_trunc('day', timezone('UTC', timestamp))
+        ORDER BY date_trunc('day', timezone('UTC', timestamp)) ASC
         """, nativeQuery = true)
     List<TimeSeriesProjection> findDailyTimeSeries(@Param("shortCode") String shortCode, @Param("since") Instant since);
 
@@ -543,7 +585,7 @@ public record AnalyticsOverviewDto(
 
 ---
 
-### 2. `AnalyticsService.java` (Negative Space Programming)
+### 2. `AnalyticsService.java` (Timezone-Aware Aggregation & Zero-Filling)
 File: `analytics/src/main/java/com/urlshortener/analytics/service/AnalyticsService.java`
 
 ```java
@@ -561,8 +603,16 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -571,13 +621,28 @@ public class AnalyticsService {
     private final ClickAnalyticsRepository repository;
 
     public AnalyticsOverviewDto getOverview(String shortCode, int days, boolean includeBots) {
-        long totalClicks = repository.countByShortCode(shortCode);
+        return getOverview(shortCode, days, null, "UTC", includeBots);
+    }
 
-        // Guard Clause: If zero clicks, return clean empty dashboard structure immediately
+    public AnalyticsOverviewDto getOverview(String shortCode, int days, String interval, String timezone, boolean includeBots) {
+        long totalClicks = repository.countByShortCode(shortCode);
+        Instant now = Instant.now();
+        ZoneId zone = parseZoneId(timezone);
+        ZonedDateTime localNow = now.atZone(zone);
+        ZonedDateTime localSince = days <= 2
+                ? localNow.minusHours(days * 24L)
+                : localNow.minusDays(days).truncatedTo(ChronoUnit.DAYS);
+        Instant since = localSince.toInstant();
+
+        boolean isHourly = interval != null
+                ? "HOUR".equalsIgnoreCase(interval)
+                : days <= 2;
+
         if (totalClicks == 0) {
+            List<TimeSeriesPoint> zeroSeries = buildTimeSeries(List.of(), since, now, zone, isHourly);
             return new AnalyticsOverviewDto(
                     shortCode, 0, 0, 0, 0.0,
-                    List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of()
+                    zeroSeries, List.of(), List.of(), List.of(), List.of(), List.of(), List.of()
             );
         }
 
@@ -586,12 +651,10 @@ public class AnalyticsService {
         double botPercentage = Math.round(((double) botClicks / totalClicks) * 1000.0) / 10.0;
 
         long denominator = includeBots ? totalClicks : Math.max(humanClicks, 1);
-        Instant since = Instant.now().minus(days, ChronoUnit.DAYS);
 
-        // Fetch time-series (hourly if <= 2 days, daily if > 2 days)
-        List<TimeSeriesPoint> timeSeries = days <= 2
-                ? mapTimeSeries(repository.findHourlyTimeSeries(shortCode, since))
-                : mapTimeSeries(repository.findDailyTimeSeries(shortCode, since));
+        // Fetch hourly buckets from DB and aggregate into user's timezone
+        List<TimeSeriesProjection> rawHourly = repository.findHourlyTimeSeries(shortCode, since);
+        List<TimeSeriesPoint> timeSeries = buildTimeSeries(rawHourly, since, now, zone, isHourly);
 
         List<StatMetricDto> countries = mapMetrics(repository.findTopCountries(shortCode, includeBots, 10), denominator);
         List<CityStatDto> cities = mapCityMetrics(repository.findTopCities(shortCode, includeBots, 10), denominator);
@@ -616,13 +679,18 @@ public class AnalyticsService {
         );
     }
 
-    public List<TimeSeriesPoint> getTimeSeries(String shortCode, String interval, int days) {
-        Instant since = Instant.now().minus(days, ChronoUnit.DAYS);
+    public List<TimeSeriesPoint> getTimeSeries(String shortCode, String interval, int days, String timezone) {
+        Instant now = Instant.now();
+        ZoneId zone = parseZoneId(timezone);
+        ZonedDateTime localNow = now.atZone(zone);
+        ZonedDateTime localSince = days <= 2
+                ? localNow.minusHours(days * 24L)
+                : localNow.minusDays(days).truncatedTo(ChronoUnit.DAYS);
+        Instant since = localSince.toInstant();
+        boolean isHourly = "HOUR".equalsIgnoreCase(interval) || days <= 2;
 
-        if ("HOUR".equalsIgnoreCase(interval)) {
-            return mapTimeSeries(repository.findHourlyTimeSeries(shortCode, since));
-        }
-        return mapTimeSeries(repository.findDailyTimeSeries(shortCode, since));
+        List<TimeSeriesProjection> rawHourly = repository.findHourlyTimeSeries(shortCode, since);
+        return buildTimeSeries(rawHourly, since, now, zone, isHourly);
     }
 
     public List<StatMetricDto> getCountries(String shortCode, boolean includeBots, int limit) {
@@ -643,18 +711,78 @@ public class AnalyticsService {
         return mapMetrics(repository.findTopReferrers(shortCode, includeBots, limit), total);
     }
 
-    // --- Helper Mappers ---
+    // --- Helper Methods ---
 
-    private List<TimeSeriesPoint> mapTimeSeries(List<TimeSeriesProjection> list) {
-        return list.stream()
-                .map(p -> new TimeSeriesPoint(p.getLabel(), p.getCount()))
-                .toList();
+    private ZoneId parseZoneId(String tzStr) {
+        if (tzStr == null || tzStr.isBlank()) {
+            return ZoneOffset.UTC;
+        }
+        try {
+            return ZoneId.of(tzStr);
+        } catch (Exception e) {
+            return ZoneOffset.UTC;
+        }
+    }
+
+    private List<TimeSeriesPoint> buildTimeSeries(
+            List<TimeSeriesProjection> rawHourly,
+            Instant since,
+            Instant now,
+            ZoneId zone,
+            boolean isHourly
+    ) {
+        Map<ZonedDateTime, Long> localHourMap = new HashMap<>();
+        if (rawHourly != null) {
+            for (TimeSeriesProjection p : rawHourly) {
+                if (p != null && p.getLabel() != null) {
+                    try {
+                        Instant instant = Instant.parse(p.getLabel());
+                        ZonedDateTime localHour = instant.atZone(zone).truncatedTo(ChronoUnit.HOURS);
+                        localHourMap.put(localHour, localHourMap.getOrDefault(localHour, 0L) + p.getCount());
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+        }
+
+        List<TimeSeriesPoint> result = new ArrayList<>();
+
+        if (isHourly) {
+            ZonedDateTime current = since.atZone(zone).truncatedTo(ChronoUnit.HOURS);
+            ZonedDateTime end = now.atZone(zone).truncatedTo(ChronoUnit.HOURS);
+            DateTimeFormatter formatter = DateTimeFormatter.ISO_OFFSET_DATE_TIME;
+
+            while (!current.isAfter(end)) {
+                long count = localHourMap.getOrDefault(current, 0L);
+                result.add(new TimeSeriesPoint(current.format(formatter), count));
+                current = current.plusHours(1);
+            }
+        } else {
+            ZonedDateTime currentDay = since.atZone(zone).truncatedTo(ChronoUnit.DAYS);
+            ZonedDateTime endDay = now.atZone(zone).truncatedTo(ChronoUnit.DAYS);
+            DateTimeFormatter formatter = DateTimeFormatter.ISO_OFFSET_DATE_TIME;
+
+            while (!currentDay.isAfter(endDay)) {
+                LocalDate targetDate = currentDay.toLocalDate();
+
+                long dayClicks = 0;
+                for (Map.Entry<ZonedDateTime, Long> entry : localHourMap.entrySet()) {
+                    if (entry.getKey().toLocalDate().equals(targetDate)) {
+                        dayClicks += entry.getValue();
+                    }
+                }
+                result.add(new TimeSeriesPoint(currentDay.format(formatter), dayClicks));
+                currentDay = currentDay.plusDays(1);
+            }
+        }
+
+        return result;
     }
 
     private List<StatMetricDto> mapMetrics(List<StatProjection> list, long denominator) {
         return list.stream()
                 .map(p -> {
-                    double pct = Math.round(((double) p.getCount() / denominator) * 1000.0) / 10.0;
+                    double pct = Math.round(((double) p.getCount() / denominator) * 1000) / 10.0;
                     return new StatMetricDto(p.getName(), p.getCount(), pct);
                 })
                 .toList();
@@ -665,8 +793,7 @@ public class AnalyticsService {
                 .map(p -> {
                     double pct = Math.round(((double) p.getCount() / denominator) * 1000.0) / 10.0;
                     return new CityStatDto(p.getCity(), p.getCountry(), p.getCount(), pct);
-                })
-                .toList();
+                }).toList();
     }
 }
 ```
@@ -703,8 +830,11 @@ public class AnalyticsController {
     public ResponseEntity<AnalyticsOverviewDto> getOverview(
             @PathVariable String shortCode,
             @RequestParam(defaultValue = "30") int days,
-            @RequestParam(defaultValue = "false") boolean includeBots) {
-        return ResponseEntity.ok(analyticsService.getOverview(shortCode, days, includeBots));
+            @RequestParam(required = false) String interval,
+            @RequestParam(defaultValue = "UTC") String timezone,
+            @RequestParam(defaultValue = "false") boolean includeBots
+    ) {
+        return ResponseEntity.ok(analyticsService.getOverview(shortCode, days, interval, timezone, includeBots));
     }
 
     /**
@@ -714,8 +844,10 @@ public class AnalyticsController {
     public ResponseEntity<List<TimeSeriesPoint>> getTimeSeries(
             @PathVariable String shortCode,
             @RequestParam(defaultValue = "DAY") String interval,
-            @RequestParam(defaultValue = "30") int days) {
-        return ResponseEntity.ok(analyticsService.getTimeSeries(shortCode, interval, days));
+            @RequestParam(defaultValue = "30") int days,
+            @RequestParam(defaultValue = "UTC") String timezone
+    ) {
+        return ResponseEntity.ok(analyticsService.getTimeSeries(shortCode, interval, days, timezone));
     }
 
     /**
@@ -725,7 +857,8 @@ public class AnalyticsController {
     public ResponseEntity<List<StatMetricDto>> getCountries(
             @PathVariable String shortCode,
             @RequestParam(defaultValue = "false") boolean includeBots,
-            @RequestParam(defaultValue = "10") int limit) {
+            @RequestParam(defaultValue = "10") int limit
+    ) {
         return ResponseEntity.ok(analyticsService.getCountries(shortCode, includeBots, limit));
     }
 
@@ -736,7 +869,8 @@ public class AnalyticsController {
     public ResponseEntity<List<StatMetricDto>> getBrowsers(
             @PathVariable String shortCode,
             @RequestParam(defaultValue = "false") boolean includeBots,
-            @RequestParam(defaultValue = "10") int limit) {
+            @RequestParam(defaultValue = "10") int limit
+    ) {
         return ResponseEntity.ok(analyticsService.getBrowsers(shortCode, includeBots, limit));
     }
 
@@ -747,7 +881,8 @@ public class AnalyticsController {
     public ResponseEntity<List<StatMetricDto>> getReferrers(
             @PathVariable String shortCode,
             @RequestParam(defaultValue = "false") boolean includeBots,
-            @RequestParam(defaultValue = "10") int limit) {
+            @RequestParam(defaultValue = "10") int limit
+    ) {
         return ResponseEntity.ok(analyticsService.getReferrers(shortCode, includeBots, limit));
     }
 }
@@ -758,8 +893,16 @@ public class AnalyticsController {
 ## Module 5: Step-by-Step Testing & Verification Guide
 
 ### 1. Query Comprehensive Analytics Overview (`GET /api/v1/analytics/{shortCode}`)
+
+Supports parameters:
+- `days` (default `30`): Range window in days.
+- `interval` (optional, `"HOUR"` or `"DAY"`): Granularity of data points. Defaults to hourly if `days <= 2`, daily otherwise.
+- `timezone` (default `"UTC"`): Client IANA timezone (e.g. `"Asia/Calcutta"`, `"America/New_York"`). The service automatically aggregates buckets by local day and local hour.
+- `includeBots` (default `false`): Include bot/crawler clicks in metric breakdowns.
+
 ```bash
-curl -X GET "http://localhost:8083/api/v1/analytics/xyz123?days=30&includeBots=false"
+curl -X GET "http://localhost:8080/api/v1/analytics/xyz123?days=7&timezone=Asia/Calcutta&includeBots=false" \
+  -H "Authorization: Bearer <YOUR_ACCESS_TOKEN>"
 ```
 
 **Expected JSON Response (`HTTP 200 OK`):**
@@ -771,9 +914,13 @@ curl -X GET "http://localhost:8083/api/v1/analytics/xyz123?days=30&includeBots=f
   "botClicks": 70,
   "botPercentage": 4.9,
   "timeSeries": [
-    { "timestamp": "2026-08-10", "clicks": 180 },
-    { "timestamp": "2026-08-11", "clicks": 240 },
-    { "timestamp": "2026-08-12", "clicks": 310 }
+    { "timestamp": "2026-08-28T00:00:00+05:30", "clicks": 0 },
+    { "timestamp": "2026-08-29T00:00:00+05:30", "clicks": 180 },
+    { "timestamp": "2026-08-30T00:00:00+05:30", "clicks": 240 },
+    { "timestamp": "2026-08-31T00:00:00+05:30", "clicks": 310 },
+    { "timestamp": "2026-09-01T00:00:00+05:30", "clicks": 120 },
+    { "timestamp": "2026-09-02T00:00:00+05:30", "clicks": 290 },
+    { "timestamp": "2026-09-03T00:00:00+05:30", "clicks": 280 }
   ],
   "topCountries": [
     { "name": "United States", "count": 850, "percentage": 63.0 },
@@ -802,6 +949,21 @@ curl -X GET "http://localhost:8083/api/v1/analytics/xyz123?days=30&includeBots=f
     { "name": "Direct / None", "count": 220, "percentage": 16.3 }
   ]
 }
+```
+
+### 2. Query Dedicated 24H Hourly Time-Series (`GET /api/v1/analytics/{shortCode}/timeseries`)
+```bash
+curl -X GET "http://localhost:8080/api/v1/analytics/xyz123/timeseries?days=1&interval=HOUR&timezone=Asia/Calcutta" \
+  -H "Authorization: Bearer <YOUR_ACCESS_TOKEN>"
+```
+
+**Expected JSON Response (`HTTP 200 OK`):**
+```json
+[
+  { "timestamp": "2026-09-02T23:00:00+05:30", "clicks": 0 },
+  { "timestamp": "2026-09-03T00:00:00+05:30", "clicks": 4 },
+  { "timestamp": "2026-09-03T01:00:00+05:30", "clicks": 0 }
+]
 ```
 
 ---

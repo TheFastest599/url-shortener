@@ -751,14 +751,26 @@ File: `apigateway/src/main/java/com/urlshortener/apigateway/controller/AuthContr
 ```java
 package com.urlshortener.apigateway.controller;
 
-import com.urlshortener.apigateway.dto.*;
+import com.urlshortener.apigateway.dto.AuthResponse;
+import com.urlshortener.apigateway.dto.LoginRequest;
+import com.urlshortener.apigateway.dto.RefreshTokenRequest;
+import com.urlshortener.apigateway.dto.RegisterRequest;
+import com.urlshortener.apigateway.security.oauth.OAuth2ProviderFactory;
 import com.urlshortener.apigateway.service.AuthService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.util.UriComponentsBuilder;
 import reactor.core.publisher.Mono;
+
+import java.net.URI;
+import java.time.Duration;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -766,23 +778,104 @@ import reactor.core.publisher.Mono;
 public class AuthController {
 
     private final AuthService authService;
+    private final OAuth2ProviderFactory oAuth2ProviderFactory;
+
+    @Value("${app.frontend-url:${FRONTEND_URL:http://localhost:5173}}")
+    private String frontendUrl;
+
+    private ResponseCookie createRefreshTokenCookie(String refreshToken) {
+        return ResponseCookie.from("refreshToken", refreshToken)
+                .httpOnly(true)
+                .secure(false) // Set to true in HTTPS production
+                .path("/")
+                .maxAge(Duration.ofDays(7))
+                .sameSite("Lax")
+                .build();
+    }
+
+    private ResponseCookie createDeleteCookie() {
+        return ResponseCookie.from("refreshToken", "")
+                .httpOnly(true)
+                .path("/")
+                .maxAge(0)
+                .sameSite("Lax")
+                .build();
+    }
 
     @PostMapping("/register")
     public Mono<ResponseEntity<AuthResponse>> register(@Valid @RequestBody RegisterRequest request) {
         return authService.register(request)
-                .map(response -> ResponseEntity.status(HttpStatus.CREATED).body(response));
+                .map(response -> ResponseEntity.status(HttpStatus.CREATED)
+                        .header(HttpHeaders.SET_COOKIE, createRefreshTokenCookie(response.refreshToken()).toString())
+                        .body(response));
     }
 
     @PostMapping("/login")
     public Mono<ResponseEntity<AuthResponse>> login(@Valid @RequestBody LoginRequest request) {
         return authService.login(request)
-                .map(ResponseEntity::ok);
+                .map(response -> ResponseEntity.ok()
+                        .header(HttpHeaders.SET_COOKIE, createRefreshTokenCookie(response.refreshToken()).toString())
+                        .body(response));
     }
 
     @PostMapping("/refresh")
-    public Mono<ResponseEntity<AuthResponse>> refreshToken(@Valid @RequestBody RefreshTokenRequest request) {
-        return authService.refreshToken(request)
-                .map(ResponseEntity::ok);
+    public Mono<ResponseEntity<AuthResponse>> refreshToken(
+            @CookieValue(name = "refreshToken", required = false) String cookieRefreshToken,
+            @RequestBody(required = false) RefreshTokenRequest request
+    ) {
+        String tokenToRefresh = (request != null && request.refreshToken() != null && !request.refreshToken().isBlank())
+                ? request.refreshToken()
+                : cookieRefreshToken;
+
+        if (tokenToRefresh == null || tokenToRefresh.isBlank()) {
+            return Mono.just(ResponseEntity.status(HttpStatus.UNAUTHORIZED).build());
+        }
+
+        return authService.refreshToken(new RefreshTokenRequest(tokenToRefresh))
+                .map(authResponse -> ResponseEntity.ok()
+                        .header(HttpHeaders.SET_COOKIE, createRefreshTokenCookie(authResponse.refreshToken()).toString())
+                        .body(authResponse))
+                .onErrorResume(e -> Mono.just(ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                        .header(HttpHeaders.SET_COOKIE, createDeleteCookie().toString())
+                        .build()));
+    }
+
+    @PostMapping("/logout")
+    public Mono<ResponseEntity<Map<String, String>>> logout() {
+        return Mono.just(ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, createDeleteCookie().toString())
+                .body(Map.of("message", "Logged out successfully")));
+    }
+
+    @GetMapping("/oauth2/{provider}/login")
+    public Mono<ResponseEntity<Map<String, String>>> getOAuth2LoginUrl(@PathVariable String provider) {
+        String url = oAuth2ProviderFactory.getProvider(provider).getAuthorizationUrl();
+        return Mono.just(ResponseEntity.ok(Map.of("authorizationUrl", url)));
+    }
+
+    @GetMapping("/oauth2/{provider}/callback")
+    public Mono<ResponseEntity<AuthResponse>> oauth2Callback(
+            @PathVariable String provider,
+            @RequestParam String code
+    ) {
+        return authService.processOAuth2Login(provider, code)
+                .map(authResponse -> {
+                    URI redirectUri = UriComponentsBuilder.fromUriString(frontendUrl + "/oauth2/callback")
+                            .queryParam("accessToken", authResponse.accessToken())
+                            .queryParam("refreshToken", authResponse.refreshToken())
+                            .queryParam("id", authResponse.user().id())
+                            .queryParam("username", authResponse.user().username())
+                            .queryParam("email", authResponse.user().email())
+                            .queryParam("role", authResponse.user().role())
+                            .build()
+                            .encode()
+                            .toUri();
+                    return ResponseEntity.status(HttpStatus.FOUND)
+                            .header(HttpHeaders.SET_COOKIE, createRefreshTokenCookie(authResponse.refreshToken()).toString())
+                            .location(redirectUri)
+                            .body(authResponse);
+                });
+    }
 }
 ```
 
@@ -840,19 +933,22 @@ public class GlobalExceptionHandler {
 
 This module provides a production-grade, extensible **OAuth2 Strategy Pattern Architecture**. Adding any new identity provider (Google, GitHub, Apple, Facebook, Okta) requires creating a single class implementing `OAuth2IdentityProvider` without modifying core authentication code.
 
-### 1. Environment Variable Configuration (`.env` & `.env.example`)
+#### 1. Environment Variable Configuration (`.env` & `.env.example`)
 
-Add OAuth2 client credentials to `apigateway/.env`:
+Add OAuth2 client credentials and frontend URL to `apigateway/.env`:
 
 ```env
+# Frontend Application URL (for OAuth redirect callbacks)
+FRONTEND_URL=http://localhost:5173
+
 # OAuth2 Provider Credentials
 OAUTH_GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
 OAUTH_GOOGLE_CLIENT_SECRET=your_google_client_secret
-OAUTH_GOOGLE_REDIRECT_URI=http://localhost:8080/api/v1/auth/oauth2/callback/google
+OAUTH_GOOGLE_REDIRECT_URI=http://localhost:8080/api/v1/auth/oauth2/google/callback
 
 OAUTH_GITHUB_CLIENT_ID=your_github_client_id
 OAUTH_GITHUB_CLIENT_SECRET=your_github_client_secret
-OAUTH_GITHUB_REDIRECT_URI=http://localhost:8080/api/v1/auth/oauth2/callback/github
+OAUTH_GITHUB_REDIRECT_URI=http://localhost:8080/api/v1/auth/oauth2/github/callback
 ```
 
 ---
@@ -930,7 +1026,7 @@ public class GoogleOAuth2Provider implements OAuth2IdentityProvider {
     @Value("${oauth.google.client-secret:${OAUTH_GOOGLE_CLIENT_SECRET:google-client-secret-fallback}}")
     private String clientSecret;
 
-    @Value("${oauth.google.redirect-uri:${OAUTH_GOOGLE_REDIRECT_URI:http://localhost:8080/api/v1/auth/oauth2/callback/google}}")
+    @Value("${oauth.google.redirect-uri:${OAUTH_GOOGLE_REDIRECT_URI:http://localhost:8080/api/v1/auth/oauth2/google/callback}}")
     private String redirectUri;
 
     @Override
@@ -1006,7 +1102,7 @@ public class GitHubOAuth2Provider implements OAuth2IdentityProvider {
     @Value("${oauth.github.client-secret:${OAUTH_GITHUB_CLIENT_SECRET:github-client-secret-fallback}}")
     private String clientSecret;
 
-    @Value("${oauth.github.redirect-uri:${OAUTH_GITHUB_REDIRECT_URI:http://localhost:8080/api/v1/auth/oauth2/callback/github}}")
+    @Value("${oauth.github.redirect-uri:${OAUTH_GITHUB_REDIRECT_URI:http://localhost:8080/api/v1/auth/oauth2/github/callback}}")
     private String redirectUri;
 
     @Override
@@ -1097,7 +1193,7 @@ public class OAuth2ProviderFactory {
 
 ### 7. AuthService OAuth Integration (`AuthService.java`)
 
-Add `processOAuth2Login` to `AuthService.java`:
+`AuthService.java` integrates OAuth user resolution using **Email-Based Account Unification**:
 
 ```java
 @Transactional
@@ -1108,27 +1204,49 @@ public Mono<AuthResponse> processOAuth2Login(String providerName, String code) {
             .flatMap(this::findOrCreateAuthUser)
             .flatMap(this::generateAuthTokenPair);
 }
+
+private Mono<User> findOrCreateAuthUser(OAuth2UserInfo userInfo) {
+    return userRepository.findByEmail(userInfo.email())
+            .switchIfEmpty(userRepository.save(User.builder()
+                    .username(userInfo.username())
+                    .email(userInfo.email())
+                    .role("USER")
+                    .authType(userInfo.provider())
+                    .createdAt(Instant.now())
+                    .updatedAt(Instant.now())
+                    .build()));
+}
 ```
 
 ---
 
-### 8. AuthController OAuth Endpoints (`AuthController.java`)
+### 8. OAuth2 Flow & 302 Redirect Handler (`AuthController.java`)
 
-Add OAuth routes to `AuthController.java`:
+When Google or GitHub finishes authenticating, it calls the Gateway callback. The Gateway processes the authorization code, sets the `HttpOnly` refresh token cookie, URL-encodes all parameters safely (`.encode().toUri()`), and issues an `HTTP 302 Found` redirect to the React client:
 
 ```java
-@GetMapping("/oauth2/{provider}/login")
-public Mono<ResponseEntity<Map<String, String>>> getOAuth2LoginUrl(@PathVariable String provider) {
-    String url = oauth2ProviderFactory.getProvider(provider).getAuthorizationUrl();
-    return Mono.just(ResponseEntity.ok(Map.of("authorizationUrl", url)));
-}
-
 @GetMapping("/oauth2/{provider}/callback")
 public Mono<ResponseEntity<AuthResponse>> oauth2Callback(
         @PathVariable String provider,
-        @RequestParam String code) {
+        @RequestParam String code
+) {
     return authService.processOAuth2Login(provider, code)
-            .map(ResponseEntity::ok);
+            .map(authResponse -> {
+                URI redirectUri = UriComponentsBuilder.fromUriString(frontendUrl + "/oauth2/callback")
+                        .queryParam("accessToken", authResponse.accessToken())
+                        .queryParam("refreshToken", authResponse.refreshToken())
+                        .queryParam("id", authResponse.user().id())
+                        .queryParam("username", authResponse.user().username())
+                        .queryParam("email", authResponse.user().email())
+                        .queryParam("role", authResponse.user().role())
+                        .build()
+                        .encode()
+                        .toUri();
+                return ResponseEntity.status(HttpStatus.FOUND)
+                        .header(HttpHeaders.SET_COOKIE, createRefreshTokenCookie(authResponse.refreshToken()).toString())
+                        .location(redirectUri)
+                        .body(authResponse);
+            });
 }
 ```
 
@@ -1136,13 +1254,14 @@ public Mono<ResponseEntity<AuthResponse>> oauth2Callback(
 
 ## Module 9: Step-by-Step Testing & Verification Guide
 
-Once you code these files, test your API Gateway manually using `curl` or Postman:
+Test your API Gateway using `curl` or Postman:
 
 ### 1. User Registration (`POST /api/v1/auth/register`)
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/auth/register \
   -H "Content-Type: application/json" \
+  -c cookies.txt \
   -d '{
     "username": "alex",
     "email": "alex@example.com",
@@ -1150,7 +1269,7 @@ curl -X POST http://localhost:8080/api/v1/auth/register \
   }'
 ```
 
-**Expected Response (`HTTP 201 Created`):**
+**Expected Response (`HTTP 201 Created` with `Set-Cookie: refreshToken=...`):**
 
 ```json
 {
@@ -1172,21 +1291,41 @@ curl -X POST http://localhost:8080/api/v1/auth/register \
 ```bash
 curl -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
+  -c cookies.txt \
   -d '{
     "email": "alex@example.com",
     "password": "Password123"
   }'
 ```
 
-### 3. Calling an Authenticated Protected Endpoint
+### 3. Silent Session Refresh via HttpOnly Cookie (`POST /api/v1/auth/refresh`)
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/refresh \
+  -b cookies.txt \
+  -c cookies.txt
+```
+
+- **Returns:** Fresh JWT `accessToken`, rotated `refreshToken` cookie, and full `user` profile object `{ id, username, email, role }`.
+
+### 4. Calling an Authenticated Protected Endpoint
 
 ```bash
 curl -X GET http://localhost:8080/api/v1/dashboard/links \
   -H "Authorization: Bearer <your_access_token_here>"
 ```
 
-- **With valid token:** Proceed to Gateway controller/gRPC logic.
-- **Without token / invalid signature:** `HTTP 401 Unauthorized`.
+- **With valid token:** Request authorized and forwarded.
+- **Without token / expired:** `HTTP 401 Unauthorized`.
+
+### 5. Logging Out (`POST /api/v1/auth/logout`)
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/logout \
+  -b cookies.txt
+```
+
+- **Returns:** `HTTP 200 OK` with `Set-Cookie: refreshToken=; Max-Age=0`.
 
 ---
 
@@ -1196,6 +1335,6 @@ You have designed a modern, production-grade **Reactive Authentication System**:
 
 1. Non-blocking database CRUD via **R2DBC**.
 2. Password hashing via **BCrypt**.
-3. Microsecond local JWT token validation.
-4. Secure **Refresh Token Rotation (RTR)** with **UUID** keys.
-5. Extensible **OAuth2 Strategy Pattern** supporting Google, GitHub, and custom identity providers.
+3. Microsecond local JWT token validation with in-memory client state.
+4. Secure **Refresh Token Rotation (RTR)** via **HttpOnly cookies** and **UUID** database keys.
+5. Extensible **OAuth2 Strategy Pattern** supporting Google, GitHub, and custom identity providers with **Email-Based Account Unification** and URL-safe 302 frontend redirects.

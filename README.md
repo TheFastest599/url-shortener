@@ -148,6 +148,7 @@ docker compose down -v
 
 ## 📚 Deep-Dive Architecture & Component Documentation
 
+* **[API Endpoints Reference & Service Catalog](docs/api_endpoints_reference.md)** — Complete catalog of all HTTP REST endpoints, gRPC methods, Kafka events, and cURL cheat sheet across all 4 services.
 * **[Master Architecture & Design Doc](docs/url_shortener_design_doc.md)** — Complete 13-section technical architecture blueprint.
 * **[Nginx & Docker Orchestration Guide](docs/nginx_and_docker_orchestration_guide.md)** — Ingress routing, SSL setup, and Docker Compose configs.
 * **[API Gateway & Security Guide](docs/api_gateway_security_guide.md)** — JWT security filter chain, BCrypt, and R2DBC.

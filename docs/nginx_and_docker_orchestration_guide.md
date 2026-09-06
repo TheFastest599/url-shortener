@@ -11,8 +11,9 @@ Welcome! This document is a complete, step-by-step hands-on guide for configurin
 4. [Module 3: Spring Boot Microservices Dockerfile Template](#module-3-spring-boot-microservices-dockerfile-template)
 5. [Module 4: Multi-Database PostgreSQL Initialization (`scripts/init-dbs.sql`)](#module-4-multi-database-postgresql-initialization-scriptsinit-dbssql)
 6. [Module 5: Master Docker Compose (`docker-compose.yml`)](#module-5-master-docker-compose-docker-composeyml)
-7. [Module 6: Local Development Setup & Vite Proxy](#module-6-local-development-setup--vite-proxy)
-8. [Module 7: Step-by-Step Testing & Verification](#module-7-step-by-step-testing--verification)
+7. [Module 5.1: Production Cloud Configuration (`docker-compose.prod.yml`)](#module-51-production-cloud-configuration-docker-composeprodyml)
+8. [Module 6: Local Development Setup & Vite Proxy](#module-6-local-development-setup--vite-proxy)
+9. [Module 7: Step-by-Step Testing & Verification](#module-7-step-by-step-testing--verification)
 
 ---
 

@@ -36,7 +36,7 @@ User Request: GET /r/xyz123 (Port 8082)
 
 ---
 
-## Module 1: Redis Reactive Cache Configuration
+## Module 1: Redis Reactive Cache & Kafka Producer Configuration
 
 File: `redirect/src/main/resources/application.yaml`
 
@@ -53,11 +53,14 @@ spring:
       port: ${REDIS_PORT:6379}
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
 
 grpc:
   client:
     core-service:
-      address: 'static://localhost:9090'
+      address: 'static://${CORE_GRPC_HOST:localhost}:${CORE_GRPC_PORT:9090}'
       negotiation-type: plaintext
 ```
 
