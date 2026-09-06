@@ -5,8 +5,6 @@ import {
 	getMyUrls,
 	getUrlByShortCode,
 	updateUrl,
-	createUtmProfile,
-	getUtmProfiles,
 } from "@/api/url";
 import { queryKeys } from "./queryKeys";
 
@@ -37,17 +35,10 @@ export const urlQueryOptions = {
 		enabled: enabled && !!shortCode,
 		staleTime: 1000 * 60 * 5,
 	}),
-
-	utmList: (urlId, { enabled = true } = {}) => ({
-		queryKey: queryKeys.urls.utm(urlId),
-		queryFn: async () => getUtmProfiles(urlId),
-		enabled: enabled && !!urlId,
-		staleTime: 1000 * 60 * 5,
-	}),
 };
 
 // ==========================================
-// 2. MUTATION OPTIONS (URL & UTM)
+// 2. MUTATION OPTIONS (URLS)
 // ==========================================
 export const urlMutationOptions = {
 	create: (queryClient, { onSuccess, onError } = {}) => ({
@@ -99,17 +90,6 @@ export const urlMutationOptions = {
 				queryKey: queryKeys.urls.detail(id),
 			});
 			onSuccess?.(data, id, context);
-		},
-		onError,
-	}),
-
-	createUtm: (queryClient, urlId, { onSuccess, onError } = {}) => ({
-		mutationFn: (utmPayload) => createUtmProfile(urlId, utmPayload),
-		onSuccess: async (data, variables, context) => {
-			await queryClient.invalidateQueries({
-				queryKey: queryKeys.urls.utm(urlId),
-			});
-			onSuccess?.(data, variables, context);
 		},
 		onError,
 	}),

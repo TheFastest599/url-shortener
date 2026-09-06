@@ -13,7 +13,6 @@ export const queryKeys = {
 		list: (params = {}) => ["urls", "list", params],
 		detail: (id) => ["urls", id],
 		byCode: (shortCode) => ["urls", "code", shortCode],
-		utm: (urlId) => ["urls", urlId, "utm"],
 	},
 	analytics: {
 		all: (shortCode) => ["analytics", shortCode],

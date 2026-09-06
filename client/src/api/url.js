@@ -35,20 +35,10 @@ export const deleteUrl = async (id) => {
 	return apiHelpers.delete(`/api/v1/urls/${id}`);
 };
 
-export const createUtmProfile = async (urlId, utmPayload) => {
-	return apiHelpers.post(`/api/v1/urls/${urlId}/utm`, utmPayload);
-};
-
-export const getUtmProfiles = async (urlId) => {
-	return apiHelpers.get(`/api/v1/urls/${urlId}/utm`);
-};
-
 export default {
 	createShortUrl,
 	getMyUrls,
 	getUrlByShortCode,
 	updateUrl,
 	deleteUrl,
-	createUtmProfile,
-	getUtmProfiles,
 };
