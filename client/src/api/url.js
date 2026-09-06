@@ -17,7 +17,14 @@ export const getUrlByCode = async (shortCode) => {
 };
 
 export const updateUrlByCode = async (shortCode, payload) => {
-	return apiHelpers.put(`/api/v1/urls/code/${shortCode}`, payload);
+	try {
+		return await apiHelpers.put(`/api/v1/urls/code/${shortCode}`, payload);
+	} catch (err) {
+		if (payload?.id) {
+			return await apiHelpers.put(`/api/v1/urls/${payload.id}`, payload);
+		}
+		throw err;
+	}
 };
 
 export const updateUrl = async (id, payload) => {

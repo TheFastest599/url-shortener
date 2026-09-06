@@ -9,6 +9,7 @@ export const queryKeys = {
 	},
 	urls: {
 		all: ["urls"],
+		lists: () => ["urls", "list"],
 		list: (params = {}) => ["urls", "list", params],
 		detail: (id) => ["urls", id],
 		byCode: (shortCode) => ["urls", "code", shortCode],

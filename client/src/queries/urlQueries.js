@@ -93,7 +93,7 @@ export const urlMutationOptions = {
 		mutationFn: (id) => deleteUrl(id),
 		onSuccess: async (data, id, context) => {
 			await queryClient.invalidateQueries({
-				queryKey: queryKeys.urls.all,
+				queryKey: queryKeys.urls.lists(),
 			});
 			queryClient.removeQueries({
 				queryKey: queryKeys.urls.detail(id),

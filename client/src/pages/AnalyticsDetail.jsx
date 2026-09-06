@@ -23,6 +23,7 @@ import {
 	IconCopy,
 	IconCheck,
 	IconExternalLink,
+	IconAdjustments,
 	IconWorld,
 	IconBrowser,
 	IconDeviceDesktop,
@@ -113,7 +114,7 @@ export function AnalyticsDetailPage() {
 
 	return (
 		<div className="space-y-6 max-w-7xl mx-auto">
-			{/* Back Link */}
+			{/* Back Link & Configure Shortcut */}
 			<div className="flex items-center justify-between">
 				<Link
 					to={ROUTES.REDIRECT_LINKS}
@@ -122,15 +123,26 @@ export function AnalyticsDetailPage() {
 					<IconArrowLeft className="size-3.5" />
 					<span>Back to Redirect Links</span>
 				</Link>
+				<Link
+					to={`/redirect-links/${shortCode}`}
+					className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline transition-colors"
+				>
+					<IconAdjustments className="size-3.5" />
+					<span>Configure Link Settings</span>
+				</Link>
 			</div>
 
 			{/* 2. Page Header & Range Controls */}
 			<div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card/60 border border-border/70 rounded-2xl p-4 sm:p-6 shadow-2xs">
 				<div className="space-y-1.5 min-w-0">
 					<div className="flex flex-wrap items-center gap-2.5">
-						<span className="font-mono text-xl sm:text-2xl font-bold tracking-tight text-foreground">
+						<Link
+							to={`/redirect-links/${shortCode}`}
+							className="font-mono text-xl sm:text-2xl font-bold tracking-tight text-foreground hover:text-primary hover:underline transition-colors"
+							title="Configure link settings"
+						>
 							/r/{shortCode}
-						</span>
+						</Link>
 						<button
 							onClick={handleCopy}
 							className="inline-flex size-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground hover:text-foreground cursor-pointer transition-colors shadow-2xs"
@@ -142,6 +154,13 @@ export function AnalyticsDetailPage() {
 								<IconCopy className="size-4" />
 							)}
 						</button>
+						<Link
+							to={`/redirect-links/${shortCode}`}
+							className="inline-flex size-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground hover:text-primary cursor-pointer transition-colors shadow-2xs"
+							title="Configure link settings"
+						>
+							<IconAdjustments className="size-4" />
+						</Link>
 						<a
 							href={fullShortUrl}
 							target="_blank"
@@ -199,57 +218,57 @@ export function AnalyticsDetailPage() {
 				</div>
 			</div>
 
-			{/* 3. Primary KPI Telemetry Summary Cards */}
-			<div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+			{/* 3. Primary KPI Telemetry Summary Cards (2 per row on mobile) */}
+			<div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-4">
 				<Card className="border-border/70 bg-card shadow-xs">
-					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
-						<div>
-							<div className="text-xs font-medium text-muted-foreground">Total Clicks Recorded</div>
-							<div className="text-2xl sm:text-3xl font-bold font-heading text-foreground mt-1">
-								{isLoading ? <Skeleton className="h-8 w-20" /> : totalClicks}
+					<CardContent className="p-3 sm:p-4 lg:p-5 flex items-start sm:items-center justify-between gap-2">
+						<div className="min-w-0">
+							<div className="text-[11px] sm:text-xs font-medium text-muted-foreground truncate">Total Clicks</div>
+							<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-foreground mt-0.5 sm:mt-1">
+								{isLoading ? <Skeleton className="h-7 sm:h-8 w-16 sm:w-20" /> : totalClicks}
 							</div>
-							<div className="text-[11px] text-muted-foreground mt-0.5">
-								Across selected {days === 1 ? "24-hour" : `${days}-day`} window
+							<div className="text-[10px] sm:text-[11px] text-muted-foreground mt-0.5 truncate">
+								Selected {days === 1 ? "24h" : `${days}d`} window
 							</div>
 						</div>
-						<div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary border border-primary/20">
-							<IconChartBar className="size-5" />
+						<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-primary/10 text-primary border border-primary/20">
+							<IconChartBar className="size-3.5 sm:size-4.5 lg:size-5" />
 						</div>
 					</CardContent>
 				</Card>
 
 				<Card className="border-border/70 bg-card shadow-xs">
-					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
-						<div>
-							<div className="text-xs font-medium text-muted-foreground">Human Verified Clicks</div>
-							<div className="text-2xl sm:text-3xl font-bold font-heading text-emerald-500 mt-1">
-								{isLoading ? <Skeleton className="h-8 w-20" /> : humanClicks}
+					<CardContent className="p-3 sm:p-4 lg:p-5 flex items-start sm:items-center justify-between gap-2">
+						<div className="min-w-0">
+							<div className="text-[11px] sm:text-xs font-medium text-muted-foreground truncate">Human Clicks</div>
+							<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-emerald-500 mt-0.5 sm:mt-1">
+								{isLoading ? <Skeleton className="h-7 sm:h-8 w-16 sm:w-20" /> : humanClicks}
 							</div>
-							<div className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 font-medium">
+							<div className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 font-medium truncate">
 								{totalClicks > 0
-									? `${Math.round((humanClicks / totalClicks) * 100)}% human ratio`
-									: "100% human traffic"}
+									? `${Math.round((humanClicks / totalClicks) * 100)}% human`
+									: "100% human"}
 							</div>
 						</div>
-						<div className="flex size-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
-							<IconUser className="size-5" />
+						<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+							<IconUser className="size-3.5 sm:size-4.5 lg:size-5" />
 						</div>
 					</CardContent>
 				</Card>
 
-				<Card className="border-border/70 bg-card shadow-xs">
-					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
-						<div>
-							<div className="text-xs font-medium text-muted-foreground">Automated Bots Filtered</div>
-							<div className="text-2xl sm:text-3xl font-bold font-heading text-amber-500 mt-1">
-								{isLoading ? <Skeleton className="h-8 w-20" /> : botClicks}
+				<Card className="border-border/70 bg-card shadow-xs col-span-2 sm:col-span-1">
+					<CardContent className="p-3 sm:p-4 lg:p-5 flex items-start sm:items-center justify-between gap-2">
+						<div className="min-w-0">
+							<div className="text-[11px] sm:text-xs font-medium text-muted-foreground truncate">Bots Filtered</div>
+							<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-amber-500 mt-0.5 sm:mt-1">
+								{isLoading ? <Skeleton className="h-7 sm:h-8 w-16 sm:w-20" /> : botClicks}
 							</div>
-							<div className="text-[11px] text-amber-600 dark:text-amber-400 mt-0.5 font-medium">
-								{botPercentage ? `${botPercentage}% bot ratio` : "0% bots"}
+							<div className="text-[10px] sm:text-[11px] text-amber-600 dark:text-amber-400 mt-0.5 font-medium truncate">
+								{botPercentage ? `${botPercentage}% bots` : "0% bots"}
 							</div>
 						</div>
-						<div className="flex size-10 items-center justify-center rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20">
-							<IconRobot className="size-5" />
+						<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20">
+							<IconRobot className="size-3.5 sm:size-4.5 lg:size-5" />
 						</div>
 					</CardContent>
 				</Card>
@@ -266,7 +285,13 @@ export function AnalyticsDetailPage() {
 					</CardTitle>
 					<CardDescription className="text-xs">
 						Historical traffic distribution over the {days === 1 ? "past 24 hours" : `past ${days} days`} for{" "}
-						<span className="font-mono font-medium text-foreground">/r/{shortCode}</span>
+						<Link
+							to={`/redirect-links/${shortCode}`}
+							className="font-mono font-medium text-primary hover:underline"
+							title="Configure link settings"
+						>
+							/r/{shortCode}
+						</Link>
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="pt-4">

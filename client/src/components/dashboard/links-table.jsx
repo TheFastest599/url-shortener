@@ -1,4 +1,5 @@
 import * as React from "react";
+import { Link } from "react-router-dom";
 import {
 	IconLink,
 	IconCopy,
@@ -6,6 +7,7 @@ import {
 	IconTrash,
 	IconQrcode,
 	IconChartBar,
+	IconAdjustments,
 	IconExternalLink,
 	IconSearch,
 	IconPlus,
@@ -181,9 +183,13 @@ export function LinksTable({
 											{/* Short Link column */}
 											<td className="py-3.5 px-4 font-mono font-semibold text-foreground">
 												<div className="flex items-center gap-2">
-													<span className="text-primary font-bold">
+													<Link
+														to={`/redirect-links/${url.shortCode}`}
+														className="text-primary font-bold hover:underline transition-colors cursor-pointer"
+														title="Configure link"
+													>
 														/r/{url.shortCode}
-													</span>
+													</Link>
 													<button
 														onClick={() => handleCopy(url.shortCode, url.id)}
 														className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer p-1 rounded-md hover:bg-muted"
@@ -244,6 +250,14 @@ export function LinksTable({
 											{/* Actions column */}
 											<td className="py-3.5 px-4 text-right">
 												<div className="flex items-center justify-end gap-1">
+													<Link
+														to={`/redirect-links/${url.shortCode}`}
+														className="inline-flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+														title="Configure Link Settings"
+													>
+														<IconAdjustments className="size-3.5" />
+													</Link>
+
 													<Button
 														variant="ghost"
 														size="icon-sm"

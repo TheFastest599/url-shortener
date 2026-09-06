@@ -12,11 +12,9 @@ import {
 	SheetTitle,
 	SheetDescription,
 } from "@/components/ui/sheet";
-import { useUrlsQuery } from "@/queries";
 import { ChevronRight } from "lucide-react";
 
 export function AppLayout() {
-	const { data: urls = [] } = useUrlsQuery();
 	const [isCreateOpen, setIsCreateOpen] = React.useState(false);
 	const [qrModalUrl, setQrModalUrl] = React.useState(null);
 	const [mobileSidebarOpen, setMobileSidebarOpen] = React.useState(false);
@@ -37,7 +35,7 @@ export function AppLayout() {
 			{/* 2. Workspace Body Shell */}
 			<div className="flex flex-1 min-h-[calc(100vh-3.5rem)] sm:min-h-[calc(100vh-4rem)]">
 				{/* Desktop-only Fixed Left Sidebar (w-60, no squishing, clean) */}
-				<AppSidebar totalLinksCount={urls.length} />
+				<AppSidebar />
 
 				{/* Main Workspace Area (Breadcrumb Bar + Page Content) */}
 				<div className="flex-1 flex flex-col min-w-0">
@@ -63,7 +61,6 @@ export function AppLayout() {
 					<main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 overflow-y-auto">
 						<Outlet
 							context={{
-								urls,
 								onOpenCreateModal: handleOpenCreateModal,
 								onOpenQrModal: handleOpenQrModal,
 							}}
@@ -80,7 +77,6 @@ export function AppLayout() {
 						<SheetDescription>Mobile Workspace Navigation</SheetDescription>
 					</SheetHeader>
 					<SidebarNavContent
-						totalLinksCount={urls.length}
 						onItemClick={() => setMobileSidebarOpen(false)}
 					/>
 				</SheetContent>
