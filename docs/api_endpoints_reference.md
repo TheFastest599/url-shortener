@@ -250,9 +250,7 @@ All `/api/v1/urls/**` requests are routed via Gateway with JWT verification and 
   ```json
   {
     "name": "Summer Launch 2026",
-    "description": "Multi-channel launch campaign",
-    "defaultUtmSource": "twitter",
-    "defaultUtmMedium": "social"
+    "description": "Multi-channel launch campaign"
   }
   ```
 - **`GET /api/v1/campaigns`**: List all campaigns owned by the user.

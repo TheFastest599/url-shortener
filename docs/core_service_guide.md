@@ -106,8 +106,6 @@ CREATE TABLE IF NOT EXISTS campaigns (
     user_id UUID NOT NULL,
     name VARCHAR(100) NOT NULL,
     description TEXT,
-    default_utm_source VARCHAR(100),
-    default_utm_medium VARCHAR(100),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
@@ -271,12 +269,6 @@ public class Campaign {
 
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;
-
-    @Column(name = "default_utm_source", length = 100)
-    private String defaultUtmSource;
-
-    @Column(name = "default_utm_medium", length = 100)
-    private String defaultUtmMedium;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -847,9 +839,7 @@ import jakarta.validation.constraints.NotBlank;
 public record CreateCampaignRequest(
         @NotBlank(message = "Campaign name is required")
         String name,
-        String description,
-        String defaultUtmSource,
-        String defaultUtmMedium
+        String description
 ) {}
 ```
 
@@ -865,8 +855,6 @@ public record CampaignResponse(
         UUID id,
         String name,
         String description,
-        String defaultUtmSource,
-        String defaultUtmMedium,
         long linkCount,
         Instant createdAt,
         Instant updatedAt
@@ -876,8 +864,6 @@ public record CampaignResponse(
                 c.getId(),
                 c.getName(),
                 c.getDescription(),
-                c.getDefaultUtmSource(),
-                c.getDefaultUtmMedium(),
                 linkCount,
                 c.getCreatedAt(),
                 c.getUpdatedAt()
@@ -1257,8 +1243,6 @@ public class CampaignService {
                 .userId(userId)
                 .name(request.name().trim())
                 .description(request.description())
-                .defaultUtmSource(request.defaultUtmSource())
-                .defaultUtmMedium(request.defaultUtmMedium())
                 .createdAt(Instant.now())
                 .updatedAt(Instant.now())
                 .build();
@@ -1727,9 +1711,7 @@ curl -X POST http://localhost:8080/api/v1/campaigns \
   -H "X-User-Id: 00000000-0000-0000-0000-000000000001" \
   -d '{
     "name": "Summer Launch 2026",
-    "description": "Cross-channel promotional launch",
-    "defaultUtmSource": "twitter",
-    "defaultUtmMedium": "social"
+    "description": "Cross-channel promotional launch"
   }'
 ```
 

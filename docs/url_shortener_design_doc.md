@@ -2,7 +2,7 @@
 
 ## 1. Project Overview
 **Project Name:** HiClickMe (Multi-Tenant URL Shortener & Analytics SaaS)  
-**Purpose:** Provide a highly scalable, multi-tenant URL shortening platform featuring custom subdomains, dynamic QR code generation, UTM tracking profiles, rate limiting, and premium subscription tiers. The platform is designed using a decoupled Microservices Architecture to support massive redirect throughput, independent service scalability, and high resilience.
+**Purpose:** Provide a highly scalable, multi-tenant URL shortening platform featuring custom subdomains, dynamic QR code generation, marketing campaign management, multivariate A/B testing, smart device routing, UTM analytics attribution, rate limiting, and premium subscription tiers. The platform is designed using a decoupled Microservices Architecture to support massive redirect throughput, independent service scalability, and high resilience.
 
 ### Core Architecture Goals
 - **High Performance Redirections:** Under `< 10ms` response times for cached short URLs using a reactive Redirect Microservice backed by Redis.
@@ -52,7 +52,7 @@ graph TD
 
     subgraph Microservices Cluster
         %% API Gateway & Auth
-        API_Gateway -->|Reads/Writes Auth| DB_Auth[(PostgreSQL Auth DB: hiclickme_auth)]
+        API_Gateway -->|Reads/Writes Auth| DB_Auth[(PostgreSQL Auth DB: url_shortener_auth)]
         API_Gateway -->|Rate Limit Checks| Redis_Shared[(Redis Cache & Rate Store :6379)]
         API_Gateway -->|Routes /r/** Redirects| MS_Redirect[Redirect Service :8082]
 
@@ -68,8 +68,8 @@ graph TD
 
     subgraph Shared PostgreSQL Instance :5432
         DB_Auth
-        DB_Core[(PostgreSQL Core DB: hiclickme_core)]
-        DB_Analytics[(PostgreSQL Analytics DB: hiclickme_analytics)]
+        DB_Core[(PostgreSQL Core DB: url_shortener_core)]
+        DB_Analytics[(PostgreSQL Analytics DB: url_shortener_analytics)]
     end
 
     %% Core & Analytics DBs
@@ -82,12 +82,13 @@ graph TD
 
 | Service / Component | Public Port | gRPC Port | Technology | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
-| **API Gateway** | `8080` | N/A | Spring Cloud Gateway, Reactive Security | Central entrypoint, routing, rate limiting, OAuth2 Client, token rotation, and REST-to-gRPC translation. |
-| **Core Admin Service** | N/A | `9090` | Spring Boot, gRPC Server, JPA / Hibernate | Manages user metadata configurations, billing/subscriptions, URL mapping databases, and UTM profiles. |
-| **Redirect Service** | `8082` | N/A | Spring WebFlux, Redis Reactive, gRPC Client | Resolves short URLs via Redis (or gRPC Core Service fallback) and publishes click events to Apache Kafka. |
-| **Analytics Service** | N/A | `9091` | Spring Boot, Spring Kafka, MaxMind GeoIP | Consumes Kafka click streams, resolves geographic locations, detects bots, bulk-writes logs, and serves gRPC reports. |
+| **API Gateway** | `8080` | N/A | Spring Cloud Gateway, Reactive Security | Central entrypoint, routing, rate limiting, OAuth2 Client, token rotation, and REST proxying. |
+| **Core Admin Service** | `8081` | `9090` | Spring Boot, gRPC Server, JPA / Hibernate | Manages URL mappings, marketing campaigns, A/B/n tests, Base62 encoding, Redis Strategy 1 cache warming/eviction, and gRPC resolution. |
+| **Redirect Service** | `8082` | N/A | Spring WebFlux, Redis Reactive, gRPC Client | Resolves short URLs via Strategy 1 Redis (or gRPC Core fallback), executes in-memory A/B splits, and publishes click events to Apache Kafka. |
+| **Analytics Service** | `8083` | `9091` | Spring Boot, Spring Kafka, MaxMind GeoIP | Consumes Kafka click streams, resolves geographic locations, detects bots, bulk-writes logs, and serves telemetry reports. |
+| **Frontend Client** | `5173` | N/A | React, Vite, Tailwind CSS, TanStack Query | Single Page Application dashboard with UTM builder, Campaign management, A/B testing controls, and telemetry charts. |
 | **PostgreSQL Shared Instance** | `5432` | N/A | PostgreSQL 16 | Single database container hosting 3 logically isolated databases: `url_shortener_auth`, `url_shortener_core`, and `url_shortener_analytics`. |
-| **Redis Cache & Rate Store**| `6379` | N/A | Redis 7.2 | Shares rate limit statistics, redirect caches, and session contexts. |
+| **Redis Cache & Rate Store**| `6379` | N/A | Redis 7.2 | Shares rate limit statistics, Strategy 1 dual-key redirect caches (`url:redirect`, `url:ab`, `url:rules`), and hit counters. |
 | **Apache Kafka Broker** | `9092` | N/A | Confluent Kafka / KRaft Mode | High-throughput streaming buffer decoupling redirection handling from analytics logging. |
 
 ---
@@ -98,31 +99,33 @@ graph TD
 Stores strictly credential, token, and identity mapping tables owned and managed exclusively by the `api-gateway-service`.
 
 ```sql
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
 -- 1. Users Table (Core Identity Reference)
-CREATE TABLE users (
-    id BIGSERIAL PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username VARCHAR(255) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
     role VARCHAR(50) DEFAULT 'USER' NOT NULL, -- USER, ADMIN
-    auth_type VARCHAR(50) NOT NULL, -- EMAIL, GOOGLE, GITHUB
+    auth_type VARCHAR(50) DEFAULT 'EMAIL' NOT NULL, -- EMAIL, GOOGLE, GITHUB
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
-CREATE INDEX idx_users_username ON users(username);
-CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 
 -- 2. User Passwords Table (One-to-One, populated if auth_type = 'EMAIL')
-CREATE TABLE user_passwords (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS user_passwords (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     password_hash VARCHAR(255) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 -- 3. User OAuth Credentials Table (One-to-One/Many, populated if auth_type = OAUTH)
-CREATE TABLE user_oauth_credentials (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS user_oauth_credentials (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     provider VARCHAR(100) NOT NULL, -- GOOGLE, GITHUB
     provider_user_id VARCHAR(255) NOT NULL,
     access_token TEXT,
@@ -134,15 +137,15 @@ CREATE TABLE user_oauth_credentials (
 );
 
 -- 4. Refresh Tokens Table (Database copies for rotation & replay detection)
-CREATE TABLE refresh_tokens (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token VARCHAR(255) UNIQUE NOT NULL,
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT UNIQUE NOT NULL,
     expiry_date TIMESTAMP WITH TIME ZONE NOT NULL,
     revoked BOOLEAN DEFAULT FALSE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
-CREATE INDEX idx_refresh_tokens_token ON refresh_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token);
 ```
 
 ### 4.2 PostgreSQL Core Database (Database: `url_shortener_core` on Port `5432`)
@@ -151,13 +154,28 @@ Stores business-specific URL mappings, configurations, user billing statuses, an
 ```sql
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- 1. URL Mappings Table
+-- 1. Campaigns Table (Marketing initiative grouping)
+CREATE TABLE IF NOT EXISTS campaigns (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_campaigns_user_id ON campaigns(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_campaigns_user_name ON campaigns(user_id, name);
+
+-- 2. URL Mappings Table
 CREATE TABLE IF NOT EXISTS url_mappings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     short_code VARCHAR(10) UNIQUE NOT NULL,
     destination_url TEXT NOT NULL,
+    campaign_id UUID REFERENCES campaigns(id) ON DELETE SET NULL,
+    is_ab_test BOOLEAN DEFAULT FALSE NOT NULL,
+    smart_rules JSONB,                        -- Device & Geo targeting rules
     tenant_id VARCHAR(50) DEFAULT 'default' NOT NULL,
-    user_id UUID NOT NULL, -- Logical FK to Auth DB users table
+    user_id UUID NOT NULL,                    -- Logical FK to Auth DB users table
     is_active BOOLEAN DEFAULT TRUE NOT NULL,
     expires_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -165,151 +183,189 @@ CREATE TABLE IF NOT EXISTS url_mappings (
 );
 CREATE INDEX IF NOT EXISTS idx_url_mappings_short_code ON url_mappings(short_code);
 CREATE INDEX IF NOT EXISTS idx_url_mappings_user_id ON url_mappings(user_id);
+CREATE INDEX IF NOT EXISTS idx_url_mappings_campaign_id ON url_mappings(campaign_id);
 
--- 2. UTM Profiles Table
-CREATE TABLE IF NOT EXISTS utm_profiles (
+-- 3. A/B Tests Table
+CREATE TABLE IF NOT EXISTS ab_tests (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    url_mapping_id UUID NOT NULL REFERENCES url_mappings(id) ON DELETE CASCADE,
+    url_mapping_id UUID NOT NULL UNIQUE REFERENCES url_mappings(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
-    utm_source VARCHAR(100),
-    utm_medium VARCHAR(100),
-    utm_campaign VARCHAR(100),
-    utm_term VARCHAR(100),
-    utm_content VARCHAR(100),
+    status VARCHAR(20) DEFAULT 'ACTIVE' NOT NULL,      -- 'ACTIVE', 'PAUSED', 'CONCLUDED'
+    winning_variant VARCHAR(10),                      -- Populated upon test conclusion (e.g. 'B')
+    cookie_ttl_seconds INT DEFAULT 2592000 NOT NULL,  -- 30 days sticky cookie
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_utm_profiles_url_mapping ON utm_profiles(url_mapping_id);
+CREATE INDEX IF NOT EXISTS idx_ab_tests_url_mapping ON ab_tests(url_mapping_id);
+
+-- 4. A/B Variants Table (Multivariate split targets)
+CREATE TABLE IF NOT EXISTS ab_variants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ab_test_id UUID NOT NULL REFERENCES ab_tests(id) ON DELETE CASCADE,
+    variant_key VARCHAR(10) NOT NULL,                 -- 'A', 'B', 'C'
+    destination_url TEXT NOT NULL,
+    weight INT DEFAULT 50 NOT NULL,                   -- Cumulative weight (sums to 100)
+    is_control BOOLEAN DEFAULT FALSE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ab_variants_test_id ON ab_variants(ab_test_id);
 ```
 
 ### 4.3 PostgreSQL Analytics Database (Database: `url_shortener_analytics` on Port `5432`)
 Stores raw event click tracking data managed strictly by `url-analytics-service`.
 
 ```sql
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
 -- 1. Click Analytics Table
-CREATE TABLE click_analytics (
-    id BIGSERIAL PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS click_analytics (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     short_code VARCHAR(10) NOT NULL,
-    utm_profile_id BIGINT, -- Logical reference to utm_profiles(id) in Core DB
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    user_agent TEXT,
-    device_type VARCHAR(50),
-    browser VARCHAR(50),
-    operating_system VARCHAR(50),
-    geo_country VARCHAR(100),
-    geo_city VARCHAR(100),
-    referrer TEXT,
+    variant VARCHAR(50),                              -- 'A', 'B' (null for normal links)
     utm_source VARCHAR(100),
     utm_medium VARCHAR(100),
     utm_campaign VARCHAR(100),
     utm_term VARCHAR(100),
     utm_content VARCHAR(100),
+    user_agent TEXT,
+    device_type VARCHAR(50),                          -- Mobile, Desktop, Tablet
+    browser VARCHAR(50),                              -- Chrome, Safari, Firefox, Edge
+    operating_system VARCHAR(50),                     -- macOS, Windows, iOS, Android, Linux
+    geo_country VARCHAR(100),                         -- e.g. "United States", "India"
+    geo_city VARCHAR(100),
+    referrer TEXT,
     is_bot BOOLEAN DEFAULT FALSE NOT NULL,
     visitor_id VARCHAR(36),
     locale VARCHAR(10),
     extra_data JSONB
 );
-CREATE INDEX idx_click_analytics_short_code ON click_analytics(short_code);
-CREATE INDEX idx_click_analytics_timestamp ON click_analytics(timestamp);
+
+CREATE INDEX IF NOT EXISTS idx_click_analytics_short_code ON click_analytics(short_code);
+CREATE INDEX IF NOT EXISTS idx_click_analytics_timestamp ON click_analytics(timestamp);
+CREATE INDEX IF NOT EXISTS idx_click_analytics_short_code_variant ON click_analytics(short_code, variant);
+CREATE INDEX IF NOT EXISTS idx_click_analytics_utm_campaign ON click_analytics(short_code, utm_campaign);
+CREATE INDEX IF NOT EXISTS idx_click_analytics_utm_source ON click_analytics(short_code, utm_source);
 ```
 
 ### 4.4 Database Entity Relationship Diagram (ERD)
 
 ```mermaid
 erDiagram
-    %% ==========================================
-    %% PostgreSQL Auth DB (Port 5431)
-    %% ==========================================
-    users {
-        bigint id PK
-        varchar username UK
-        varchar email UK
-        varchar role
-        varchar auth_type
-        timestamp created_at
+    %% Auth Database
+    USERS ||--o| USER_PASSWORDS : secures
+    USERS ||--o| USER_OAUTH_CREDENTIALS : binds
+    USERS ||--o{ REFRESH_TOKENS : owns
+
+    %% Core Database
+    USERS ||..o{ CAMPAIGNS : "logical owner"
+    USERS ||..o{ URL_MAPPINGS : "logical owner"
+    CAMPAIGNS ||--o{ URL_MAPPINGS : groups
+    URL_MAPPINGS ||--o| AB_TESTS : configures
+    AB_TESTS ||--|{ AB_VARIANTS : contains
+
+    %% Analytics Database
+    URL_MAPPINGS ||..o{ CLICK_ANALYTICS : "traces clicks"
+
+    USERS {
+        uuid id PK
+        string username UK
+        string email UK
+        string role
+        string auth_type
+        timestamptz created_at
+        timestamptz updated_at
     }
-    user_passwords {
-        bigint id PK
-        bigint user_id FK "UK"
-        varchar password_hash
+
+    USER_PASSWORDS {
+        uuid id PK
+        uuid user_id FK
+        string password_hash
+        timestamptz updated_at
     }
-    user_oauth_credentials {
-        bigint id PK
-        bigint user_id FK "UK"
-        varchar provider
-        varchar provider_user_id UK
+
+    USER_OAUTH_CREDENTIALS {
+        uuid id PK
+        uuid user_id FK
+        string provider
+        string provider_user_id
         text access_token
         text refresh_token
+        timestamptz expires_at
+        timestamptz created_at
+        timestamptz updated_at
     }
-    refresh_tokens {
-        bigint id PK
-        bigint user_id FK
-        varchar token UK
-        timestamp expiry_date
+
+    REFRESH_TOKENS {
+        uuid id PK
+        uuid user_id FK
+        text token UK
+        timestamptz expiry_date
         boolean revoked
+        timestamptz created_at
     }
 
-    %% ==========================================
-    %% PostgreSQL Core DB (Port 5432)
-    %% ==========================================
-    user_metadata {
-        bigint id PK
-        bigint user_id UK "Logical FK to Auth.users"
-        varchar tier
-        varchar name
-        jsonb settings
+    CAMPAIGNS {
+        uuid id PK
+        uuid user_id
+        string name
+        string description
+        timestamptz created_at
+        timestamptz updated_at
     }
-    subscriptions {
-        bigint id PK
-        bigint user_id "Logical FK to Auth.users"
-        varchar stripe_subscription_id
-        varchar status
-        timestamp start_date
-        timestamp end_date
-    }
-    url_mappings {
-        bigint id PK
-        varchar short_code UK
-        text destination_url
-        varchar tenant_id
-        bigint user_id "Logical FK to Auth.users"
+
+    URL_MAPPINGS {
+        uuid id PK
+        string short_code UK
+        string destination_url
+        uuid campaign_id FK
+        boolean is_ab_test
+        jsonb smart_rules
+        uuid user_id
         boolean is_active
-    }
-    utm_profiles {
-        bigint id PK
-        bigint url_mapping_id FK
-        varchar name
-        varchar utm_source
-        varchar utm_medium
+        timestamptz expires_at
+        timestamptz created_at
+        timestamptz updated_at
     }
 
-    %% ==========================================
-    %% PostgreSQL Analytics DB (Port 5433)
-    %% ==========================================
-    click_analytics {
-        bigint id PK
-        varchar short_code "Logical FK to Core.url_mappings"
-        bigint utm_profile_id "Logical FK to Core.utm_profiles"
-        timestamp timestamp
-        text user_agent
-        varchar geo_country
+    AB_TESTS {
+        uuid id PK
+        uuid url_mapping_id FK
+        string name
+        string status
+        string winning_variant
+        int cookie_ttl_seconds
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    AB_VARIANTS {
+        uuid id PK
+        uuid ab_test_id FK
+        string variant_key
+        string destination_url
+        int weight
+        boolean is_control
+        timestamptz created_at
+    }
+
+    CLICK_ANALYTICS {
+        uuid id PK
+        string short_code
+        timestamptz timestamp
+        string variant
+        string utm_source
+        string utm_medium
+        string utm_campaign
+        string user_agent
+        string device_type
+        string browser
+        string operating_system
+        string geo_country
+        string geo_city
+        string referrer
         boolean is_bot
-        varchar visitor_id
     }
-
-    %% Physical Foreign Key Relationships (Auth DB)
-    users ||--o| user_passwords : "secures"
-    users ||--o| user_oauth_credentials : "binds"
-    users ||--o{ refresh_tokens : "owns"
-
-    %% Physical Foreign Key Relationships (Core DB)
-    url_mappings ||--o{ utm_profiles : "encompasses"
-
-    %% Cross-Database Logical Relationships (Microservices Boundaries)
-    users ||..o| user_metadata : "logical sync"
-    users ||..o{ subscriptions : "logical sync"
-    users ||..o{ url_mappings : "logical ownership"
-    url_mappings ||..o{ click_analytics : "traces clicks"
 ```
 
 ---
@@ -319,55 +375,44 @@ erDiagram
 Internal services establish strict, compiled contracts using Protocol Buffers. This ensures cross-service type safety, backwards compatibility, and low serialization overhead.
 
 ### 5.1 url_service.proto
-
-Defines endpoints in the `Core Admin Service` to resolve short codes and manage mappings.
+File: `core/src/main/proto/url_service.proto` / `redirect/src/main/proto/url_service.proto`
 
 ```protobuf
 syntax = "proto3";
 
-package hiclickme.core;
+package com.urlshortener.grpc;
 
 option java_multiple_files = true;
-option java_package = "com.hiclickme.grpc.core";
-option java_outer_classname = "UrlServiceProto";
+option java_package = "com.urlshortener.grpc";
 
 service UrlService {
-  rpc GetUrlMapping (GetUrlMappingRequest) returns (GetUrlMappingResponse);
-  rpc CreateUrlMapping (CreateUrlMappingRequest) returns (CreateUrlMappingResponse);
+  rpc GetDestinationUrl (UrlRequest) returns (UrlResponse);
+  rpc CreateUrlMapping (CreateUrlRequest) returns (CreateUrlResponse);
 }
 
-message GetUrlMappingRequest {
+message UrlRequest {
   string short_code = 1;
 }
 
-message GetUrlMappingResponse {
-  bool found = 1;
-  string short_code = 2;
-  string destination_url = 3;
-  bool is_active = 4;
-  string tenant_id = 5;
-  int64 user_id = 6;
-  repeated UtmProfile utm_profiles = 7;
-}
-
-message UtmProfile {
-  int64 id = 1;
-  string name = 2;
-  string utm_source = 3;
-  string utm_medium = 4;
-  string utm_campaign = 5;
-}
-
-message CreateUrlMappingRequest {
+message UrlResponse {
   string destination_url = 1;
-  string tenant_id = 2;
-  int64 user_id = 3;
-  string custom_short_code = 4;
+  bool is_active = 2;
+  bool is_found = 3;
+  string short_code = 4;
+  string ab_rules_json = 5;      // In-memory A/B variant JSON configuration
+  string smart_rules_json = 6;   // Device & Geo targeting rules JSON
 }
 
-message CreateUrlMappingResponse {
+message CreateUrlRequest {
+  string destination_url = 1;
+  string custom_alias = 2;
+  string user_id = 3;
+}
+
+message CreateUrlResponse {
   string short_code = 1;
   string destination_url = 2;
+  bool success = 3;
 }
 ```
 
@@ -467,7 +512,7 @@ spring:
     application:
         name: url-gateway-service
     r2dbc:
-        url: r2dbc:postgresql://localhost:5432/hiclickme_auth
+        url: r2dbc:postgresql://localhost:5432/url_shortener_auth
         username: auth_user
         password: auth_password
     redis:
@@ -632,58 +677,9 @@ public class DashboardGatewayController {
 
 ---
 
-## 5. Protocol Buffers (gRPC Service Definitions)
+### 6.2 Core Admin Service (`url-core-service` - REST Port `8081`, gRPC Port `9090`)
 
-### 5.1 `url_service.proto`
-File: `core/src/main/proto/url_service.proto` / `redirect/src/main/proto/url_service.proto`
-
-```protobuf
-syntax = "proto3";
-
-package com.urlshortener.grpc;
-
-option java_multiple_files = true;
-option java_package = "com.urlshortener.grpc";
-
-service UrlService {
-  rpc GetDestinationUrl (UrlRequest) returns (UrlResponse);
-  rpc CreateUrlMapping (CreateUrlRequest) returns (CreateUrlResponse);
-}
-
-message UrlRequest {
-  string short_code = 1;
-}
-
-message UrlResponse {
-  string destination_url = 1;
-  bool is_active = 2;
-  bool is_found = 3;
-  string short_code = 4;
-}
-
-message CreateUrlRequest {
-  string destination_url = 1;
-  string custom_alias = 2;
-  string user_id = 3;
-}
-
-message CreateUrlResponse {
-  string short_code = 1;
-  string destination_url = 2;
-  bool success = 3;
-}
-```
-
----
-
-## 6. Microservice Implementations
-
-### 6.1 API Gateway Service (`api-gateway-service` - Port `8080`)
-Coordinates edge authentication, routing, and rate limiting.
-
-#### 6.2 Core Admin Service (`url-core-service` - REST Port `8081`, gRPC Port `9090`)
-
-Manages URL mapping persistence, Base62 shortcode generation, UTM profiles, and runs a high-performance gRPC Server on port `9090` to serve resolution lookups.
+Manages URL mapping persistence, Base62 shortcode generation, marketing campaigns, multivariate A/B/n tests, and runs a high-performance gRPC Server on port `9090` to serve resolution lookups.
 
 #### 1. gRPC Server Implementation (`UrlGrpcService.java`)
 
@@ -693,6 +689,9 @@ Manages URL mapping persistence, Base62 shortcode generation, UTM profiles, and 
 public class UrlGrpcService extends UrlServiceGrpc.UrlServiceImplBase {
 
     private final UrlMappingRepository urlMappingRepository;
+    private final AbTestRepository abTestRepository;
+    private final AbVariantRepository abVariantRepository;
+    private final ObjectMapper objectMapper;
 
     @Override
     public void getDestinationUrl(UrlRequest request, StreamObserver<UrlResponse> responseObserver) {
@@ -709,16 +708,42 @@ public class UrlGrpcService extends UrlServiceGrpc.UrlServiceImplBase {
             return;
         }
 
-        // Happy Path: Flat, clean, unnested execution
         UrlMapping mapping = mappingOpt.get();
-        UrlResponse response = UrlResponse.newBuilder()
+        UrlResponse.Builder responseBuilder = UrlResponse.newBuilder()
                 .setShortCode(mapping.getShortCode())
                 .setDestinationUrl(mapping.getDestinationUrl())
-                .setIsActive(mapping.getIsActive())
-                .setIsFound(true)
-                .build();
+                .setIsActive(Boolean.TRUE.equals(mapping.getIsActive()))
+                .setIsFound(true);
 
-        responseObserver.onNext(response);
+        // Forward A/B Testing configuration if active
+        if (Boolean.TRUE.equals(mapping.getIsAbTest())) {
+            abTestRepository.findByUrlMappingId(mapping.getId()).ifPresent(test -> {
+                if ("ACTIVE".equalsIgnoreCase(test.getStatus())) {
+                    List<AbVariant> variants = abVariantRepository.findByAbTestId(test.getId());
+                    try {
+                        Map<String, Object> abPayload = Map.of(
+                            "testId", test.getId().toString(),
+                            "status", test.getStatus(),
+                            "cookieTtlSeconds", test.getCookieTtlSeconds(),
+                            "variants", variants.stream().map(v -> Map.of(
+                                "key", v.getVariantKey(),
+                                "url", v.getDestinationUrl(),
+                                "weight", v.getWeight(),
+                                "isControl", v.getIsControl()
+                            )).toList()
+                        );
+                        responseBuilder.setAbRulesJson(objectMapper.writeValueAsString(abPayload));
+                    } catch (Exception ignored) {}
+                }
+            });
+        }
+
+        // Forward Device & Geo smart rules if configured
+        if (mapping.getSmartRules() != null && !mapping.getSmartRules().isBlank()) {
+            responseBuilder.setSmartRulesJson(mapping.getSmartRules());
+        }
+
+        responseObserver.onNext(responseBuilder.build());
         responseObserver.onCompleted();
     }
 }
@@ -726,21 +751,24 @@ public class UrlGrpcService extends UrlServiceGrpc.UrlServiceImplBase {
 
 #### 2. REST API Controller & Service (`UrlCoreController.java`)
 
-Provides full CRUD operations for URLs and UTM campaign profiles:
+Provides full CRUD operations for URLs, Campaigns, and A/B/n Tests:
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| **`POST`** | `/api/v1/urls` | Create short URL (supports custom alias and UTM params). |
-| **`GET`** | `/api/v1/urls` | List user's URLs. |
+| **`POST`** | `/api/v1/urls` | Create short URL (supports custom alias and UTM query params). |
+| **`GET`** | `/api/v1/urls` | List user's URLs (supports pagination, search, status, campaignId). |
 | **`GET`** | `/api/v1/urls/{urlId}` | Get a specific URL mapping by UUID. |
-| **`GET`** | `/api/v1/urls/short/{shortCode}` | Get URL mapping details by shortcode. |
-| **`PUT`** | `/api/v1/urls/{urlId}` | Update URL target, active state, expiration (evicts Redis cache). |
-| **`DELETE`** | `/api/v1/urls/{urlId}` | Delete shortlink & UTM profiles (evicts Redis cache). |
-| **`POST`** | `/api/v1/urls/{urlId}/utm` | Add UTM campaign profile to link. |
-| **`GET`** | `/api/v1/urls/{urlId}/utm` | List UTM profiles for link. |
-| **`GET`** | `/api/v1/urls/utm/{utmId}` | Get a specific UTM campaign profile by UUID. |
-| **`PUT`** | `/api/v1/urls/utm/{utmId}` | Update UTM campaign profile parameters. |
-| **`DELETE`** | `/api/v1/urls/utm/{utmId}` | Delete UTM campaign profile. |
+| **`GET`** | `/api/v1/urls/code/{shortCode}` | Get URL mapping details by shortcode. |
+| **`PUT`** | `/api/v1/urls/{urlId}` | Update URL target, active state, expiration (warms/evicts Redis cache). |
+| **`DELETE`** | `/api/v1/urls/{urlId}` | Delete shortlink (evicts all Strategy 1 Redis keys). |
+| **`POST`** | `/api/v1/campaigns` | Create marketing campaign folder. |
+| **`GET`** | `/api/v1/campaigns` | List all campaigns owned by user with link count. |
+| **`GET`** | `/api/v1/campaigns/{id}` | Get campaign details and its associated short URLs. |
+| **`DELETE`** | `/api/v1/campaigns/{id}` | Delete campaign (unlinks associated URLs). |
+| **`POST`** | `/api/v1/urls/{shortCode}/ab-test` | Configure multivariate A/B test with weights. |
+| **`GET`** | `/api/v1/urls/{shortCode}/ab-test` | Inspect active A/B test status and variant allocations. |
+| **`PUT`** | `/api/v1/urls/{shortCode}/ab-test/status` | Update status (`ACTIVE`, `PAUSED`, `CONCLUDED` with winner). |
+| **`DELETE`** | `/api/v1/urls/{shortCode}/ab-test` | Cancel A/B test and evict `url:ab:{shortCode}`. |
 
 ```java
 @RestController
@@ -750,8 +778,6 @@ public class UrlCoreController {
 
     private final UrlCoreService urlCoreService;
 
-    // --- URL ENDPOINTS ---
-
     @PostMapping
     public ResponseEntity<UrlMapping> createShortUrl(
             @Valid @RequestBody CreateUrlRequest request,
@@ -760,9 +786,14 @@ public class UrlCoreController {
     }
 
     @GetMapping
-    public ResponseEntity<List<UrlMapping>> getUserUrls(
+    public ResponseEntity<?> getUserUrls(
+            @RequestParam(value = "page", required = false) Integer page,
+            @RequestParam(value = "size", required = false) Integer size,
+            @RequestParam(value = "search", required = false) String search,
+            @RequestParam(value = "status", required = false) String status,
+            @RequestParam(value = "campaignId", required = false) UUID campaignId,
             @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
-        return ResponseEntity.ok(urlCoreService.getUserUrls(userId));
+        return ResponseEntity.ok(urlCoreService.getUserUrlsPaged(userId, search, status, campaignId, page, size));
     }
 
     @GetMapping("/{urlId}")
@@ -772,9 +803,10 @@ public class UrlCoreController {
         return ResponseEntity.ok(urlCoreService.getUrl(urlId, userId));
     }
 
-    @GetMapping("/short/{shortCode}")
-    public ResponseEntity<Optional<UrlMapping>> getUrlFromShortCode(@PathVariable String shortCode) {
-        return ResponseEntity.ok(urlCoreService.getUrlFromShortCode(shortCode));
+    @GetMapping("/code/{shortCode}")
+    public ResponseEntity<UrlMapping> getUrlFromShortCode(@PathVariable String shortCode) {
+        return ResponseEntity.ok(urlCoreService.getUrlFromShortCode(shortCode)
+                .orElseThrow(() -> new IllegalArgumentException("Short code not found: " + shortCode)));
     }
 
     @PutMapping("/{urlId}")
@@ -782,7 +814,7 @@ public class UrlCoreController {
             @PathVariable UUID urlId,
             @Valid @RequestBody UpdateUrlRequest request,
             @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
-        return ResponseEntity.ok(urlCoreService.updatedShortUrl(urlId, request, userId));
+        return ResponseEntity.ok(urlCoreService.updateShortUrl(urlId, request, userId));
     }
 
     @DeleteMapping("/{urlId}")
@@ -792,148 +824,259 @@ public class UrlCoreController {
         urlCoreService.deleteShortUrl(urlId, userId);
         return ResponseEntity.noContent().build();
     }
-
-    // --- UTM PROFILE ENDPOINTS ---
-
-    @PostMapping("/{urlId}/utm")
-    public ResponseEntity<UtmProfile> addUtmProfile(
-            @PathVariable UUID urlId,
-            @Valid @RequestBody CreateUtmRequest request) {
-        return ResponseEntity.ok(urlCoreService.addUtmProfile(urlId, request));
-    }
-
-    @GetMapping("/{urlId}/utm")
-    public ResponseEntity<List<UtmProfile>> getUtmProfiles(
-            @PathVariable UUID urlId,
-            @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
-        return ResponseEntity.ok(urlCoreService.getUtmProfiles(urlId, userId));
-    }
-
-    @GetMapping("/utm/{utmId}")
-    public ResponseEntity<UtmProfile> getUtmProfile(
-            @PathVariable UUID utmId,
-            @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
-        return ResponseEntity.ok(urlCoreService.getUtmProfile(utmId, userId));
-    }
-
-    @PutMapping("/utm/{utmId}")
-    public ResponseEntity<UtmProfile> updateUtmProfile(
-            @PathVariable UUID utmId,
-            @RequestBody UpdateUtmRequest request) {
-        return ResponseEntity.ok(urlCoreService.updateUtmProfile(utmId, request));
-    }
-
-    @DeleteMapping("/utm/{utmId}")
-    public ResponseEntity<Void> deleteUtmProfile(@PathVariable UUID utmId) {
-        urlCoreService.deleteUtmProfile(utmId);
-        return ResponseEntity.noContent().build();
-    }
 }
 ```
 
+#### 3. Strategy 1 Redis Cache Synchronization (`UrlCoreService.java`)
+
+```java
+// Cache Warming: Warms base URL, active A/B tests, and smart rules
+public void warmRedirectCache(UrlMapping mapping) {
+    String shortCode = mapping.getShortCode();
+    if (Boolean.FALSE.equals(mapping.getIsActive())) {
+        evictRedirectCache(shortCode);
+        return;
+    }
+
+    // 1. Warm Base URL (24h TTL)
+    redisTemplate.opsForValue().set("url:redirect:" + shortCode, mapping.getDestinationUrl(), Duration.ofHours(24));
+
+    // 2. Warm A/B Rules if test is ACTIVE
+    if (Boolean.TRUE.equals(mapping.getIsAbTest())) {
+        abTestRepository.findByUrlMappingId(mapping.getId()).ifPresent(test -> {
+            if ("ACTIVE".equalsIgnoreCase(test.getStatus())) {
+                List<AbVariant> variants = abVariantRepository.findByAbTestId(test.getId());
+                String abJson = serializeAbRules(test, variants);
+                redisTemplate.opsForValue().set("url:ab:" + shortCode, abJson, Duration.ofHours(24));
+            } else {
+                redisTemplate.delete("url:ab:" + shortCode);
+            }
+        });
+    } else {
+        redisTemplate.delete("url:ab:" + shortCode);
+    }
+
+    // 3. Warm Smart Rules (Device/Geo) if present
+    if (mapping.getSmartRules() != null && !mapping.getSmartRules().isBlank()) {
+        redisTemplate.opsForValue().set("url:rules:" + shortCode, mapping.getSmartRules(), Duration.ofHours(24));
+    } else {
+        redisTemplate.delete("url:rules:" + shortCode);
+    }
+}
+
+// Atomic Eviction: Purges all keys across Strategy 1
+public void evictRedirectCache(String shortCode) {
+    redisTemplate.delete(List.of(
+        "url:redirect:" + shortCode,
+        "url:ab:" + shortCode,
+        "url:rules:" + shortCode,
+        "url:hits:" + shortCode
+    ));
+}
+```
 ---
 
 ### 6.3 Redirect Service (`url-redirect-service` - Port `8082`)
 
-A reactive WebFlux application executing redirections. It does not establish direct relational database pools.
+A high-performance reactive WebFlux application executing sub-2ms HTTP `302 Found` redirections. It does not establish direct relational database pools.
 
-#### 1. Redirection Resolver with gRPC Fallback Client
+#### 1. Strategy 1 Dual-Key Redirection Service (`RedirectService.java`)
 
-Handles redirect execution. Checks Redis cache first. If a cache miss occurs, resolves URL targets by issuing a gRPC call to `url-core-service`.
+Evaluates Redis `MGET` across `url:ab:{shortCode}`, `url:redirect:{shortCode}`, and `url:rules:{shortCode}` in a single 0.3ms round-trip.
+
+```java
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class RedirectService {
+
+    private final ReactiveStringRedisTemplate redisTemplate;
+    private final CoreGrpcClient coreGrpcClient;
+    private final KafkaTemplate<String, ClickEvent> kafkaTemplate;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    public Mono<String> resolveAndTrackUrl(String shortCode, ServerHttpRequest request, ServerHttpResponse response) {
+        String abKey = "url:ab:" + shortCode;
+        String redirectKey = "url:redirect:" + shortCode;
+        String rulesKey = "url:rules:" + shortCode;
+
+        // 1. Single round-trip MGET (< 0.5ms) across Strategy 1 keys
+        return redisTemplate.opsForValue().multiGet(List.of(abKey, redirectKey, rulesKey))
+            .flatMap(results -> {
+                String abJson = results.size() > 0 ? results.get(0) : null;
+                String fallbackUrl = results.size() > 1 ? results.get(1) : null;
+                String rulesJson = results.size() > 2 ? results.get(2) : null;
+
+                String destinationUrl = null;
+                String selectedVariant = null;
+
+                // Step A: Device Deep-Link Override (Highest Priority)
+                if (rulesJson != null) {
+                    destinationUrl = checkDeviceOverride(rulesJson, request);
+                }
+
+                // Step B: Active A/B Testing Split
+                if (destinationUrl == null && abJson != null) {
+                    VariantResolution res = resolveAbVariant(shortCode, abJson, request, response);
+                    if (res != null) {
+                        destinationUrl = res.url();
+                        selectedVariant = res.variantKey();
+                    }
+                }
+
+                // Step C: Base Fallback Destination
+                if (destinationUrl == null) {
+                    destinationUrl = fallbackUrl;
+                }
+
+                // Step D: Cache Miss -> Fallback to Core Service via gRPC (:9090)
+                if (destinationUrl == null) {
+                    return resolveFromGrpc(shortCode, request, response);
+                }
+
+                // Forward visitor's inbound UTM & query parameters
+                String finalUrl = mergeQueryParams(destinationUrl, request.getQueryParams());
+
+                // Async fire-and-forget Kafka telemetry (never blocks redirect)
+                emitTelemetry(shortCode, selectedVariant, request);
+
+                return Mono.just(finalUrl);
+            });
+    }
+
+    private VariantResolution resolveAbVariant(String shortCode, String abJson, ServerHttpRequest request, ServerHttpResponse response) {
+        try {
+            AbConfig config = objectMapper.readValue(abJson, AbConfig.class);
+            if (!"ACTIVE".equalsIgnoreCase(config.status())) return null;
+
+            // Check sticky cookie
+            HttpCookie cookie = request.getCookies().getFirst("ab_" + shortCode);
+            if (cookie != null) {
+                for (Variant v : config.variants()) {
+                    if (v.key().equalsIgnoreCase(cookie.getValue())) {
+                        return new VariantResolution(v.url(), v.key());
+                    }
+                }
+            }
+
+            // Cumulative Weighted Random Roll
+            Variant chosen = selectWeightedVariant(config.variants());
+            if (chosen != null) {
+                response.getHeaders().add("Set-Cookie", "ab_" + shortCode + "=" + chosen.key() + "; Path=/; Max-Age=2592000; SameSite=Lax");
+                return new VariantResolution(chosen.url(), chosen.key());
+            }
+        } catch (Exception e) {
+            log.error("Failed to parse A/B config for {}: {}", shortCode, e.getMessage());
+        }
+        return null;
+    }
+
+    private Variant selectWeightedVariant(List<Variant> variants) {
+        int totalWeight = variants.stream().mapToInt(Variant::weight).sum();
+        if (totalWeight <= 0) return variants.get(0);
+
+        int roll = ThreadLocalRandom.current().nextInt(1, totalWeight + 1);
+        int cumulative = 0;
+        for (Variant v : variants) {
+            cumulative += v.weight();
+            if (roll <= cumulative) return v;
+        }
+        return variants.get(0);
+    }
+
+    private String checkDeviceOverride(String rulesJson, ServerHttpRequest request) {
+        String ua = request.getHeaders().getFirst("User-Agent");
+        if (ua == null) return null;
+        String uaLower = ua.toLowerCase();
+
+        try {
+            SmartRules rules = objectMapper.readValue(rulesJson, SmartRules.class);
+            if (rules.devices() != null) {
+                if ((uaLower.contains("iphone") || uaLower.contains("ipad")) && rules.devices().containsKey("iOS")) {
+                    return rules.devices().get("iOS");
+                }
+                if (uaLower.contains("android") && rules.devices().containsKey("Android")) {
+                    return rules.devices().get("Android");
+                }
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    private Mono<String> resolveFromGrpc(String shortCode, ServerHttpRequest request, ServerHttpResponse response) {
+        return coreGrpcClient.getDestinationUrl(shortCode)
+            .flatMap(grpcResponse -> {
+                if (!grpcResponse.getIsFound() || !grpcResponse.getIsActive()) {
+                    return Mono.empty();
+                }
+                String dest = grpcResponse.getDestinationUrl();
+                redisTemplate.opsForValue().set("url:redirect:" + shortCode, dest, Duration.ofHours(24)).subscribe();
+                if (!grpcResponse.getAbRulesJson().isEmpty()) {
+                    redisTemplate.opsForValue().set("url:ab:" + shortCode, grpcResponse.getAbRulesJson(), Duration.ofHours(24)).subscribe();
+                }
+                emitTelemetry(shortCode, null, request);
+                return Mono.just(mergeQueryParams(dest, request.getQueryParams()));
+            });
+    }
+
+    private String mergeQueryParams(String url, MultiValueMap<String, String> queryParams) {
+        if (queryParams == null || queryParams.isEmpty()) return url;
+        UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(url);
+        queryParams.forEach((key, values) -> {
+            for (String val : values) builder.replaceQueryParam(key, val);
+        });
+        return builder.build().toUriString();
+    }
+
+    private void emitTelemetry(String shortCode, String variant, ServerHttpRequest request) {
+        String ip = request.getHeaders().getFirst("X-Forwarded-For");
+        if (ip == null && request.getRemoteAddress() != null) {
+            ip = request.getRemoteAddress().getAddress().getHostAddress();
+        }
+        String ua = request.getHeaders().getFirst("User-Agent");
+        String referrer = request.getHeaders().getFirst("Referer");
+        MultiValueMap<String, String> params = request.getQueryParams();
+
+        ClickEvent event = new ClickEvent(
+            shortCode,
+            Instant.now(),
+            ip != null ? ip : "127.0.0.1",
+            ua != null ? ua : "",
+            referrer != null ? referrer : "Direct",
+            variant,
+            params.getFirst("utm_source"),
+            params.getFirst("utm_medium"),
+            params.getFirst("utm_campaign")
+        );
+        kafkaTemplate.send("url-clicks", shortCode, event);
+    }
+
+    record AbConfig(String status, String winningVariant, List<Variant> variants) {}
+    record Variant(String key, String url, int weight) {}
+    record SmartRules(Map<String, String> devices, Map<String, String> countries) {}
+    record VariantResolution(String url, String variantKey) {}
+}
+```
+
+#### 2. Redirection Controller (`RedirectController.java`)
 
 ```java
 @RestController
-@RequestMapping("/r")
+@RequiredArgsConstructor
 public class RedirectController {
 
-    private final ReactiveStringRedisTemplate redisTemplate;
-    private final KafkaTemplate<String, ClickEventPayload> kafkaTemplate;
+    private final RedirectService redirectService;
 
-    @GrpcClient("url-core-service")
-    private UrlServiceGrpc.UrlServiceFutureStub coreServiceStub; // Asynchronous non-blocking gRPC stub
-
-    public RedirectController(ReactiveStringRedisTemplate redisTemplate, KafkaTemplate<String, ClickEventPayload> kafkaTemplate) {
-        this.redisTemplate = redisTemplate;
-        this.kafkaTemplate = kafkaTemplate;
-    }
-
-    @GetMapping("/{shortCode}")
+    @GetMapping({"/r/{shortCode}", "/{shortCode:[a-zA-Z0-9_-]{3,15}}"})
     public Mono<ResponseEntity<Void>> redirect(
             @PathVariable String shortCode,
             ServerHttpRequest request,
             ServerHttpResponse response) {
-
-        String cacheKey = "url:redirect:" + shortCode;
-        String counterKey = "url:hits:" + shortCode;
-
-        // 1. Increment rolling popularity counter reactively
-        return redisTemplate.opsForValue().increment(counterKey)
-            .flatMap(hits -> {
-                Duration adaptiveTtl = calculateAdaptiveTtl(hits != null ? hits : 0L);
-
-                // 2. Resolve cached redirect target
-                return redisTemplate.opsForValue().get(cacheKey)
-                    .flatMap(cachedUrl -> {
-                        // Cache hit: extend TTL reactively on rolling hits popularity
-                        return redisTemplate.expire(cacheKey, adaptiveTtl)
-                            .then(Mono.defer(() -> {
-                                publishClickEvent(shortCode, request);
-                                return Mono.just(createRedirectResponse(cachedUrl));
-                             }));
-                    })
-                    .switchIfEmpty(Mono.defer(() -> {
-                        // Cache miss: gRPC Call to Core Service
-                        GetUrlMappingRequest grpcRequest = GetUrlMappingRequest.newBuilder()
-                                .setShortCode(shortCode)
-                                .build();
-
-                        // Convert gRPC ListenableFuture to Spring Reactor Mono
-                        return Mono.fromFuture(JdkFutureAdapters.listenInPoolThread(
-                                coreServiceStub.getUrlMapping(grpcRequest)
-                        )).flatMap(grpcResponse -> {
-                            if (!grpcResponse.getFound() || !grpcResponse.getIsActive()) {
-                                return Mono.just(ResponseEntity.notFound().build());
-                            }
-
-                            String targetUrl = grpcResponse.getDestinationUrl();
-
-                            // Pre-warm Cache with Adaptive Popularity-based TTL
-                            return redisTemplate.opsForValue().set(cacheKey, targetUrl, adaptiveTtl)
-                                    .then(Mono.defer(() -> {
-                                        publishClickEvent(shortCode, request);
-                                        return Mono.just(createRedirectResponse(targetUrl));
-                                    }));
-                        });
-                    }));
-            });
-    }
-
-    private Duration calculateAdaptiveTtl(long hits) {
-        if (hits <= 10) {
-            return Duration.ofMinutes(2);      // Cold Key: Keep Redis footprint tiny
-        } else if (hits <= 100) {
-            return Duration.ofMinutes(30);     // Warm Key
-        } else if (hits <= 1000) {
-            return Duration.ofHours(2);        // Hot Key
-        } else {
-            return Duration.ofHours(6);        // Viral Key: Longest TTL
-        }
-    }
-
-    private void publishClickEvent(String shortCode, ServerHttpRequest request) {
-        ClickEventPayload payload = new ClickEventPayload(
-            shortCode,
-            request.getHeaders().getFirst("User-Agent"),
-            request.getRemoteAddress().getHostName(),
-            System.currentTimeMillis()
-        );
-        kafkaTemplate.send("analytics.click", shortCode, payload);
-    }
-
-    private ResponseEntity<Void> createRedirectResponse(String targetUrl) {
-        return ResponseEntity.status(HttpStatus.FOUND)
-                .location(URI.create(targetUrl))
-                .build();
+        return redirectService.resolveAndTrackUrl(shortCode, request, response)
+                .map(destinationUrl -> ResponseEntity.status(HttpStatus.FOUND)
+                        .location(URI.create(destinationUrl))
+                        .build())
+                .defaultIfEmpty(ResponseEntity.notFound().build());
     }
 }
 ```
@@ -953,6 +1096,8 @@ Consumes click events asynchronously from Kafka topic `url-clicks`, parses devic
 | **`GET`** | `/api/v1/analytics/{shortCode}/countries` | Top countries ranking for interactive world map. |
 | **`GET`** | `/api/v1/analytics/{shortCode}/browsers` | Top browsers (Chrome, Safari, Firefox, Edge, Opera). |
 | **`GET`** | `/api/v1/analytics/{shortCode}/referrers` | Traffic sources (Twitter, LinkedIn, Direct, etc.). |
+| **`GET`** | `/api/v1/analytics/{shortCode}/ab-test` | A/B test variant conversion & click performance breakdown. |
+| **`GET`** | `/api/v1/analytics/{shortCode}/utm-sources` | Breakdown of clicks grouped by UTM campaign, source, and medium. |
 
 #### 2. Kafka Event Consumer (`ClickEventConsumer.java`)
 
@@ -963,6 +1108,7 @@ Consumes click events asynchronously from Kafka topic `url-clicks`, parses devic
 public class ClickEventConsumer {
 
     private final ClickAnalyticsRepository repository;
+    private final GeoLocationService geoLocationService; // Lazy MaxMind GeoLite2 reader
 
     @KafkaListener(topics = "url-clicks", groupId = "analytics-group")
     public void consumeClickEvent(ClickEvent event) {
@@ -987,15 +1133,22 @@ public class ClickEventConsumer {
         // 4. Bot Detection
         boolean isBot = uaLower.contains("bot") || uaLower.contains("crawler") || uaLower.contains("spider");
 
+        // 5. Geo Location Resolution (Lazy GeoLite2-Country lookup by IP)
+        String country = geoLocationService.resolveCountry(event.ipAddress());
+
         ClickAnalytics analytics = ClickAnalytics.builder()
                 .shortCode(event.shortCode())
                 .timestamp(event.timestamp() != null ? event.timestamp() : Instant.now())
+                .variant(event.variant())
+                .utmSource(event.utmSource())
+                .utmMedium(event.utmMedium())
+                .utmCampaign(event.utmCampaign())
                 .userAgent(ua)
                 .deviceType(device)
                 .browser(browser)
                 .operatingSystem(os)
-                .geoCountry("United States")
-                .geoCity("San Francisco")
+                .geoCountry(country != null ? country : "Unknown")
+                .geoCity(event.geoCity())
                 .referrer(event.referrer() != null && !event.referrer().isBlank() ? event.referrer() : "Direct / None")
                 .isBot(isBot)
                 .build();
@@ -1065,7 +1218,7 @@ services:
 
   # 4. API Gateway Microservice
   url-gateway-service:
-    build: ./url-gateway-service
+    build: ./apigateway
     container_name: url-gateway
     ports:
       - "8080:8080"
@@ -1076,12 +1229,13 @@ services:
       - postgres
       - redis
 
-  # 5. Core Admin Microservice (Headless gRPC)
+  # 5. Core Admin Microservice
   url-core-service:
-    build: ./url-core-service
+    build: ./core
     container_name: url-core
-    expose:
-      - "9090"
+    ports:
+      - "8081:8081"
+      - "9090:9090"
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/url_shortener_core
       SPRING_REDIS_HOST: redis
@@ -1091,7 +1245,7 @@ services:
 
   # 6. Redirection Microservice
   url-redirect-service:
-    build: ./url-redirect-service
+    build: ./redirect
     container_name: url-redirect
     ports:
       - "8082:8082"
@@ -1102,18 +1256,28 @@ services:
       - redis
       - kafka
 
-  # 7. Analytics Ingestion Microservice
+  # 7. Analytics Ingestion & Reporting Microservice
   url-analytics-service:
-    build: ./url-analytics-service
+    build: ./analytics
     container_name: url-analytics
-    expose:
-      - "9091"
+    ports:
+      - "8083:8083"
+      - "9091:9091"
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/url_shortener_analytics
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
     depends_on:
       - postgres
       - kafka
+
+  # 8. Frontend Dashboard Client (Vite SPA)
+  url-client:
+    build: ./client
+    container_name: url-client
+    ports:
+      - "5173:5173"
+    depends_on:
+      - url-gateway-service
 
 volumes:
   pg_data:
@@ -1219,8 +1383,8 @@ sequenceDiagram
 
     Note over Redirect: Consumer Group: 'redirect-cache-eviction'
     Kafka->>Redirect: Pull 'UrlEvictionEvent' (['abc', 'xyz'])
-    Redirect->>Redis: redis.unlink("url:redirect:abc", "url:redirect:xyz")
-    Note over Redis: Cache is Purged (Consistent State reached)
+    Redirect->>Redis: redis.unlink("url:redirect:*", "url:ab:*", "url:rules:*", "url:hits:*")
+    Note over Redis: Strategy 1 Keys Purged (Consistent State reached)
 ```
 
 #### 3. Execution Phase Walkthrough
@@ -1249,11 +1413,16 @@ sequenceDiagram
     @KafkaListener(topics = "url.eviction", groupId = "redirect-cache-eviction")
     public Mono<Void> handleEvictionEvent(UrlEvictionEvent event) {
         List<String> cacheKeys = event.getShortCodes().stream()
-            .map(code -> "url:redirect:" + code)
+            .flatMap(code -> Stream.of(
+                "url:redirect:" + code,
+                "url:ab:" + code,
+                "url:rules:" + code,
+                "url:hits:" + code
+            ))
             .collect(Collectors.toList());
 
         return redisTemplate.opsForValue().delete(cacheKeys) // executes non-blocking pipeline
-            .doOnSuccess(count -> log.info("Successfully evicted {} keys from Redis.", count))
+            .doOnSuccess(count -> log.info("Successfully evicted {} Strategy 1 keys from Redis.", count))
             .then();
     }
     ```

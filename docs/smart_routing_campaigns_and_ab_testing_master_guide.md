@@ -83,8 +83,6 @@ erDiagram
         uuid user_id
         string name
         string description
-        string default_utm_source
-        string default_utm_medium
         timestamptz created_at
         timestamptz updated_at
     }
@@ -152,8 +150,6 @@ CREATE TABLE IF NOT EXISTS campaigns (
     user_id UUID NOT NULL,
     name VARCHAR(100) NOT NULL,
     description TEXT,
-    default_utm_source VARCHAR(100),
-    default_utm_medium VARCHAR(100),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
