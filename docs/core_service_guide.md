@@ -161,6 +161,8 @@ package com.urlshortener.core.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -195,8 +197,9 @@ public class UrlMapping {
     @Builder.Default
     private Boolean isAbTest = false;
 
-    @Column(name = "smart_rules", columnDefinition = "TEXT")
-    private String smartRules; // JSON string for Geo and Device deep-linking rules
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "smart_rules", columnDefinition = "jsonb")
+    private String smartRules; // Native PostgreSQL JSONB for Geo & Device deep-linking rules
 
     @Column(name = "tenant_id", nullable = false)
     @Builder.Default
