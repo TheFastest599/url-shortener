@@ -165,11 +165,9 @@ All `/api/v1/urls/**` requests are routed via Gateway with JWT verification and 
 - **Request Body:**
   ```json
   {
-    "destinationUrl": "https://spring.io/projects/spring-boot",
+    "destinationUrl": "https://spring.io/projects/spring-boot?utm_source=newsletter&utm_medium=email&utm_campaign=summer_promo",
     "customAlias": "spring-boot-docs",
-    "utmSource": "newsletter",
-    "utmMedium": "email",
-    "utmCampaign": "summer_promo"
+    "campaignId": "4f938fae-cf71-4a3d-82d3-132d733c70f8"
   }
   ```
 - **Response (`200 OK`):**

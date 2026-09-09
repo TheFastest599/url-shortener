@@ -5,14 +5,16 @@ Welcome! This is the definitive, step-by-step developer implementation guide for
 The Core service manages URL persistence, Base62 shortcode generation, marketing campaigns, multivariate A/B/n tests, device/geo smart routing rules, and runs a high-performance **gRPC Server** on port **9090** to serve sub-5ms fallback queries from the Redirect service.
 
 > [!IMPORTANT]
-> **Write Path & Cache Synchronization Authority**:
+> **Write Path & Cache Invalidation Authority**:
 > The Core service is the **authoritative Write Path** for the platform.
 > The Redirect service resolves incoming clicks strictly from **Redis L1 memory in < 2ms** using **Strategy 1: Dedicated Dual-Keys (`MGET`)**:
 > 1. `url:redirect:{shortCode}` $\rightarrow$ Base Fallback URL
 > 2. `url:ab:{shortCode}` $\rightarrow$ In-memory A/B test variants JSON
 > 3. `url:rules:{shortCode}` $\rightarrow$ Device / Geo targeting rules JSON
 >
-> On any link, campaign, or A/B test change, the Core service synchronizes PostgreSQL and immediately **warms or evicts** these Redis keys.
+> **Lazy Cache-Aside Pattern with Adaptive TTL**:
+> - **Population**: Handled lazily by the **Redirect Service** upon first click using dynamic `calculateAdaptiveTtl(hits)`. This ensures that cold links ($\le 10$ hits) only live in Redis for 2 minutes, preventing unclicked links from wasting Redis RAM.
+> - **Eviction**: Handled immediately by the **Core Service** (`evictRedirectCache`) on update, deactivation, pause, or deletion to guarantee zero stale redirects.
 
 ---
 
@@ -21,7 +23,7 @@ The Core service manages URL persistence, Base62 shortcode generation, marketing
 2. [Flyway Database Migrations (PostgreSQL)](#flyway-database-migrations-postgresql)
 3. [JPA Entities & Relationships](#jpa-entities--relationships)
 4. [Spring Data Repositories](#spring-data-repositories)
-5. [Strategy 1 Redis Cache Management (`warm` & `evict`)](#strategy-1-redis-cache-management)
+5. [Strategy 1 Redis Cache Eviction & Synchronization](#strategy-1-redis-cache-eviction--synchronization)
 6. [gRPC Server Implementation (`:9090`) & Protobuf](#grpc-server-implementation-9090--protobuf)
 7. [DTO Records](#dto-records)
 8. [Service Layer Implementations](#service-layer-implementations)
@@ -43,7 +45,7 @@ graph TD
     Client([React Frontend / Admin Client]) -->|"REST API :8080"| Gateway[API Gateway :8080]
     Gateway -->|"Proxy: /api/v1/urls, /campaigns"| CoreHTTP[Core Service HTTP :8081]
     
-    subgraph Core Service Internal Architecture
+    subgraph CoreInternal ["Core Service Internal Architecture"]
         CoreHTTP --> ServiceLayer[Service Layer: Url / Campaign / AbTest]
         ServiceLayer --> JPA[Spring Data JPA Repositories]
         ServiceLayer --> RedisCache[Redis StringRedisTemplate]
@@ -52,7 +54,7 @@ graph TD
     end
 
     JPA --> PostgresDB[(PostgreSQL :5432 / url_shortener_core)]
-    RedisCache -->|"Warm / Evict Keys"| SharedRedis[(Redis :6379)]
+    RedisCache -->|"Evicts Strategy 1 Keys"| SharedRedis[(Redis :6379)]
     RedirectService[Redirect Service :8082] -.->|"gRPC Fallback on Cache Miss"| GrpcServer
 ```
 
@@ -61,7 +63,7 @@ graph TD
 | **REST API** | Spring Boot Web / Jackson | `:8081` | URL CRUD, Campaigns, A/B/n test configuration. |
 | **gRPC Server** | gRPC / Protobuf 3 | `:9090` | Sub-5ms binary link resolution for Redirect service. |
 | **Database** | PostgreSQL 16 + Flyway | `:5432` | DB: `url_shortener_core` (ACID persistence). |
-| **Cache** | Redis 7.2 | `:6379` | Writes Strategy 1 keys (`url:redirect`, `url:ab`, `url:rules`). |
+| **Cache** | Redis 7.2 | `:6379` | Evicts Strategy 1 keys on update/delete/pause (population is lazy via Redirect). |
 
 ---
 
@@ -527,84 +529,74 @@ public interface AbVariantRepository extends JpaRepository<AbVariant, UUID> {
 
 ---
 
-## Strategy 1 Redis Cache Management
+## Strategy 1 Redis Cache Eviction & Synchronization
 
-The Core Service is responsible for maintaining cache consistency across Redis.
+In our architecture, **Redis Population is Lazy**, while **Redis Eviction is Immediate**:
 
 ```mermaid
-graph LR
-    Core[Core Service] -->|"warmRedirectCache()"| R1[url:redirect:shortCode]
-    Core -->|"warmRedirectCache()"| R2[url:ab:shortCode]
-    Core -->|"warmRedirectCache()"| R3[url:rules:shortCode]
-    Core -->|"evictRedirectCache()"| Flush[Atomic Key Invalidation]
+graph TB
+    subgraph RedirectFlow ["1. Visitor Redirection & Lazy Cache Population (Redirect Service :8082)"]
+        direction TB
+        Visitor(["Visitor HTTP GET /r/{code}"])
+        CheckCache{"Redis Cache Hit?<br/>(multiGet)"}
+        ComputeTTL["Calculate Adaptive TTL<br/>(2m, 15m, 1h, or 6h based on hits)"]
+        WriteKeys["Lazy Redis Population<br/>SETEX url:redirect:{code}<br/>SETEX url:ab:{code}<br/>SETEX url:rules:{code}"]
+        Serve302(["HTTP 302 Redirect Found"])
+    end
+
+    subgraph CoreServiceArch ["2. Core Service (:8081 REST & :9090 gRPC)"]
+        direction TB
+        AdminClient(["Admin / Dashboard Client"])
+        CoreRest["REST API (:8081)<br/>Update / Deactivate / Delete / Pause A/B"]
+        CoreGrpc["gRPC Server (:9090)<br/>UrlInternalServiceGrpc.ResolveShortUrl()"]
+        PostgresDB[("PostgreSQL 16 DB<br/>url_shortener_core")]
+        EvictLogic["Immediate Eviction Authority<br/>evictRedirectCache(code)<br/>evictAbCache(code)"]
+    end
+
+    subgraph RedisCluster ["3. Shared Redis 7.2 Key Store (:6379)"]
+        direction TB
+        K_Base["url:redirect:{shortCode}"]
+        K_Ab["url:ab:{shortCode}"]
+        K_Rules["url:rules:{shortCode}"]
+        K_Hits["url:hits:{shortCode}"]
+    end
+
+    %% Visitor Path
+    Visitor --> CheckCache
+    CheckCache -->|"Cache Hit (Sub-2ms)"| Serve302
+    CheckCache -->|"Cache Miss"| CoreGrpc
+    CoreGrpc -->|"SELECT via JPA"| PostgresDB
+    CoreGrpc -.->|"Protobuf UrlDetailsResponse"| ComputeTTL
+    ComputeTTL --> WriteKeys
+    WriteKeys -->|"SETEX (Lazy Population)"| K_Base
+    WriteKeys -->|"SETEX (Lazy Population)"| K_Ab
+    WriteKeys -->|"SETEX (Lazy Population)"| K_Rules
+    WriteKeys --> Serve302
+
+    %% Admin Path
+    AdminClient -->|"PUT / DELETE / PATCH"| CoreRest
+    CoreRest -->|"ACID Update"| PostgresDB
+    CoreRest -->|"Trigger Immediate Invalidation"| EvictLogic
+    EvictLogic ==>|"DEL url:redirect"| K_Base
+    EvictLogic ==>|"DEL url:ab"| K_Ab
+    EvictLogic ==>|"DEL url:rules"| K_Rules
+    EvictLogic ==>|"DEL url:hits"| K_Hits
 ```
 
-### The Strategy 1 Keys
-1. **Base Fallback**: `url:redirect:{shortCode}` $\rightarrow$ Plain string destination URL (`https://example.com/base`).
-2. **A/B Testing Rules**: `url:ab:{shortCode}` $\rightarrow$ JSON payload:
-   ```json
-   {
-     "testId": "a1b2c3d4-...",
-     "status": "ACTIVE",
-     "cookieTtlSeconds": 2592000,
-     "variants": [
-       { "key": "A", "url": "https://example.com/v1", "weight": 50, "isControl": true },
-       { "key": "B", "url": "https://example.com/v2", "weight": 50, "isControl": false }
-     ]
-   }
-   ```
-3. **Smart Routing Rules**: `url:rules:{shortCode}` $\rightarrow$ JSON payload:
-   ```json
-   {
-     "countries": { "US": "https://example.com/us", "IN": "https://example.com/in" },
-     "devices": { "IOS": "https://apps.apple.com/...", "ANDROID": "https://play.google.com/..." }
-   }
-   ```
+### Why Core Does Not Pre-Warm on Creation
+1. **Memory Efficiency**: If `Core` pre-warmed every newly created link, links that are never clicked would consume Redis memory unnecessarily.
+2. **Adaptive TTL Harmony**: Cold links ($\le 10$ hits) belong in Redis for only **2 minutes**, while viral links stay for **up to 6 hours**. Since `RedirectService` tracks click popularity dynamically via `calculateAdaptiveTtl(hits)`, it is the sole authority on cache population.
+3. **Core's Responsibility is Eviction**: Core guarantees data consistency by immediately invalidating Redis keys whenever an admin changes destinations, pauses an A/B test, or deletes a URL.
 
-### Implementation Helpers in Core
-Add these methods to your service layer:
+### Strategy 1 Cache Eviction Helper Methods in Core
+Add these methods to `UrlCoreService.java`:
 
 ```java
-private void warmRedirectCache(UrlMapping mapping) {
-    try {
-        String shortCode = mapping.getShortCode();
-        if (Boolean.FALSE.equals(mapping.getIsActive())) {
-            evictRedirectCache(shortCode);
-            return;
-        }
-
-        // 1. Warm Base Redirect URL (24 hours TTL)
-        redisTemplate.opsForValue().set("url:redirect:" + shortCode, mapping.getDestinationUrl(), Duration.ofHours(24));
-
-        // 2. Warm A/B Test Variants if active
-        if (Boolean.TRUE.equals(mapping.getIsAbTest())) {
-            abTestRepository.findByUrlMappingId(mapping.getId()).ifPresent(test -> {
-                if ("ACTIVE".equalsIgnoreCase(test.getStatus())) {
-                    List<AbVariant> variants = abVariantRepository.findByAbTestId(test.getId());
-                    String abJson = serializeAbTestRules(test, variants);
-                    redisTemplate.opsForValue().set("url:ab:" + shortCode, abJson, Duration.ofHours(24));
-                } else {
-                    redisTemplate.delete("url:ab:" + shortCode);
-                }
-            });
-        } else {
-            redisTemplate.delete("url:ab:" + shortCode);
-        }
-
-        // 3. Warm Smart Rules (Device/Geo) if present
-        if (mapping.getSmartRules() != null && !mapping.getSmartRules().isBlank()) {
-            redisTemplate.opsForValue().set("url:rules:" + shortCode, mapping.getSmartRules(), Duration.ofHours(24));
-        } else {
-            redisTemplate.delete("url:rules:" + shortCode);
-        }
-
-        log.info("Successfully warmed Redis Strategy 1 caches for shortCode: {}", shortCode);
-    } catch (Exception e) {
-        log.warn("Failed to warm Redis cache for {}: {}", mapping.getShortCode(), e.getMessage());
-    }
-}
-
-private void evictRedirectCache(String shortCode) {
+/**
+ * Evicts all Strategy 1 keys for a short code across Redis.
+ * Called whenever a link is updated, deactivated, or deleted.
+ */
+public void evictRedirectCache(String shortCode) {
     try {
         redisTemplate.delete(List.of(
             "url:redirect:" + shortCode,
@@ -612,9 +604,22 @@ private void evictRedirectCache(String shortCode) {
             "url:rules:" + shortCode,
             "url:hits:" + shortCode
         ));
-        log.info("Evicted Redis redirect and rule caches for shortCode: {}", shortCode);
+        log.info("Evicted all Redis Strategy 1 keys for shortCode: {}", shortCode);
     } catch (Exception e) {
         log.warn("Failed to evict Redis cache for {}: {}", shortCode, e.getMessage());
+    }
+}
+
+/**
+ * Specifically evicts only the A/B test configuration key.
+ * Called when an A/B test is paused or concluded without modifying the base URL.
+ */
+public void evictAbCache(String shortCode) {
+    try {
+        redisTemplate.delete("url:ab:" + shortCode);
+        log.info("Evicted Redis A/B test key for shortCode: {}", shortCode);
+    } catch (Exception e) {
+        log.warn("Failed to evict Redis A/B cache for {}: {}", shortCode, e.getMessage());
     }
 }
 ```
@@ -680,7 +685,9 @@ import com.urlshortener.core.entity.UrlMapping;
 import com.urlshortener.core.repository.AbTestRepository;
 import com.urlshortener.core.repository.AbVariantRepository;
 import com.urlshortener.core.repository.UrlMappingRepository;
-import com.urlshortener.grpc.*;
+import com.urlshortener.grpc.UrlRequest;
+import com.urlshortener.grpc.UrlResponse;
+import com.urlshortener.grpc.UrlServiceGrpc;
 import io.grpc.stub.StreamObserver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -696,7 +703,7 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class UrlGrpcService extends UrlServiceGrpc.UrlServiceImplBase {
 
-    private final UrlMappingRepository urlRepository;
+    private final UrlMappingRepository urlMappingRepository;
     private final AbTestRepository abTestRepository;
     private final AbVariantRepository abVariantRepository;
     private final ObjectMapper objectMapper;
@@ -704,55 +711,120 @@ public class UrlGrpcService extends UrlServiceGrpc.UrlServiceImplBase {
     @Override
     public void getDestinationUrl(UrlRequest request, StreamObserver<UrlResponse> responseObserver) {
         String shortCode = request.getShortCode();
-        Optional<UrlMapping> mappingOpt = urlRepository.findByShortCode(shortCode);
 
-        if (mappingOpt.isPresent()) {
-            UrlMapping mapping = mappingOpt.get();
-            UrlResponse.Builder builder = UrlResponse.newBuilder()
+        // Guard Clause 1: Invalid or blank short code input
+        if (shortCode == null || shortCode.isBlank()) {
+            sendNotFound("", responseObserver);
+            return;
+        }
+
+        Optional<UrlMapping> mappingOpt = urlMappingRepository.findByShortCode(shortCode);
+
+        // Guard Clause 2: URL not found in database
+        if (mappingOpt.isEmpty()) {
+            sendNotFound(shortCode, responseObserver);
+            return;
+        }
+
+        UrlMapping mapping = mappingOpt.get();
+
+        // Guard Clause 3: Link is deactivated/disabled (short-circuit without loading variants)
+        if (!Boolean.TRUE.equals(mapping.getIsActive())) {
+            UrlResponse inactiveResponse = UrlResponse.newBuilder()
                     .setShortCode(mapping.getShortCode())
                     .setDestinationUrl(mapping.getDestinationUrl())
-                    .setIsActive(Boolean.TRUE.equals(mapping.getIsActive()))
-                    .setIsFound(true);
-
-            // 1. Check & Forward A/B Testing Rules
-            if (Boolean.TRUE.equals(mapping.getIsAbTest())) {
-                Optional<AbTest> abTestOpt = abTestRepository.findByUrlMappingId(mapping.getId());
-                if (abTestOpt.isPresent() && "ACTIVE".equalsIgnoreCase(abTestOpt.get().getStatus())) {
-                    AbTest test = abTestOpt.get();
-                    List<AbVariant> variants = abVariantRepository.findByAbTestId(test.getId());
-                    try {
-                        Map<String, Object> abPayload = new HashMap<>();
-                        abPayload.put("testId", test.getId().toString());
-                        abPayload.put("status", test.getStatus());
-                        abPayload.put("cookieTtlSeconds", test.getCookieTtlSeconds());
-                        abPayload.put("variants", variants.stream().map(v -> Map.of(
-                                "key", v.getVariantKey(),
-                                "url", v.getDestinationUrl(),
-                                "weight", v.getWeight(),
-                                "isControl", v.getIsControl()
-                        )).toList());
-                        builder.setAbRulesJson(objectMapper.writeValueAsString(abPayload));
-                    } catch (Exception e) {
-                        log.error("Failed to serialize A/B rules for {}: {}", shortCode, e.getMessage());
-                    }
-                }
-            }
-
-            // 2. Check & Forward Smart Rules (Geo/Device)
-            if (mapping.getSmartRules() != null && !mapping.getSmartRules().isBlank()) {
-                builder.setSmartRulesJson(mapping.getSmartRules());
-            }
-
-            responseObserver.onNext(builder.build());
-        } else {
-            UrlResponse response = UrlResponse.newBuilder()
-                    .setShortCode(shortCode)
-                    .setDestinationUrl("")
                     .setIsActive(false)
-                    .setIsFound(false)
+                    .setIsFound(true)
                     .build();
-            responseObserver.onNext(response);
+            responseObserver.onNext(inactiveResponse);
+            responseObserver.onCompleted();
+            return;
         }
+
+        // Happy Path: URL is active and found (unindented, linear flow)
+        UrlResponse.Builder builder = UrlResponse.newBuilder()
+                .setShortCode(mapping.getShortCode())
+                .setDestinationUrl(mapping.getDestinationUrl())
+                .setIsActive(true)
+                .setIsFound(true);
+
+        resolveAbRulesJson(mapping).ifPresent(builder::setAbRulesJson);
+        resolveSmartRulesJson(mapping).ifPresent(builder::setSmartRulesJson);
+
+        responseObserver.onNext(builder.build());
+        responseObserver.onCompleted();
+    }
+
+    /**
+     * Resolves active A/B test variant rules using guard clauses.
+     */
+    private Optional<String> resolveAbRulesJson(UrlMapping mapping) {
+        // Guard Clause: URL mapping is not configured for A/B testing
+        if (!Boolean.TRUE.equals(mapping.getIsAbTest())) {
+            return Optional.empty();
+        }
+
+        Optional<AbTest> abTestOpt = abTestRepository.findByUrlMappingId(mapping.getId());
+
+        // Guard Clause: No A/B test record associated with this mapping
+        if (abTestOpt.isEmpty()) {
+            return Optional.empty();
+        }
+
+        AbTest test = abTestOpt.get();
+
+        // Guard Clause: Test is paused, draft, or completed
+        if (!"ACTIVE".equalsIgnoreCase(test.getStatus())) {
+            return Optional.empty();
+        }
+
+        List<AbVariant> variants = abVariantRepository.findByAbTestId(test.getId());
+
+        // Guard Clause: No variants exist for this test
+        if (variants == null || variants.isEmpty()) {
+            return Optional.empty();
+        }
+
+        // Happy Path: Construct JSON configuration payload
+        try {
+            Map<String, Object> abPayload = new HashMap<>();
+            abPayload.put("testId", test.getId().toString());
+            abPayload.put("status", test.getStatus());
+            abPayload.put("cookieTtlSeconds", test.getCookieTtlSeconds());
+            abPayload.put("variants", variants.stream().map(v -> Map.of(
+                    "key", v.getVariantKey(),
+                    "url", v.getDestinationUrl(),
+                    "weight", v.getWeight(),
+                    "isControl", v.getIsControl()
+            )).toList());
+            return Optional.of(objectMapper.writeValueAsString(abPayload));
+        } catch (Exception e) {
+            log.error("Failed to serialize A/B rules for shortCode {}: {}", mapping.getShortCode(), e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Extracts smart routing rules using guard clauses.
+     */
+    private Optional<String> resolveSmartRulesJson(UrlMapping mapping) {
+        if (mapping.getSmartRules() == null || mapping.getSmartRules().isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(mapping.getSmartRules());
+    }
+
+    /**
+     * Standardized negative-space response when a URL mapping is missing or invalid.
+     */
+    private void sendNotFound(String shortCode, StreamObserver<UrlResponse> responseObserver) {
+        UrlResponse notFoundResponse = UrlResponse.newBuilder()
+                .setShortCode(shortCode != null ? shortCode : "")
+                .setDestinationUrl("")
+                .setIsActive(false)
+                .setIsFound(false)
+                .build();
+        responseObserver.onNext(notFoundResponse);
         responseObserver.onCompleted();
     }
 }
@@ -779,12 +851,7 @@ public record CreateUrlRequest(
         String destinationUrl,
         String customAlias,
         UUID campaignId,
-        String smartRules,
-        String utmSource,
-        String utmMedium,
-        String utmCampaign,
-        String utmTerm,
-        String utmContent
+        String smartRules
 ) {}
 ```
 
@@ -989,7 +1056,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.util.UriComponentsBuilder;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -1009,22 +1075,20 @@ public class UrlCoreService {
 
     @Transactional
     public UrlMapping createShortUrl(CreateUrlRequest request, UUID userId) {
-        if (request.customAlias() != null && !request.customAlias().isBlank()) {
-            if (urlRepository.existsByShortCode(request.customAlias().trim())) {
-                throw new IllegalArgumentException("Custom alias already in use: " + request.customAlias());
-            }
+        String customAlias = request.customAlias() != null ? request.customAlias().trim() : null;
+
+        // Guard Clause: Duplicate custom alias
+        if (customAlias != null && !customAlias.isBlank() && urlRepository.existsByShortCode(customAlias)) {
+            throw new IllegalArgumentException("Custom alias already in use: " + customAlias);
         }
 
-        String shortCode = (request.customAlias() != null && !request.customAlias().isBlank())
-                ? request.customAlias().trim()
+        String shortCode = (customAlias != null && !customAlias.isBlank())
+                ? customAlias
                 : generateUniqueShortCode();
-
-        // Compose final URL with UTM parameters baked directly into query string
-        String finalDestinationUrl = appendUtmParams(request);
 
         UrlMapping mapping = UrlMapping.builder()
                 .shortCode(shortCode)
-                .destinationUrl(finalDestinationUrl)
+                .destinationUrl(request.destinationUrl().trim())
                 .campaignId(request.campaignId())
                 .smartRules(request.smartRules())
                 .userId(userId)
@@ -1034,9 +1098,8 @@ public class UrlCoreService {
                 .updatedAt(Instant.now())
                 .build();
 
-        UrlMapping saved = urlRepository.save(mapping);
-        warmRedirectCache(saved);
-        return saved;
+        // Note: Redis population is handled lazily by Redirect Service on first click (Cache-Aside with Adaptive TTL)
+        return urlRepository.save(mapping);
     }
 
     @Transactional
@@ -1066,7 +1129,8 @@ public class UrlCoreService {
         mapping.setUpdatedAt(Instant.now());
 
         UrlMapping updated = urlRepository.save(mapping);
-        warmRedirectCache(updated);
+        // Evict all Strategy 1 keys so subsequent clicks immediately re-fetch updated mapping
+        evictRedirectCache(updated.getShortCode());
         return updated;
     }
 
@@ -1105,47 +1169,10 @@ public class UrlCoreService {
         return urlRepository.findByShortCode(shortCode);
     }
 
-    // Cache Warming: Synchronizes Strategy 1 Redis keys (Base, A/B, Rules)
-    public void warmRedirectCache(UrlMapping mapping) {
-        try {
-            String shortCode = mapping.getShortCode();
-            if (Boolean.FALSE.equals(mapping.getIsActive())) {
-                evictRedirectCache(shortCode);
-                return;
-            }
-
-            // 1. Warm Base URL (24 hours)
-            redisTemplate.opsForValue().set("url:redirect:" + shortCode, mapping.getDestinationUrl(), Duration.ofHours(24));
-
-            // 2. Warm A/B Test Variants if active
-            if (Boolean.TRUE.equals(mapping.getIsAbTest())) {
-                abTestRepository.findByUrlMappingId(mapping.getId()).ifPresent(test -> {
-                    if ("ACTIVE".equalsIgnoreCase(test.getStatus())) {
-                        List<AbVariant> variants = abVariantRepository.findByAbTestId(test.getId());
-                        String abJson = serializeAbRules(test, variants);
-                        redisTemplate.opsForValue().set("url:ab:" + shortCode, abJson, Duration.ofHours(24));
-                    } else {
-                        redisTemplate.delete("url:ab:" + shortCode);
-                    }
-                });
-            } else {
-                redisTemplate.delete("url:ab:" + shortCode);
-            }
-
-            // 3. Warm Smart Rules (Device/Geo) if present
-            if (mapping.getSmartRules() != null && !mapping.getSmartRules().isBlank()) {
-                redisTemplate.opsForValue().set("url:rules:" + shortCode, mapping.getSmartRules(), Duration.ofHours(24));
-            } else {
-                redisTemplate.delete("url:rules:" + shortCode);
-            }
-
-            log.info("Successfully warmed Redis Strategy 1 caches for shortCode: {}", shortCode);
-        } catch (Exception e) {
-            log.warn("Failed to warm Redis cache for {}: {}", mapping.getShortCode(), e.getMessage());
-        }
-    }
-
-    // Cache Eviction: Atomically purges all keys for this shortCode
+    /**
+     * Evicts all Strategy 1 keys for a short code across Redis.
+     * Called whenever a link is updated, deactivated, or deleted.
+     */
     public void evictRedirectCache(String shortCode) {
         try {
             redisTemplate.delete(List.of(
@@ -1154,9 +1181,22 @@ public class UrlCoreService {
                 "url:rules:" + shortCode,
                 "url:hits:" + shortCode
             ));
-            log.info("Evicted Redis redirect and rule caches for shortCode: {}", shortCode);
+            log.info("Evicted all Redis Strategy 1 keys for shortCode: {}", shortCode);
         } catch (Exception e) {
             log.warn("Failed to evict Redis cache for {}: {}", shortCode, e.getMessage());
+        }
+    }
+
+    /**
+     * Specifically evicts the A/B test configuration key.
+     * Called when an A/B test is paused, concluded, or deleted.
+     */
+    public void evictAbCache(String shortCode) {
+        try {
+            redisTemplate.delete("url:ab:" + shortCode);
+            log.info("Evicted Redis A/B test key for shortCode: {}", shortCode);
+        } catch (Exception e) {
+            log.warn("Failed to evict Redis A/B cache for {}: {}", shortCode, e.getMessage());
         }
     }
 
@@ -1185,26 +1225,6 @@ public class UrlCoreService {
             shortCode = base62.generateRandomShortCode(7);
         } while (urlRepository.existsByShortCode(shortCode));
         return shortCode;
-    }
-
-    private String appendUtmParams(CreateUrlRequest request) {
-        UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(request.destinationUrl().trim());
-        if (request.utmSource() != null && !request.utmSource().isBlank()) {
-            builder.replaceQueryParam("utm_source", request.utmSource().trim());
-        }
-        if (request.utmMedium() != null && !request.utmMedium().isBlank()) {
-            builder.replaceQueryParam("utm_medium", request.utmMedium().trim());
-        }
-        if (request.utmCampaign() != null && !request.utmCampaign().isBlank()) {
-            builder.replaceQueryParam("utm_campaign", request.utmCampaign().trim());
-        }
-        if (request.utmTerm() != null && !request.utmTerm().isBlank()) {
-            builder.replaceQueryParam("utm_term", request.utmTerm().trim());
-        }
-        if (request.utmContent() != null && !request.utmContent().isBlank()) {
-            builder.replaceQueryParam("utm_content", request.utmContent().trim());
-        }
-        return builder.build().toUriString();
     }
 }
 ```
@@ -1372,8 +1392,8 @@ public class AbTestService {
         mapping.setUpdatedAt(Instant.now());
         urlRepository.save(mapping);
 
-        // 4. Warm Redis Strategy 1 dual-key
-        urlCoreService.warmRedirectCache(mapping);
+        // 4. Invalidate Redis cache so next click pulls new A/B configuration
+        urlCoreService.evictRedirectCache(shortCode);
 
         return AbTestResponse.from(savedTest, savedVariants);
     }
@@ -1425,13 +1445,15 @@ public class AbTestService {
             // Disable A/B testing flag
             mapping.setIsAbTest(false);
             urlRepository.save(mapping);
+            // Evict all Strategy 1 keys since base destination URL changed
+            urlCoreService.evictRedirectCache(shortCode);
+        } else {
+            // Evict A/B test key (e.g. paused)
+            urlCoreService.evictAbCache(shortCode);
         }
 
         AbTest savedTest = abTestRepository.save(test);
         List<AbVariant> variants = abVariantRepository.findByAbTestId(savedTest.getId());
-
-        // Refresh Redis cache
-        urlCoreService.warmRedirectCache(mapping);
 
         return AbTestResponse.from(savedTest, variants);
     }
@@ -1453,8 +1475,8 @@ public class AbTestService {
         mapping.setIsAbTest(false);
         urlRepository.save(mapping);
 
-        // Evict A/B cache key
-        urlCoreService.warmRedirectCache(mapping);
+        // Evict A/B cache key so visitors fall back cleanly to the base URL
+        urlCoreService.evictAbCache(shortCode);
     }
 }
 ```
@@ -1718,25 +1740,21 @@ curl -X POST http://localhost:8080/api/v1/campaigns \
   }'
 ```
 
-### 4. Test URL Creation with Campaign & UTMs
+### 4. Test URL Creation with Campaign
 ```bash
 curl -X POST http://localhost:8080/api/v1/urls \
   -H "Content-Type: application/json" \
   -H "X-User-Id: 00000000-0000-0000-0000-000000000001" \
   -d '{
-    "destinationUrl": "https://mysite.com/launch",
-    "customAlias": "launch-tw",
-    "utmSource": "twitter",
-    "utmMedium": "social",
-    "utmCampaign": "summer_launch_2026"
+    "destinationUrl": "https://mysite.com/launch?utm_source=twitter&utm_medium=social&utm_campaign=summer_launch_2026",
+    "customAlias": "launch-tw"
   }'
 ```
-Inspect Redis to confirm base key was warmed:
+Inspect Redis to verify lazy caching (should return nil on creation):
 ```bash
 docker exec -it url-shortener-redis redis-cli GET url:redirect:launch-tw
+# (nil) -> Redis is populated lazily on first visitor click via Redirect Service
 ```
-Output should be:
-`https://mysite.com/launch?utm_source=twitter&utm_medium=social&utm_campaign=summer_launch_2026`
 
 ### 5. Test A/B Test Configuration & Redis Warming
 ```bash

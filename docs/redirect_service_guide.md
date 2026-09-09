@@ -211,11 +211,14 @@ import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.util.UriComponentsBuilder;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 
 @Slf4j
@@ -232,10 +235,18 @@ public class RedirectService {
         String abKey = "url:ab:" + shortCode;
         String redirectKey = "url:redirect:" + shortCode;
         String rulesKey = "url:rules:" + shortCode;
+        String hitsKey = "url:hits:" + shortCode;
 
-        // 1. Single round-trip MGET (< 0.5ms)
-        return redisTemplate.opsForValue().multiGet(List.of(abKey, redirectKey, rulesKey))
-            .flatMap(results -> {
+        // 1. Concurrently INCR popularity counter and MGET Strategy 1 keys in parallel
+        Mono<Long> hitCountMono = redisTemplate.opsForValue().increment(hitsKey);
+        Mono<List<String>> cacheLookupMono = redisTemplate.opsForValue().multiGet(List.of(abKey, redirectKey, rulesKey));
+
+        return Mono.zip(hitCountMono, cacheLookupMono)
+            .flatMap(tuple -> {
+                Long hits = tuple.getT1();
+                Duration adaptiveTtl = calculateAdaptiveTtl(hits != null ? hits : 1L);
+
+                List<String> results = tuple.getT2();
                 String abJson = results.size() > 0 ? results.get(0) : null;
                 String fallbackUrl = results.size() > 1 ? results.get(1) : null;
                 String rulesJson = results.size() > 2 ? results.get(2) : null;
@@ -264,8 +275,11 @@ public class RedirectService {
 
                 // Step D: Cache Miss -> Fallback to Core Service over gRPC
                 if (destinationUrl == null) {
-                    return resolveFromGrpc(shortCode, request, response);
+                    return resolveFromGrpc(shortCode, adaptiveTtl, hitsKey, request, response);
                 }
+
+                // Cache Hit: Non-blocking background TTL refresh across all active Strategy 1 keys
+                extendAdaptiveTtl(shortCode, abJson != null, rulesJson != null, adaptiveTtl);
 
                 // Merge visitor's inbound query parameters
                 String finalUrl = mergeQueryParams(destinationUrl, request.getQueryParams());
@@ -275,6 +289,39 @@ public class RedirectService {
 
                 return Mono.just(finalUrl);
             });
+    }
+
+    /**
+     * Dynamically scales cache retention based on rolling link popularity:
+     * - Cold (<= 10 hits): 2 mins (minimizes Redis memory footprint)
+     * - Warm (<= 100 hits): 30 mins
+     * - Hot (<= 1000 hits): 2 hours
+     * - Viral (> 1000 hits): 6 hours
+     */
+    private Duration calculateAdaptiveTtl(long hits) {
+        if (hits <= 10) {
+            return Duration.ofMinutes(2);
+        } else if (hits <= 100) {
+            return Duration.ofMinutes(30);
+        } else if (hits <= 1000) {
+            return Duration.ofHours(2);
+        } else {
+            return Duration.ofHours(6);
+        }
+    }
+
+    /**
+     * Non-blocking background TTL refresh. Keeps all Strategy 1 keys synchronized.
+     */
+    private void extendAdaptiveTtl(String shortCode, boolean hasAb, boolean hasRules, Duration adaptiveTtl) {
+        List<String> keys = new ArrayList<>();
+        keys.add("url:redirect:" + shortCode);
+        if (hasAb) keys.add("url:ab:" + shortCode);
+        if (hasRules) keys.add("url:rules:" + shortCode);
+
+        Flux.fromIterable(keys)
+            .flatMap(key -> redisTemplate.expire(key, adaptiveTtl))
+            .subscribe(); // Executes asynchronously without delaying HTTP redirect response
     }
 
     private VariantResolution resolveAbVariant(String shortCode, String abJson, ServerHttpRequest request, ServerHttpResponse response) {
@@ -339,18 +386,24 @@ public class RedirectService {
         return null;
     }
 
-    private Mono<String> resolveFromGrpc(String shortCode, ServerHttpRequest request, ServerHttpResponse response) {
+    private Mono<String> resolveFromGrpc(String shortCode, Duration adaptiveTtl, String hitsKey,
+                                         ServerHttpRequest request, ServerHttpResponse response) {
         return coreGrpcClient.getDestinationUrl(shortCode)
             .flatMap(grpcResponse -> {
                 if (!grpcResponse.getIsFound() || !grpcResponse.getIsActive()) {
                     return Mono.empty();
                 }
                 String dest = grpcResponse.getDestinationUrl();
-                // Warm Redis
-                redisTemplate.opsForValue().set("url:redirect:" + shortCode, dest, Duration.ofHours(2)).subscribe();
+                // Pre-warm Redis with Adaptive TTL
+                redisTemplate.opsForValue().set("url:redirect:" + shortCode, dest, adaptiveTtl).subscribe();
                 if (!grpcResponse.getAbRulesJson().isEmpty()) {
-                    redisTemplate.opsForValue().set("url:ab:" + shortCode, grpcResponse.getAbRulesJson(), Duration.ofHours(2)).subscribe();
+                    redisTemplate.opsForValue().set("url:ab:" + shortCode, grpcResponse.getAbRulesJson(), adaptiveTtl).subscribe();
                 }
+                if (!grpcResponse.getSmartRulesJson().isEmpty()) {
+                    redisTemplate.opsForValue().set("url:rules:" + shortCode, grpcResponse.getSmartRulesJson(), adaptiveTtl).subscribe();
+                }
+                // Keep hits counter alive for 24h
+                redisTemplate.expire(hitsKey, Duration.ofDays(1)).subscribe();
 
                 emitTelemetry(shortCode, null, request);
                 return Mono.just(mergeQueryParams(dest, request.getQueryParams()));
@@ -392,7 +445,7 @@ public class RedirectService {
     // Helper records for JSON parsing
     record AbConfig(String status, String winningVariant, List<Variant> variants) {}
     record Variant(String key, String url, int weight) {}
-    record SmartRules(java.util.Map<String, String> devices, java.util.Map<String, String> countries) {}
+    record SmartRules(Map<String, String> devices, Map<String, String> countries) {}
     record VariantResolution(String url, String variantKey) {}
 }
 ```

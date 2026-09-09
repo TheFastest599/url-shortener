@@ -15,9 +15,16 @@ import java.util.UUID;
 
 @Repository
 public interface UrlMappingRepository extends JpaRepository<UrlMapping, UUID> {
+
     Optional<UrlMapping> findByShortCode(String shortCode);
+
     boolean existsByShortCode(String shortCode);
+
     List<UrlMapping> findByUserId(UUID userId);
+
+    List<UrlMapping> findByCampaignId(UUID campaignId);
+
+    long countByCampaignId(UUID campaignId);
 
     @Query("SELECT u FROM UrlMapping u WHERE u.userId = :userId " +
            "AND (:search IS NULL OR :search = '' OR LOWER(u.shortCode) LIKE LOWER(CONCAT('%', :search, '%')) OR LOWER(u.destinationUrl) LIKE LOWER(CONCAT('%', :search, '%'))) " +
@@ -27,4 +34,18 @@ public interface UrlMappingRepository extends JpaRepository<UrlMapping, UUID> {
             @Param("search") String search,
             @Param("isActive") Boolean isActive,
             Pageable pageable);
+
+
+    @Query("SELECT u FROM UrlMapping u WHERE u.userId = :userId " +
+            "AND (:search IS NULL OR LOWER(u.shortCode) LIKE LOWER(CONCAT('%', :search, '%')) " +
+            "OR LOWER(u.destinationUrl) LIKE LOWER(CONCAT('%', :search, '%'))) " +
+            "AND (:isActive IS NULL OR u.isActive = :isActive) " +
+            "AND (:campaignId IS NULL OR u.campaignId = :campaignId)")
+    Page<UrlMapping> searchUserUrls(
+            @Param("userId") UUID userId,
+            @Param("search") String search,
+            @Param("isActive") Boolean isActive,
+            @Param("campaignId") UUID campaignId,
+            Pageable pageable
+    );
 }

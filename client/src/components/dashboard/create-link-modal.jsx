@@ -87,14 +87,22 @@ export function CreateLinkModal({
 			formattedUrl = "https://" + formattedUrl;
 		}
 
+		// Bake UTM parameters directly into the destination URL query string
+		try {
+			const parsed = new URL(formattedUrl);
+			if (utmSource.trim()) parsed.searchParams.set("utm_source", utmSource.trim());
+			if (utmMedium.trim()) parsed.searchParams.set("utm_medium", utmMedium.trim());
+			if (utmCampaign.trim()) parsed.searchParams.set("utm_campaign", utmCampaign.trim());
+			if (utmTerm.trim()) parsed.searchParams.set("utm_term", utmTerm.trim());
+			if (utmContent.trim()) parsed.searchParams.set("utm_content", utmContent.trim());
+			formattedUrl = parsed.toString();
+		} catch (e) {
+			console.warn("Could not parse destination URL for UTM baking:", e);
+		}
+
 		const payload = {
 			destinationUrl: formattedUrl,
 			customAlias: customAlias.trim() || undefined,
-			utmSource: utmSource.trim() || undefined,
-			utmMedium: utmMedium.trim() || undefined,
-			utmCampaign: utmCampaign.trim() || undefined,
-			utmTerm: utmTerm.trim() || undefined,
-			utmContent: utmContent.trim() || undefined,
 		};
 
 		createUrlMutation.mutate(payload);

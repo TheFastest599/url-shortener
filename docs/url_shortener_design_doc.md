@@ -827,51 +827,40 @@ public class UrlCoreController {
 }
 ```
 
-#### 3. Strategy 1 Redis Cache Synchronization (`UrlCoreService.java`)
+#### 3. Strategy 1 Redis Cache Eviction & Invalidation (`UrlCoreService.java`)
+
+Redis population is handled lazily by `url-redirect-service` upon first click using dynamic `calculateAdaptiveTtl(hits)`. `UrlCoreService` is strictly responsible for immediate cache eviction on updates, deactivations, pauses, and deletions:
 
 ```java
-// Cache Warming: Warms base URL, active A/B tests, and smart rules
-public void warmRedirectCache(UrlMapping mapping) {
-    String shortCode = mapping.getShortCode();
-    if (Boolean.FALSE.equals(mapping.getIsActive())) {
-        evictRedirectCache(shortCode);
-        return;
-    }
-
-    // 1. Warm Base URL (24h TTL)
-    redisTemplate.opsForValue().set("url:redirect:" + shortCode, mapping.getDestinationUrl(), Duration.ofHours(24));
-
-    // 2. Warm A/B Rules if test is ACTIVE
-    if (Boolean.TRUE.equals(mapping.getIsAbTest())) {
-        abTestRepository.findByUrlMappingId(mapping.getId()).ifPresent(test -> {
-            if ("ACTIVE".equalsIgnoreCase(test.getStatus())) {
-                List<AbVariant> variants = abVariantRepository.findByAbTestId(test.getId());
-                String abJson = serializeAbRules(test, variants);
-                redisTemplate.opsForValue().set("url:ab:" + shortCode, abJson, Duration.ofHours(24));
-            } else {
-                redisTemplate.delete("url:ab:" + shortCode);
-            }
-        });
-    } else {
-        redisTemplate.delete("url:ab:" + shortCode);
-    }
-
-    // 3. Warm Smart Rules (Device/Geo) if present
-    if (mapping.getSmartRules() != null && !mapping.getSmartRules().isBlank()) {
-        redisTemplate.opsForValue().set("url:rules:" + shortCode, mapping.getSmartRules(), Duration.ofHours(24));
-    } else {
-        redisTemplate.delete("url:rules:" + shortCode);
+/**
+ * Evicts all Strategy 1 keys for a short code across Redis.
+ * Called whenever a link is updated, deactivated, or deleted.
+ */
+public void evictRedirectCache(String shortCode) {
+    try {
+        redisTemplate.delete(List.of(
+            "url:redirect:" + shortCode,
+            "url:ab:" + shortCode,
+            "url:rules:" + shortCode,
+            "url:hits:" + shortCode
+        ));
+        log.info("Evicted all Redis Strategy 1 keys for shortCode: {}", shortCode);
+    } catch (Exception e) {
+        log.warn("Failed to evict Redis cache for {}: {}", shortCode, e.getMessage());
     }
 }
 
-// Atomic Eviction: Purges all keys across Strategy 1
-public void evictRedirectCache(String shortCode) {
-    redisTemplate.delete(List.of(
-        "url:redirect:" + shortCode,
-        "url:ab:" + shortCode,
-        "url:rules:" + shortCode,
-        "url:hits:" + shortCode
-    ));
+/**
+ * Specifically evicts only the A/B test configuration key.
+ * Called when an A/B test is paused, concluded, or removed without changing the base URL.
+ */
+public void evictAbCache(String shortCode) {
+    try {
+        redisTemplate.delete("url:ab:" + shortCode);
+        log.info("Evicted Redis A/B test key for shortCode: {}", shortCode);
+    } catch (Exception e) {
+        log.warn("Failed to evict Redis A/B cache for {}: {}", shortCode, e.getMessage());
+    }
 }
 ```
 ---
@@ -899,10 +888,18 @@ public class RedirectService {
         String abKey = "url:ab:" + shortCode;
         String redirectKey = "url:redirect:" + shortCode;
         String rulesKey = "url:rules:" + shortCode;
+        String hitsKey = "url:hits:" + shortCode;
 
-        // 1. Single round-trip MGET (< 0.5ms) across Strategy 1 keys
-        return redisTemplate.opsForValue().multiGet(List.of(abKey, redirectKey, rulesKey))
-            .flatMap(results -> {
+        // 1. Concurrently INCR popularity counter and MGET Strategy 1 keys in parallel
+        Mono<Long> hitCountMono = redisTemplate.opsForValue().increment(hitsKey);
+        Mono<List<String>> cacheLookupMono = redisTemplate.opsForValue().multiGet(List.of(abKey, redirectKey, rulesKey));
+
+        return Mono.zip(hitCountMono, cacheLookupMono)
+            .flatMap(tuple -> {
+                Long hits = tuple.getT1();
+                Duration adaptiveTtl = calculateAdaptiveTtl(hits != null ? hits : 1L);
+
+                List<String> results = tuple.getT2();
                 String abJson = results.size() > 0 ? results.get(0) : null;
                 String fallbackUrl = results.size() > 1 ? results.get(1) : null;
                 String rulesJson = results.size() > 2 ? results.get(2) : null;
@@ -931,8 +928,11 @@ public class RedirectService {
 
                 // Step D: Cache Miss -> Fallback to Core Service via gRPC (:9090)
                 if (destinationUrl == null) {
-                    return resolveFromGrpc(shortCode, request, response);
+                    return resolveFromGrpc(shortCode, adaptiveTtl, hitsKey, request, response);
                 }
+
+                // Cache Hit: Non-blocking background TTL refresh across all active Strategy 1 keys
+                extendAdaptiveTtl(shortCode, abJson != null, rulesJson != null, adaptiveTtl);
 
                 // Forward visitor's inbound UTM & query parameters
                 String finalUrl = mergeQueryParams(destinationUrl, request.getQueryParams());
@@ -941,6 +941,61 @@ public class RedirectService {
                 emitTelemetry(shortCode, selectedVariant, request);
 
                 return Mono.just(finalUrl);
+            });
+    }
+
+    /**
+     * Dynamically scales cache retention based on rolling link popularity:
+     * - Cold (<= 10 hits): 2 mins (minimizes Redis memory footprint)
+     * - Warm (<= 100 hits): 30 mins
+     * - Hot (<= 1000 hits): 2 hours
+     * - Viral (> 1000 hits): 6 hours
+     */
+    private Duration calculateAdaptiveTtl(long hits) {
+        if (hits <= 10) {
+            return Duration.ofMinutes(2);
+        } else if (hits <= 100) {
+            return Duration.ofMinutes(30);
+        } else if (hits <= 1000) {
+            return Duration.ofHours(2);
+        } else {
+            return Duration.ofHours(6);
+        }
+    }
+
+    /**
+     * Non-blocking background TTL refresh. Keeps all Strategy 1 keys synchronized.
+     */
+    private void extendAdaptiveTtl(String shortCode, boolean hasAb, boolean hasRules, Duration adaptiveTtl) {
+        List<String> keys = new ArrayList<>();
+        keys.add("url:redirect:" + shortCode);
+        if (hasAb) keys.add("url:ab:" + shortCode);
+        if (hasRules) keys.add("url:rules:" + shortCode);
+
+        Flux.fromIterable(keys)
+            .flatMap(key -> redisTemplate.expire(key, adaptiveTtl))
+            .subscribe(); // Executes asynchronously without delaying HTTP redirect response
+    }
+
+    private Mono<String> resolveFromGrpc(String shortCode, Duration adaptiveTtl, String hitsKey,
+                                         ServerHttpRequest request, ServerHttpResponse response) {
+        return coreGrpcClient.getDestinationUrl(shortCode)
+            .flatMap(grpcResponse -> {
+                if (!grpcResponse.getIsFound() || !grpcResponse.getIsActive()) {
+                    return Mono.empty();
+                }
+                String dest = grpcResponse.getDestinationUrl();
+                redisTemplate.opsForValue().set("url:redirect:" + shortCode, dest, adaptiveTtl).subscribe();
+                if (!grpcResponse.getAbRulesJson().isEmpty()) {
+                    redisTemplate.opsForValue().set("url:ab:" + shortCode, grpcResponse.getAbRulesJson(), adaptiveTtl).subscribe();
+                }
+                if (!grpcResponse.getSmartRulesJson().isEmpty()) {
+                    redisTemplate.opsForValue().set("url:rules:" + shortCode, grpcResponse.getSmartRulesJson(), adaptiveTtl).subscribe();
+                }
+                redisTemplate.expire(hitsKey, Duration.ofDays(1)).subscribe();
+
+                emitTelemetry(shortCode, null, request);
+                return Mono.just(mergeQueryParams(dest, request.getQueryParams()));
             });
     }
 
@@ -1001,22 +1056,6 @@ public class RedirectService {
             }
         } catch (Exception ignored) {}
         return null;
-    }
-
-    private Mono<String> resolveFromGrpc(String shortCode, ServerHttpRequest request, ServerHttpResponse response) {
-        return coreGrpcClient.getDestinationUrl(shortCode)
-            .flatMap(grpcResponse -> {
-                if (!grpcResponse.getIsFound() || !grpcResponse.getIsActive()) {
-                    return Mono.empty();
-                }
-                String dest = grpcResponse.getDestinationUrl();
-                redisTemplate.opsForValue().set("url:redirect:" + shortCode, dest, Duration.ofHours(24)).subscribe();
-                if (!grpcResponse.getAbRulesJson().isEmpty()) {
-                    redisTemplate.opsForValue().set("url:ab:" + shortCode, grpcResponse.getAbRulesJson(), Duration.ofHours(24)).subscribe();
-                }
-                emitTelemetry(shortCode, null, request);
-                return Mono.just(mergeQueryParams(dest, request.getQueryParams()));
-            });
     }
 
     private String mergeQueryParams(String url, MultiValueMap<String, String> queryParams) {

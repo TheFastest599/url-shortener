@@ -19,6 +19,8 @@ message UrlResponse {
   bool is_active = 2;
   bool is_found = 3;
   string short_code = 4;
+  string ab_rules_json = 5;
+  string smart_rules_json = 6;
 }
 
 message CreateUrlRequest {

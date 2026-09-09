@@ -18,16 +18,16 @@ public class PagedResponse<T> {
     private int size;
     private long totalElements;
     private int totalPages;
-    private boolean last;
+    private boolean isLast;
 
     public static <T> PagedResponse<T> from(Page<T> page) {
-        return PagedResponse.<T>builder()
-                .content(page.getContent())
-                .page(page.getNumber())
-                .size(page.getSize())
-                .totalElements(page.getTotalElements())
-                .totalPages(page.getTotalPages())
-                .last(page.isLast())
-                .build();
+        return new PagedResponse<>(
+                page.getContent(),
+                page.getNumber(),
+                page.getSize(),
+                page.getTotalElements(),
+                page.getTotalPages(),
+                page.isLast()
+        );
     }
 }
