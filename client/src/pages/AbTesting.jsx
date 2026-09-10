@@ -14,7 +14,13 @@ import { ROUTES } from "@/routes/paths";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+	Card,
+	CardContent,
+	CardHeader,
+	CardTitle,
+	CardDescription,
+} from "@/components/ui/card";
 import {
 	Dialog,
 	DialogContent,
@@ -47,6 +53,7 @@ import {
 	IconExternalLink,
 	IconScale,
 	IconSearch,
+	IconEdit,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
 
@@ -66,7 +73,11 @@ export function AbTestingPage() {
 	const queryClient = useQueryClient();
 
 	// 1. Initial URLs query to discover which links have A/B experiments
-	const { data: serverUrls, isLoading: urlsLoading, refetch: refetchUrls } = useUrlsQuery({
+	const {
+		data: serverUrls,
+		isLoading: urlsLoading,
+		refetch: refetchUrls,
+	} = useUrlsQuery({
 		page: 0,
 		size: 100,
 		sortBy: "createdAt",
@@ -74,7 +85,9 @@ export function AbTestingPage() {
 	});
 
 	const urls = React.useMemo(() => {
-		return Array.isArray(serverUrls) ? serverUrls : serverUrls?.content || [];
+		return Array.isArray(serverUrls)
+			? serverUrls
+			: serverUrls?.content || [];
 	}, [serverUrls]);
 
 	const abUrls = React.useMemo(() => {
@@ -97,12 +110,16 @@ export function AbTestingPage() {
 						const exp = await getAbTest(u.shortCode);
 						let variantStats = [];
 						try {
-							const ana = await getOverview(u.shortCode, 30, true);
+							const ana = await getOverview(
+								u.shortCode,
+								30,
+								true,
+							);
 							variantStats = ana?.variantBreakdown || [];
 						} catch {}
 						map[u.shortCode] = { exp, variantStats };
 					} catch {}
-				})
+				}),
 			);
 			return map;
 		},
@@ -113,42 +130,55 @@ export function AbTestingPage() {
 	// 3. Simple merged state management (Only 3 useStates across the entire page!)
 	const [dialog, setDialog] = React.useState({
 		create: false,
-		promote: null,      // experiment object being promoted
-		winnerKey: "",      // winning variant key
-		deleteCode: null,   // string shortCode to delete
+		isEditing: false, // tracks if modal is in edit mode
+		promote: null, // experiment object being promoted
+		winnerKey: "", // winning variant key
+		deleteCode: null, // string shortCode to delete
 	});
 
 	const [form, setForm] = React.useState(initialFormState);
 
 	const [search, setSearch] = React.useState({
-		filter: "",               // filter query for experiments on the page
-		linkQuery: "",            // typing in "Select Short Link to Test"
-		debouncedLinkQuery: "",   // 300ms debounced backend search query
+		filter: "", // filter query for experiments on the page
+		linkQuery: "", // typing in "Select Short Link to Test"
+		debouncedLinkQuery: "", // 300ms debounced backend search query
 	});
 
 	// 300ms debounce effect for candidate URL backend search
 	React.useEffect(() => {
 		const timer = setTimeout(() => {
-			setSearch((prev) => ({ ...prev, debouncedLinkQuery: prev.linkQuery }));
+			setSearch((prev) => ({
+				...prev,
+				debouncedLinkQuery: prev.linkQuery.trim(),
+			}));
 		}, 300);
 		return () => clearTimeout(timer);
 	}, [search.linkQuery]);
 
-	// Backend URL search for candidate short links (direct API query, no in-memory filtering)
-	const { data: serverCandidates, isFetching: isSearchingUrls } = useUrlsQuery(
-		{
-			search: search.debouncedLinkQuery.trim() || undefined,
-			page: 0,
-			size: 8,
-		},
-		{
-			enabled: dialog.create && !form.shortCode,
-		}
-	);
+	// Server-side debounced search query for candidate short URLs
+	const { data: searchResultsData, isFetching: isSearchingUrls } =
+		useUrlsQuery(
+			{
+				page: 0,
+				size: 8,
+				search: search.debouncedLinkQuery,
+				sortBy: "createdAt",
+				direction: "DESC",
+			},
+			{
+				enabled:
+					dialog.create &&
+					!dialog.isEditing &&
+					search.debouncedLinkQuery.length > 0,
+			},
+		);
 
 	const candidateUrls = React.useMemo(() => {
-		return Array.isArray(serverCandidates) ? serverCandidates : serverCandidates?.content || [];
-	}, [serverCandidates]);
+		const list = Array.isArray(searchResultsData)
+			? searchResultsData
+			: searchResultsData?.content || [];
+		return list.filter((u) => !u.isAbTest || u.shortCode === form.shortCode);
+	}, [searchResultsData, form.shortCode]);
 
 	// Filter experiments on page by name or shortCode
 	const filteredAbUrls = React.useMemo(() => {
@@ -164,13 +194,15 @@ export function AbTestingPage() {
 		});
 	}, [abUrls, experimentsData, search.filter]);
 
-	// 4. Mutations with automatic invalidation and refresh
+	// 4. Mutation handlers
 	const configureMutation = useConfigureAbTestMutation({
 		onSuccess: () => {
-			setDialog((d) => ({ ...d, create: false }));
+			setDialog((d) => ({ ...d, create: false, isEditing: false }));
 			setForm(initialFormState);
 			setSearch((s) => ({ ...s, linkQuery: "", debouncedLinkQuery: "" }));
-			queryClient.invalidateQueries({ queryKey: queryKeys.abTesting.all });
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.abTesting.all,
+			});
 			queryClient.invalidateQueries({ queryKey: queryKeys.urls.all });
 			refetchUrls();
 			refetchExperiments();
@@ -180,7 +212,9 @@ export function AbTestingPage() {
 	const updateStatusMutation = useUpdateAbTestStatusMutation({
 		onSuccess: () => {
 			setDialog((d) => ({ ...d, promote: null, winnerKey: "" }));
-			queryClient.invalidateQueries({ queryKey: queryKeys.abTesting.all });
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.abTesting.all,
+			});
 			queryClient.invalidateQueries({ queryKey: queryKeys.urls.all });
 			refetchUrls();
 			refetchExperiments();
@@ -190,7 +224,9 @@ export function AbTestingPage() {
 	const deleteMutation = useDeleteAbTestMutation({
 		onSuccess: () => {
 			setDialog((d) => ({ ...d, deleteCode: null }));
-			queryClient.invalidateQueries({ queryKey: queryKeys.abTesting.all });
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.abTesting.all,
+			});
 			queryClient.invalidateQueries({ queryKey: queryKeys.urls.all });
 			refetchUrls();
 			refetchExperiments();
@@ -198,7 +234,10 @@ export function AbTestingPage() {
 	});
 
 	// Form helpers
-	const currentTotalWeight = form.variants.reduce((sum, v) => sum + (parseInt(v.weight, 10) || 0), 0);
+	const currentTotalWeight = form.variants.reduce(
+		(sum, v) => sum + (parseInt(v.weight, 10) || 0),
+		0,
+	);
 	const isWeightValid = currentTotalWeight === 100;
 
 	const handleVariantWeightChange = (index, value) => {
@@ -231,12 +270,18 @@ export function AbTestingPage() {
 			return;
 		}
 		const keys = ["A", "B", "C", "D"];
-		const nextKey = keys[form.variants.length] || `V${form.variants.length + 1}`;
+		const nextKey =
+			keys[form.variants.length] || `V${form.variants.length + 1}`;
 		setForm((prev) => ({
 			...prev,
 			variants: [
 				...prev.variants,
-				{ key: nextKey, destinationUrl: "", weight: 0, isControl: false },
+				{
+					key: nextKey,
+					destinationUrl: "",
+					weight: 0,
+					isControl: false,
+				},
 			],
 		}));
 	};
@@ -263,7 +308,9 @@ export function AbTestingPage() {
 			return;
 		}
 		if (!isWeightValid) {
-			toast.error(`Variant weights must sum to exactly 100% (currently: ${currentTotalWeight}%)`);
+			toast.error(
+				`Variant weights must sum to exactly 100% (currently: ${currentTotalWeight}%)`,
+			);
 			return;
 		}
 
@@ -296,6 +343,28 @@ export function AbTestingPage() {
 		});
 	};
 
+	const handleOpenEdit = (exp, shortCode) => {
+		const cookieDays = exp?.cookieTtlSeconds
+			? Math.round(exp.cookieTtlSeconds / 86400)
+			: 30;
+		setForm({
+			shortCode: shortCode,
+			name: exp?.name || "",
+			cookieDays: cookieDays,
+			variants: (exp?.variants || []).map((v, i) => ({
+				key: v.key || (i === 0 ? "A" : "B"),
+				destinationUrl: v.destinationUrl || v.url || "",
+				weight: v.weight ?? 50,
+				isControl: typeof v.isControl === "boolean" ? v.isControl : i === 0,
+			})),
+		});
+		setDialog((d) => ({
+			...d,
+			create: true,
+			isEditing: true,
+		}));
+	};
+
 	const handleOpenPromote = (exp, shortCode) => {
 		setDialog((d) => ({
 			...d,
@@ -317,8 +386,12 @@ export function AbTestingPage() {
 
 	// Statistics
 	const totalExperimentsCount = abUrls.length;
-	const activeExperimentsCount = Object.values(experimentsData).filter((d) => d?.exp?.status === "ACTIVE").length;
-	const concludedExperimentsCount = Object.values(experimentsData).filter((d) => d?.exp?.status === "CONCLUDED").length;
+	const activeExperimentsCount = Object.values(experimentsData).filter(
+		(d) => d?.exp?.status === "ACTIVE",
+	).length;
+	const concludedExperimentsCount = Object.values(experimentsData).filter(
+		(d) => d?.exp?.status === "CONCLUDED",
+	).length;
 
 	return (
 		<div className="space-y-6 sm:space-y-8 max-w-7xl mx-auto">
@@ -330,7 +403,9 @@ export function AbTestingPage() {
 						<span>A/B Split Testing & Traffic Routing</span>
 					</h1>
 					<p className="text-xs sm:text-sm text-muted-foreground mt-1">
-						Split incoming redirect traffic across multi-variant destinations with session cookie stickiness and automated winner promotion.
+						Split incoming redirect traffic across multi-variant
+						destinations with session cookie stickiness and
+						automated winner promotion.
 					</p>
 				</div>
 
@@ -343,7 +418,9 @@ export function AbTestingPage() {
 						className="gap-1.5 text-xs h-9 cursor-pointer shadow-2xs"
 						title="Refresh experiments"
 					>
-						<IconRefresh className={`size-4 ${fetchingExperiments ? "animate-spin" : ""}`} />
+						<IconRefresh
+							className={`size-4 ${fetchingExperiments ? "animate-spin" : ""}`}
+						/>
 						<span>Refresh</span>
 					</Button>
 
@@ -351,8 +428,12 @@ export function AbTestingPage() {
 						size="sm"
 						onClick={() => {
 							setForm(initialFormState);
-							setSearch((s) => ({ ...s, linkQuery: "", debouncedLinkQuery: "" }));
-							setDialog((d) => ({ ...d, create: true }));
+							setSearch((s) => ({
+								...s,
+								linkQuery: "",
+								debouncedLinkQuery: "",
+							}));
+							setDialog((d) => ({ ...d, create: true, isEditing: false }));
 						}}
 						className="gap-1.5 text-xs h-9 font-semibold cursor-pointer shadow-xs"
 					>
@@ -434,7 +515,12 @@ export function AbTestingPage() {
 					<IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
 					<Input
 						value={search.filter}
-						onChange={(e) => setSearch((prev) => ({ ...prev, filter: e.target.value }))}
+						onChange={(e) =>
+							setSearch((prev) => ({
+								...prev,
+								filter: e.target.value,
+							}))
+						}
 						placeholder="Search experiments..."
 						className="pl-9 h-8.5 text-xs bg-card"
 					/>
@@ -454,32 +540,51 @@ export function AbTestingPage() {
 							const isConcluded = status === "CONCLUDED";
 
 							return (
-								<Card key={url.shortCode} className="border-border/70 bg-card overflow-hidden shadow-xs">
+								<Card
+									key={url.shortCode}
+									className="border-border/70 bg-card overflow-hidden shadow-xs"
+								>
 									{/* Experiment Header */}
 									<div className="p-4 sm:p-5 border-b border-border/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-muted/20">
 										<div className="space-y-1 min-w-0">
 											<div className="flex flex-wrap items-center gap-2">
 												<span className="font-heading text-base font-bold text-foreground">
-													{exp?.name || "A/B Experiment"}
+													{exp?.name ||
+														"A/B Experiment"}
 												</span>
 												<Badge
-													variant={isConcluded ? "secondary" : isPaused ? "outline" : "default"}
+													variant={
+														isConcluded
+															? "secondary"
+															: isPaused
+																? "outline"
+																: "default"
+													}
 													className={`text-[10px] font-semibold ${
 														status === "ACTIVE"
 															? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
 															: isPaused
-															? "text-amber-500 border-amber-500/30"
-															: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30"
+																? "text-amber-500 border-amber-500/30"
+																: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30"
 													}`}
 												>
 													{status}
 												</Badge>
-												{isConcluded && exp?.winningVariant && (
-													<Badge variant="outline" className="text-[10px] text-amber-500 border-amber-500/40 gap-1">
-														<IconTrophy className="size-3" />
-														<span>Winner: Variant {exp.winningVariant}</span>
-													</Badge>
-												)}
+												{isConcluded &&
+													exp?.winningVariant && (
+														<Badge
+															variant="outline"
+															className="text-[10px] text-amber-500 border-amber-500/40 gap-1"
+														>
+															<IconTrophy className="size-3" />
+															<span>
+																Winner: Variant{" "}
+																{
+																	exp.winningVariant
+																}
+															</span>
+														</Badge>
+													)}
 											</div>
 											<div className="text-xs text-muted-foreground flex items-center gap-2">
 												<span>Shortcode:</span>
@@ -489,8 +594,17 @@ export function AbTestingPage() {
 												>
 													/r/{url.shortCode}
 												</Link>
-												<span className="text-border">|</span>
-												<span>Cookie Stickiness: {Math.round((exp?.cookieTtlSeconds || 2592000) / 86400)} days</span>
+												<span className="text-border">
+													|
+												</span>
+												<span>
+													Cookie Stickiness:{" "}
+													{Math.round(
+														(exp?.cookieTtlSeconds ||
+															2592000) / 86400,
+													)}{" "}
+													days
+												</span>
 											</div>
 										</div>
 
@@ -501,19 +615,48 @@ export function AbTestingPage() {
 													<Button
 														variant="outline"
 														size="sm"
-														onClick={() => handleToggleStatus(url.shortCode, status)}
+														onClick={() =>
+															handleOpenEdit(
+																exp,
+																url.shortCode,
+															)
+														}
+														className="text-xs h-8 gap-1.5 cursor-pointer shadow-2xs hover:border-primary/50 text-foreground"
+														title="Edit experiment variants, URLs and traffic distribution"
+													>
+														<IconEdit className="size-3.5 text-blue-500" />
+														<span>Edit</span>
+													</Button>
+
+													<Button
+														variant="outline"
+														size="sm"
+														onClick={() =>
+															handleToggleStatus(
+																url.shortCode,
+																status,
+															)
+														}
 														className="text-xs h-8 gap-1.5 cursor-pointer shadow-2xs"
-														title={isPaused ? "Resume Experiment" : "Pause Traffic Split"}
+														title={
+															isPaused
+																? "Resume Experiment"
+																: "Pause Traffic Split"
+														}
 													>
 														{isPaused ? (
 															<>
 																<IconPlayerPlay className="size-3.5 text-emerald-500" />
-																<span>Resume</span>
+																<span>
+																	Resume
+																</span>
 															</>
 														) : (
 															<>
 																<IconPlayerPause className="size-3.5 text-amber-500" />
-																<span>Pause</span>
+																<span>
+																	Pause
+																</span>
 															</>
 														)}
 													</Button>
@@ -521,17 +664,26 @@ export function AbTestingPage() {
 													<Button
 														variant="outline"
 														size="sm"
-														onClick={() => handleOpenPromote(exp, url.shortCode)}
+														onClick={() =>
+															handleOpenPromote(
+																exp,
+																url.shortCode,
+															)
+														}
 														className="text-xs h-8 gap-1.5 cursor-pointer text-amber-500 border-amber-500/30 hover:bg-amber-500/10 shadow-2xs"
 														title="Declare winner and promote to single destination"
 													>
 														<IconTrophy className="size-3.5" />
-														<span>Promote Winner</span>
+														<span>
+															Promote Winner
+														</span>
 													</Button>
 												</>
 											)}
 
-											<Link to={`/analytics/${url.shortCode}`}>
+											<Link
+												to={`/analytics/${url.shortCode}`}
+											>
 												<Button
 													variant="outline"
 													size="sm"
@@ -546,7 +698,13 @@ export function AbTestingPage() {
 											<Button
 												variant="ghost"
 												size="sm"
-												onClick={() => setDialog((d) => ({ ...d, deleteCode: url.shortCode }))}
+												onClick={() =>
+													setDialog((d) => ({
+														...d,
+														deleteCode:
+															url.shortCode,
+													}))
+												}
 												className="text-xs h-8 text-destructive hover:bg-destructive/10 cursor-pointer"
 												title="Remove A/B test"
 											>
@@ -556,36 +714,55 @@ export function AbTestingPage() {
 									</div>
 
 									{/* Multi-Segment Traffic Split Bar */}
-									{exp?.variants && exp.variants.length > 0 && (
-										<div className="px-4 sm:px-5 pt-4">
-											<div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 flex items-center justify-between">
-												<span>Allocated Traffic Ratio</span>
-												<span className="font-mono text-foreground font-bold">100% Total Split</span>
-											</div>
-											<div className="h-3 w-full rounded-full overflow-hidden flex bg-muted border border-border/60 shadow-inner">
-												{exp.variants.map((v, i) => {
-													const colors = [
-														"bg-primary",
-														"bg-blue-500",
-														"bg-purple-500",
-														"bg-amber-500",
-													];
-													const barColor = colors[i % colors.length];
+									{exp?.variants &&
+										exp.variants.length > 0 && (
+											<div className="px-4 sm:px-5 pt-4">
+												<div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 flex items-center justify-between">
+													<span>
+														Allocated Traffic Ratio
+													</span>
+													<span className="font-mono text-foreground font-bold">
+														100% Total Split
+													</span>
+												</div>
+												<div className="h-3 w-full rounded-full overflow-hidden flex bg-muted border border-border/60 shadow-inner">
+													{exp.variants.map(
+														(v, i) => {
+															const colors = [
+																"bg-primary",
+																"bg-blue-500",
+																"bg-purple-500",
+																"bg-amber-500",
+															];
+															const barColor =
+																colors[
+																	i %
+																		colors.length
+																];
 
-													return (
-														<div
-															key={v.key}
-															style={{ width: `${v.weight}%` }}
-															className={`h-full ${barColor} transition-all relative group/seg`}
-															title={`Variant ${v.key}: ${v.weight}% traffic`}
-														>
-															<span className="sr-only">{v.key} {v.weight}%</span>
-														</div>
-													);
-												})}
+															return (
+																<div
+																	key={v.key}
+																	style={{
+																		width: `${v.weight}%`,
+																	}}
+																	className={`h-full ${barColor} transition-all relative group/seg`}
+																	title={`Variant ${v.key}: ${v.weight}% traffic`}
+																>
+																	<span className="sr-only">
+																		{v.key}{" "}
+																		{
+																			v.weight
+																		}
+																		%
+																	</span>
+																</div>
+															);
+														},
+													)}
+												</div>
 											</div>
-										</div>
-									)}
+										)}
 
 									{/* Variants Table */}
 									<CardContent className="p-4 sm:p-5 pt-3">
@@ -593,57 +770,102 @@ export function AbTestingPage() {
 											<table className="w-full text-xs text-left">
 												<thead>
 													<tr className="border-b border-border/40 text-muted-foreground font-medium">
-														<th className="py-2 px-2">Variant</th>
-														<th className="py-2 px-3">Type</th>
-														<th className="py-2 px-3">Destination URL Target</th>
-														<th className="py-2 px-3 text-center">Allocated Weight</th>
-														<th className="py-2 px-3 text-center">Observed Clicks</th>
-														<th className="py-2 px-2 text-right">Actions</th>
+														<th className="py-2 px-2">
+															Variant
+														</th>
+														<th className="py-2 px-3">
+															Type
+														</th>
+														<th className="py-2 px-3">
+															Destination URL
+															Target
+														</th>
+														<th className="py-2 px-3 text-center">
+															Allocated Weight
+														</th>
+														<th className="py-2 px-3 text-center">
+															Observed Clicks
+														</th>
+														<th className="py-2 px-2 text-right">
+															Actions
+														</th>
 													</tr>
 												</thead>
 												<tbody className="divide-y divide-border/30">
 													{exp?.variants?.map((v) => {
-														const stat = variantStats.find(
-															(s) => s.label?.toUpperCase() === v.key?.toUpperCase()
-														);
-														const clicks = stat?.count ?? 0;
-														const isWinner = exp?.winningVariant?.toUpperCase() === v.key?.toUpperCase();
+														const stat =
+															variantStats.find(
+																(s) =>
+																	(s.name || s.label)?.toUpperCase() ===
+																	v.key?.toUpperCase(),
+															);
+														const clicks =
+															stat?.count ?? 0;
+														const isWinner =
+															exp?.winningVariant?.toUpperCase() ===
+															v.key?.toUpperCase();
 
 														return (
-															<tr key={v.key} className="hover:bg-muted/20 transition-colors">
+															<tr
+																key={v.key}
+																className="hover:bg-muted/20 transition-colors"
+															>
 																<td className="py-2.5 px-2 font-mono font-bold text-foreground">
 																	<div className="flex items-center gap-1.5">
 																		<span className="size-5 rounded-md bg-muted flex items-center justify-center text-[11px] font-bold">
-																			{v.key}
+																			{
+																				v.key
+																			}
 																		</span>
 																		{isWinner && (
-																			<IconTrophy className="size-3.5 text-amber-500" title="Promoted Winner" />
+																			<IconTrophy
+																				className="size-3.5 text-amber-500"
+																				title="Promoted Winner"
+																			/>
 																		)}
 																	</div>
 																</td>
 																<td className="py-2.5 px-3">
 																	{v.isControl ? (
-																		<Badge variant="outline" className="text-[10px]">
+																		<Badge
+																			variant="outline"
+																			className="text-[10px]"
+																		>
 																			Control
 																		</Badge>
 																	) : (
-																		<span className="text-muted-foreground text-[11px]">Variant</span>
+																		<span className="text-muted-foreground text-[11px]">
+																			Variant
+																		</span>
 																	)}
 																</td>
-																<td className="py-2.5 px-3 max-w-xs md:max-w-md truncate font-mono text-muted-foreground" title={v.destinationUrl}>
-																	{v.destinationUrl}
+																<td
+																	className="py-2.5 px-3 max-w-xs md:max-w-md truncate font-mono text-muted-foreground"
+																	title={
+																		v.destinationUrl
+																	}
+																>
+																	{
+																		v.destinationUrl
+																	}
 																</td>
 																<td className="py-2.5 px-3 text-center font-mono font-semibold text-foreground">
 																	{v.weight}%
 																</td>
 																<td className="py-2.5 px-3 text-center font-mono">
-																	<Badge variant="secondary" className="text-[11px]">
-																		{clicks} clicks
+																	<Badge
+																		variant="secondary"
+																		className="text-[11px]"
+																	>
+																		{clicks}{" "}
+																		clicks
 																	</Badge>
 																</td>
 																<td className="py-2.5 px-2 text-right">
 																	<a
-																		href={v.destinationUrl}
+																		href={
+																			v.destinationUrl
+																		}
 																		target="_blank"
 																		rel="noreferrer"
 																		className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:text-foreground transition-colors"
@@ -670,7 +892,9 @@ export function AbTestingPage() {
 								<IconFlask className="size-6" />
 							</div>
 							<h3 className="font-heading font-bold text-base text-foreground">
-								{search.filter.trim() ? "No Matching Experiments Found" : "No A/B Testing Experiments Yet"}
+								{search.filter.trim()
+									? "No Matching Experiments Found"
+									: "No A/B Testing Experiments Yet"}
 							</h3>
 							<p className="text-xs text-muted-foreground">
 								{search.filter.trim()
@@ -683,8 +907,15 @@ export function AbTestingPage() {
 										size="sm"
 										onClick={() => {
 											setForm(initialFormState);
-											setSearch((s) => ({ ...s, linkQuery: "", debouncedLinkQuery: "" }));
-											setDialog((d) => ({ ...d, create: true }));
+											setSearch((s) => ({
+												...s,
+												linkQuery: "",
+												debouncedLinkQuery: "",
+											}));
+											setDialog((d) => ({
+												...d,
+												create: true,
+											}));
 										}}
 										className="gap-1.5 text-xs font-semibold cursor-pointer"
 									>
@@ -698,48 +929,83 @@ export function AbTestingPage() {
 				)}
 			</div>
 
-			{/* 5. New A/B Experiment Modal with Direct Backend Debounced Search */}
+			{/* 5. New / Edit A/B Experiment Modal with Direct Backend Debounced Search */}
 			<Dialog
 				open={dialog.create}
-				onOpenChange={(open) => setDialog((d) => ({ ...d, create: open }))}
+				onOpenChange={(open) =>
+					setDialog((d) => ({
+						...d,
+						create: open,
+						isEditing: open ? d.isEditing : false,
+					}))
+				}
 			>
 				<DialogContent className="sm:max-w-xl max-h-[90vh] flex flex-col p-6 overflow-hidden">
 					<DialogHeader>
 						<DialogTitle className="flex items-center gap-2">
 							<IconFlask className="size-5 text-primary" />
-							<span>Configure A/B Split Experiment</span>
+							<span>
+								{dialog.isEditing
+									? "Edit A/B Split Experiment"
+									: "Configure A/B Split Experiment"}
+							</span>
 						</DialogTitle>
 						<DialogDescription className="text-xs">
-							Define variant URLs and allocated traffic weights. Cookie stickiness ensures a visitor continues to see the same variant across sessions.
+							{dialog.isEditing
+								? "Update test name, variant destinations, weights, and cookie stickiness duration."
+								: "Define variant URLs and allocated traffic weights. Cookie stickiness ensures a visitor continues to see the same variant across sessions."}
 						</DialogDescription>
 					</DialogHeader>
 
-					<form id="ab-create-form" onSubmit={handleCreateSubmit} className="space-y-4 py-2 overflow-y-auto pr-1 flex-1 min-h-0">
+					<form
+						id="ab-create-form"
+						onSubmit={handleCreateSubmit}
+						className="space-y-4 py-2 overflow-y-auto pr-1 flex-1 min-h-0"
+					>
 						{/* Target URL Selector with Direct Backend Debounced Search (No dropdown selects!) */}
 						<div className="space-y-1.5">
-							<label className="text-xs font-semibold text-foreground">Select Short Link to Test</label>
-							
+							<label className="text-xs font-semibold text-foreground">
+								Select Short Link to Test
+							</label>
+
 							{form.shortCode ? (
 								<div className="flex items-center justify-between p-3 rounded-xl border border-primary/30 bg-primary/5">
 									<div className="space-y-0.5 min-w-0">
 										<div className="flex items-center gap-2">
 											<IconCheck className="size-4 text-primary shrink-0" />
-											<span className="font-mono font-bold text-xs text-primary">/r/{form.shortCode}</span>
-											<Badge variant="outline" className="text-[10px]">Selected Target</Badge>
+											<span className="font-mono font-bold text-xs text-primary">
+												/r/{form.shortCode}
+											</span>
+											<Badge
+												variant="outline"
+												className="text-[10px]"
+											>
+												{dialog.isEditing
+													? "Active Target (Locked)"
+													: "Selected Target"}
+											</Badge>
 										</div>
 										<p className="text-[11px] font-mono text-muted-foreground truncate max-w-sm">
-											{form.variants[0]?.destinationUrl || "Default redirect destination"}
+											{form.variants[0]?.destinationUrl ||
+												"Default redirect destination"}
 										</p>
 									</div>
-									<Button
-										type="button"
-										variant="ghost"
-										size="sm"
-										onClick={() => setForm((prev) => ({ ...prev, shortCode: "" }))}
-										className="text-xs text-muted-foreground hover:text-foreground cursor-pointer h-8 px-2.5"
-									>
-										Change
-									</Button>
+									{!dialog.isEditing && (
+										<Button
+											type="button"
+											variant="ghost"
+											size="sm"
+											onClick={() =>
+												setForm((prev) => ({
+													...prev,
+													shortCode: "",
+												}))
+											}
+											className="text-xs text-muted-foreground hover:text-foreground cursor-pointer h-8 px-2.5"
+										>
+											Change
+										</Button>
+									)}
 								</div>
 							) : (
 								<div className="space-y-2">
@@ -747,7 +1013,12 @@ export function AbTestingPage() {
 										<IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
 										<Input
 											value={search.linkQuery}
-											onChange={(e) => setSearch((prev) => ({ ...prev, linkQuery: e.target.value }))}
+											onChange={(e) =>
+												setSearch((prev) => ({
+													...prev,
+													linkQuery: e.target.value,
+												}))
+											}
 											placeholder="Type shortcode or destination to search backend..."
 											className="pl-9 pr-8 text-xs bg-card"
 											autoFocus
@@ -765,14 +1036,24 @@ export function AbTestingPage() {
 													type="button"
 													onClick={() => {
 														setForm((prev) => {
-															const updated = [...prev.variants];
-															if (u.destinationUrl) {
-																updated[0] = { ...updated[0], destinationUrl: u.destinationUrl };
+															const updated = [
+																...prev.variants,
+															];
+															if (
+																u.destinationUrl
+															) {
+																updated[0] = {
+																	...updated[0],
+																	destinationUrl:
+																		u.destinationUrl,
+																};
 															}
 															return {
 																...prev,
-																shortCode: u.shortCode,
-																variants: updated,
+																shortCode:
+																	u.shortCode,
+																variants:
+																	updated,
 															};
 														});
 													}}
@@ -784,7 +1065,10 @@ export function AbTestingPage() {
 																/r/{u.shortCode}
 															</span>
 															{u.isAbTest && (
-																<Badge variant="outline" className="text-[9px] text-amber-500 border-amber-500/30">
+																<Badge
+																	variant="outline"
+																	className="text-[9px] text-amber-500 border-amber-500/30"
+																>
 																	Has A/B Test
 																</Badge>
 															)}
@@ -800,7 +1084,9 @@ export function AbTestingPage() {
 											))
 										) : (
 											<div className="py-6 text-center text-xs text-muted-foreground">
-												{isSearchingUrls ? "Searching backend..." : "No short links found. Try a different query."}
+												{isSearchingUrls
+													? "Searching backend..."
+													: "No short links found. Try a different query."}
 											</div>
 										)}
 									</div>
@@ -810,10 +1096,17 @@ export function AbTestingPage() {
 
 						{/* Experiment Name */}
 						<div className="space-y-1">
-							<label className="text-xs font-semibold text-foreground">Experiment Name</label>
+							<label className="text-xs font-semibold text-foreground">
+								Experiment Name
+							</label>
 							<Input
 								value={form.name}
-								onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+								onChange={(e) =>
+									setForm((prev) => ({
+										...prev,
+										name: e.target.value,
+									}))
+								}
 								placeholder="e.g. Summer Landing Page Headline Split"
 								className="text-xs"
 								required
@@ -822,17 +1115,26 @@ export function AbTestingPage() {
 
 						{/* Cookie Stickiness TTL */}
 						<div className="space-y-1">
-							<label className="text-xs font-semibold text-foreground">Visitor Cookie Stickiness (Days)</label>
+							<label className="text-xs font-semibold text-foreground">
+								Visitor Cookie Stickiness (Days)
+							</label>
 							<Input
 								type="number"
 								min="1"
 								max="365"
 								value={form.cookieDays}
-								onChange={(e) => setForm((prev) => ({ ...prev, cookieDays: parseInt(e.target.value, 10) || 30 }))}
+								onChange={(e) =>
+									setForm((prev) => ({
+										...prev,
+										cookieDays:
+											parseInt(e.target.value, 10) || 30,
+									}))
+								}
 								className="text-xs font-mono"
 							/>
 							<p className="text-[11px] text-muted-foreground">
-								Subsequent visits by the same user within this window will land on their initial variant.
+								Subsequent visits by the same user within this
+								window will land on their initial variant.
 							</p>
 						</div>
 
@@ -840,9 +1142,16 @@ export function AbTestingPage() {
 						<div className="space-y-3 pt-2 border-t border-border/50">
 							<div className="flex items-center justify-between">
 								<div className="space-y-0.5">
-									<div className="text-xs font-bold text-foreground">Experiment Variants</div>
-									<div className={`text-[11px] font-mono font-medium ${isWeightValid ? "text-emerald-500" : "text-amber-500"}`}>
-										Total Weight: {currentTotalWeight}% {isWeightValid ? "✓ (Valid)" : "(Must sum to 100%)"}
+									<div className="text-xs font-bold text-foreground">
+										Experiment Variants
+									</div>
+									<div
+										className={`text-[11px] font-mono font-medium ${isWeightValid ? "text-emerald-500" : "text-amber-500"}`}
+									>
+										Total Weight: {currentTotalWeight}%{" "}
+										{isWeightValid
+											? "✓ (Valid)"
+											: "(Must sum to 100%)"}
 									</div>
 								</div>
 
@@ -874,38 +1183,66 @@ export function AbTestingPage() {
 
 							<div className="space-y-2.5">
 								{form.variants.map((v, idx) => (
-									<div key={v.key} className="p-3 rounded-xl border border-border/70 bg-muted/20 space-y-2">
+									<div
+										key={v.key}
+										className="p-3 rounded-xl border border-border/70 bg-muted/20 space-y-2"
+									>
 										<div className="flex items-center justify-between gap-2">
 											<div className="flex items-center gap-2">
-												<Badge variant={v.isControl ? "default" : "secondary"} className="font-mono text-xs">
-													Variant {v.key} {v.isControl ? "(Control)" : ""}
+												<Badge
+													variant={
+														v.isControl
+															? "default"
+															: "secondary"
+													}
+													className="font-mono text-xs"
+												>
+													Variant {v.key}{" "}
+													{v.isControl
+														? "(Control)"
+														: ""}
 												</Badge>
 											</div>
 
 											<div className="flex items-center gap-2">
 												<div className="flex items-center gap-1">
-													<label className="text-[11px] text-muted-foreground">Weight:</label>
+													<label className="text-[11px] text-muted-foreground">
+														Weight:
+													</label>
 													<Input
 														type="number"
 														min="0"
 														max="100"
 														value={v.weight}
-														onChange={(e) => handleVariantWeightChange(idx, e.target.value)}
+														onChange={(e) =>
+															handleVariantWeightChange(
+																idx,
+																e.target.value,
+															)
+														}
 														className="w-16 h-7 text-xs font-mono text-center p-1"
 													/>
-													<span className="text-xs font-mono text-muted-foreground">%</span>
+													<span className="text-xs font-mono text-muted-foreground">
+														%
+													</span>
 												</div>
 
-												{!v.isControl && form.variants.length > 2 && (
-													<button
-														type="button"
-														onClick={() => handleRemoveVariant(idx)}
-														className="text-muted-foreground hover:text-destructive p-1 transition-colors cursor-pointer"
-														title="Remove variant"
-													>
-														<IconTrash className="size-3.5" />
-													</button>
-												)}
+												{!v.isControl &&
+													form.variants.length >
+														2 && (
+														<button
+															type="button"
+															onClick={() =>
+																handleRemoveVariant(
+																	idx,
+																)
+															}
+															className="text-muted-foreground hover:text-destructive p-1 transition-colors cursor-pointer"
+															title="Remove variant"
+														>
+															<IconTrash className="size-3.5" />
+														</button>
+													)}
 											</div>
 										</div>
 
@@ -915,9 +1252,17 @@ export function AbTestingPage() {
 											onChange={(e) => {
 												const val = e.target.value;
 												setForm((prev) => {
-													const updated = [...prev.variants];
-													updated[idx] = { ...updated[idx], destinationUrl: val };
-													return { ...prev, variants: updated };
+													const updated = [
+														...prev.variants,
+													];
+													updated[idx] = {
+														...updated[idx],
+														destinationUrl: val,
+													};
+													return {
+														...prev,
+														variants: updated,
+													};
 												});
 											}}
 											placeholder={`https://example.com/landing-page-${v.key.toLowerCase()}`}
@@ -935,7 +1280,13 @@ export function AbTestingPage() {
 							type="button"
 							variant="outline"
 							size="sm"
-							onClick={() => setDialog((d) => ({ ...d, create: false }))}
+							onClick={() =>
+								setDialog((d) => ({
+									...d,
+									create: false,
+									isEditing: false,
+								}))
+							}
 							className="text-xs"
 						>
 							Cancel
@@ -944,10 +1295,16 @@ export function AbTestingPage() {
 							form="ab-create-form"
 							type="submit"
 							size="sm"
-							disabled={configureMutation.isPending || !isWeightValid}
-							className="text-xs font-semibold"
+							disabled={
+								configureMutation.isPending || !isWeightValid
+							}
+							className="text-xs font-semibold cursor-pointer"
 						>
-							{configureMutation.isPending ? "Configuring..." : "Launch A/B Test"}
+							{configureMutation.isPending
+								? "Saving..."
+								: dialog.isEditing
+									? "Save Changes"
+									: "Launch A/B Test"}
 						</Button>
 					</DialogFooter>
 				</DialogContent>
@@ -956,7 +1313,9 @@ export function AbTestingPage() {
 			{/* 6. Promote Winner Confirmation Modal */}
 			<Dialog
 				open={!!dialog.promote}
-				onOpenChange={(open) => !open && setDialog((d) => ({ ...d, promote: null }))}
+				onOpenChange={(open) =>
+					!open && setDialog((d) => ({ ...d, promote: null }))
+				}
 			>
 				<DialogContent className="sm:max-w-md">
 					<DialogHeader>
@@ -965,18 +1324,30 @@ export function AbTestingPage() {
 							<span>Promote Winning Variant</span>
 						</DialogTitle>
 						<DialogDescription className="text-xs">
-							Concluding the test sets the winner as the permanent destination target for <span className="font-mono font-bold text-foreground">/r/{dialog.promote?.shortCode}</span>.
-							The A/B split will conclude and 100% of future traffic will route to this chosen variant.
+							Concluding the test sets the winner as the permanent
+							destination target for{" "}
+							<span className="font-mono font-bold text-foreground">
+								/r/{dialog.promote?.shortCode}
+							</span>
+							. The A/B split will conclude and 100% of future
+							traffic will route to this chosen variant.
 						</DialogDescription>
 					</DialogHeader>
 
 					<div className="space-y-3 py-3">
-						<label className="text-xs font-semibold text-foreground">Choose Winning Variant</label>
+						<label className="text-xs font-semibold text-foreground">
+							Choose Winning Variant
+						</label>
 						<div className="space-y-2">
 							{dialog.promote?.variants?.map((v) => (
 								<label
 									key={v.key}
-									onClick={() => setDialog((d) => ({ ...d, winnerKey: v.key }))}
+									onClick={() =>
+										setDialog((d) => ({
+											...d,
+											winnerKey: v.key,
+										}))
+									}
 									className={`flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer ${
 										dialog.winnerKey === v.key
 											? "border-amber-500 bg-amber-500/10 text-foreground shadow-2xs"
@@ -987,13 +1358,25 @@ export function AbTestingPage() {
 										type="radio"
 										name="winnerVariant"
 										checked={dialog.winnerKey === v.key}
-										onChange={() => setDialog((d) => ({ ...d, winnerKey: v.key }))}
+										onChange={() =>
+											setDialog((d) => ({
+												...d,
+												winnerKey: v.key,
+											}))
+										}
 										className="mt-0.5"
 									/>
 									<div className="space-y-0.5 min-w-0">
 										<div className="text-xs font-bold text-foreground flex items-center gap-1.5">
 											<span>Variant {v.key}</span>
-											{v.isControl && <Badge variant="outline" className="text-[10px]">Control</Badge>}
+											{v.isControl && (
+												<Badge
+													variant="outline"
+													className="text-[10px]"
+												>
+													Control
+												</Badge>
+											)}
 										</div>
 										<div className="text-[11px] font-mono truncate max-w-sm text-muted-foreground">
 											{v.destinationUrl}
@@ -1008,7 +1391,9 @@ export function AbTestingPage() {
 						<Button
 							variant="outline"
 							size="sm"
-							onClick={() => setDialog((d) => ({ ...d, promote: null }))}
+							onClick={() =>
+								setDialog((d) => ({ ...d, promote: null }))
+							}
 							className="text-xs"
 						>
 							Cancel
@@ -1016,10 +1401,15 @@ export function AbTestingPage() {
 						<Button
 							size="sm"
 							onClick={handleConfirmPromote}
-							disabled={updateStatusMutation.isPending || !dialog.winnerKey}
+							disabled={
+								updateStatusMutation.isPending ||
+								!dialog.winnerKey
+							}
 							className="text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-white"
 						>
-							{updateStatusMutation.isPending ? "Promoting..." : "Crown Winner & Conclude"}
+							{updateStatusMutation.isPending
+								? "Promoting..."
+								: "Crown Winner & Conclude"}
 						</Button>
 					</DialogFooter>
 				</DialogContent>
@@ -1028,18 +1418,30 @@ export function AbTestingPage() {
 			{/* 7. Official Shadcn Alert Dialog for A/B Test Deletion */}
 			<AlertDialog
 				open={!!dialog.deleteCode}
-				onOpenChange={(open) => !open && setDialog((d) => ({ ...d, deleteCode: null }))}
+				onOpenChange={(open) =>
+					!open && setDialog((d) => ({ ...d, deleteCode: null }))
+				}
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Remove A/B Experiment?</AlertDialogTitle>
+						<AlertDialogTitle>
+							Remove A/B Experiment?
+						</AlertDialogTitle>
 						<AlertDialogDescription>
-							Are you sure you want to remove the A/B test on <span className="font-mono font-bold text-foreground">/r/{dialog.deleteCode}</span>?
-							Traffic redirection will immediately fall back to the root destination target.
+							Are you sure you want to remove the A/B test on{" "}
+							<span className="font-mono font-bold text-foreground">
+								/r/{dialog.deleteCode}
+							</span>
+							? Traffic redirection will immediately fall back to
+							the root destination target.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
-						<AlertDialogCancel onClick={() => setDialog((d) => ({ ...d, deleteCode: null }))}>
+						<AlertDialogCancel
+							onClick={() =>
+								setDialog((d) => ({ ...d, deleteCode: null }))
+							}
+						>
 							Cancel
 						</AlertDialogCancel>
 						<AlertDialogAction
@@ -1052,7 +1454,9 @@ export function AbTestingPage() {
 							disabled={deleteMutation.isPending}
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer"
 						>
-							{deleteMutation.isPending ? "Deleting..." : "Remove Experiment"}
+							{deleteMutation.isPending
+								? "Deleting..."
+								: "Remove Experiment"}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>

@@ -1,5 +1,7 @@
 package com.urlshortener.redirect.service;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.urlshortener.redirect.dto.ClickEvent;
 import com.urlshortener.redirect.grpc.CoreGrpcClient;
@@ -31,7 +33,8 @@ public class RedirectService {
     private final ReactiveStringRedisTemplate redisTemplate;
     private final CoreGrpcClient coreGrpcClient;
     private final ClickEventProducer clickEventProducer;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     public Mono<String> resolveAndTrackUrl(String shortCode, ServerHttpRequest request, ServerHttpResponse response) {
         String abKey = "url:ab:" + shortCode;
@@ -140,6 +143,15 @@ public class RedirectService {
                 return null;
             }
 
+            // 0. If winning variant declared, route straight to it
+            if (config.winningVariant() != null && !config.winningVariant().isBlank()) {
+                for (Variant v : config.variants()) {
+                    if (v.key().equalsIgnoreCase(config.winningVariant())) {
+                        return new VariantResolution(v.url(), v.key());
+                    }
+                }
+            }
+
             // 1. Check for sticky session cookie
             HttpCookie cookie = request.getCookies().getFirst("ab_" + shortCode);
             if (cookie != null) {
@@ -153,8 +165,9 @@ public class RedirectService {
             // 2. Cumulative Weighted Random Selection
             Variant chosen = selectWeightedVariant(config.variants());
             if (chosen != null) {
-                // Attach sticky cookie for 30 days
-                response.getHeaders().add("Set-Cookie", "ab_" + shortCode + "=" + chosen.key() + "; Path=/; Max-Age=2592000; SameSite=Lax");
+                long maxAge = (config.cookieTtlSeconds() != null && config.cookieTtlSeconds() > 0)
+                        ? config.cookieTtlSeconds() : 2592000L;
+                response.getHeaders().add("Set-Cookie", "ab_" + shortCode + "=" + chosen.key() + "; Path=/; Max-Age=" + maxAge + "; SameSite=Lax");
                 return new VariantResolution(chosen.url(), chosen.key());
             }
         } catch (Exception e) {
@@ -219,21 +232,34 @@ public class RedirectService {
                     }
 
                     String dest = grpcResponse.getDestinationUrl();
+                    String selectedVariant = null;
 
                     // Pre-warm Redis Strategy 1 keys with Adaptive TTL
                     redisTemplate.opsForValue().set("url:redirect:" + shortCode, dest, adaptiveTtl).subscribe();
 
-                    if (!grpcResponse.getAbRulesJson().isEmpty()) {
-                        redisTemplate.opsForValue().set("url:ab:" + shortCode, grpcResponse.getAbRulesJson(), adaptiveTtl).subscribe();
-                    }
+                    // Priority 1: Device OS Override
                     if (!grpcResponse.getSmartRulesJson().isEmpty()) {
                         redisTemplate.opsForValue().set("url:rules:" + shortCode, grpcResponse.getSmartRulesJson(), adaptiveTtl).subscribe();
+                        String override = checkDeviceOverride(grpcResponse.getSmartRulesJson(), request);
+                        if (override != null) {
+                            dest = override;
+                        }
+                    }
+
+                    // Priority 2: Active A/B Test Variant
+                    if (selectedVariant == null && !grpcResponse.getAbRulesJson().isEmpty()) {
+                        redisTemplate.opsForValue().set("url:ab:" + shortCode, grpcResponse.getAbRulesJson(), adaptiveTtl).subscribe();
+                        VariantResolution res = resolveAbVariant(shortCode, grpcResponse.getAbRulesJson(), request, response);
+                        if (res != null) {
+                            dest = res.url();
+                            selectedVariant = res.variantKey();
+                        }
                     }
 
                     // Keep hits counter alive for 24h
                     redisTemplate.expire(hitsKey, Duration.ofDays(1)).subscribe();
 
-                    emitTelemetry(shortCode, null, request);
+                    emitTelemetry(shortCode, selectedVariant, request);
                     return Mono.just(mergeQueryParams(dest, request.getQueryParams()));
                 });
     }
@@ -275,8 +301,14 @@ public class RedirectService {
     }
 
     // Helper records for JSON serialization/deserialization
-    record AbConfig(String status, String winningVariant, List<Variant> variants) {}
-    record Variant(String key, String url, int weight) {}
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record AbConfig(String status, String winningVariant, List<Variant> variants, Long cookieTtlSeconds, String testId) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record Variant(String key, String url, int weight, Boolean isControl) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
     record SmartRules(Map<String, String> devices, Map<String, String> countries) {}
+
     record VariantResolution(String url, String variantKey) {}
 }
