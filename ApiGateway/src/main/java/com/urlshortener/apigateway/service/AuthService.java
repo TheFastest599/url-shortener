@@ -1,6 +1,11 @@
 package com.urlshortener.apigateway.service;
 
-import com.urlshortener.apigateway.dto.*;
+import com.urlshortener.apigateway.dto.AuthResponse;
+import com.urlshortener.apigateway.dto.LoginRequest;
+import com.urlshortener.apigateway.dto.OAuth2UserInfo;
+import com.urlshortener.apigateway.dto.RefreshTokenRequest;
+import com.urlshortener.apigateway.dto.RegisterRequest;
+import com.urlshortener.apigateway.dto.UserDto;
 import com.urlshortener.apigateway.entity.RefreshToken;
 import com.urlshortener.apigateway.entity.User;
 import com.urlshortener.apigateway.entity.UserPassword;
@@ -32,10 +37,10 @@ public class AuthService {
 
 //    1. Public Authentication APIs
 
-   @Transactional
-    public Mono<AuthResponse> register(RegisterRequest request){
+    @Transactional
+    public Mono<AuthResponse> register(RegisterRequest request) {
         return validateUserDoesNotExist(request.email(), request.username())
-                .then(saveUser(request))
+                .then(Mono.defer(() -> saveUser(request)))
                 .flatMap(user -> saveUserPassword(user, request.password()))
                 .flatMap(this::generateAuthTokenPair);
     }
@@ -50,7 +55,7 @@ public class AuthService {
     public Mono<AuthResponse> refreshToken(RefreshTokenRequest request) {
         return findValidRefreshToken(request.refreshToken())
                 .flatMap(this::rotateRefreshToken)
-                .flatMap(token ->userRepository.findById(token.getUserId()))
+                .flatMap(token -> userRepository.findById(token.getUserId()))
                 .flatMap(this::generateAuthTokenPair);
     }
 
@@ -63,17 +68,22 @@ public class AuthService {
                 .flatMap(this::generateAuthTokenPair);
     }
 
-//    2. HELPER METHODS
+    // 2. HELPER METHODS
 
-    private Mono<Void> validateUserDoesNotExist(String email, String username){
+    private Mono<Void> validateUserDoesNotExist(String email, String username) {
         return userRepository.existsByEmail(email)
-                .flatMap(emailExists -> emailExists
-                ? Mono.error(new IllegalArgumentException("Email Already Registered"))
-                : userRepository.existsByUsername(username))
-                .flatMap(usernameExists -> usernameExists
-                 ? Mono.error(new IllegalArgumentException("Username already taken"))
-                 : Mono.empty());
-
+                .flatMap(emailExists -> {
+                    if (Boolean.TRUE.equals(emailExists)) {
+                        return Mono.error(new IllegalArgumentException("Email Already Registered"));
+                    }
+                    return userRepository.existsByUsername(username);
+                })
+                .flatMap(usernameExists -> {
+                    if (Boolean.TRUE.equals(usernameExists)) {
+                        return Mono.error(new IllegalArgumentException("Username already taken"));
+                    }
+                    return Mono.empty();
+                });
     }
 
     private Mono<User> saveUser(RegisterRequest request) {

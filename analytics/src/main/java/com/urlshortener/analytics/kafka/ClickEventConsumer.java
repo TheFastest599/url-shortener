@@ -47,11 +47,17 @@ public class ClickEventConsumer {
 
         // 3. Operating System Detection
         String os = "Other";
-        if (uaLower.contains("windows")) os = "Windows";
-        else if (uaLower.contains("mac os") || uaLower.contains("macintosh")) os = "macOS";
-        else if (uaLower.contains("android")) os = "Android";
-        else if (uaLower.contains("iphone") || uaLower.contains("ipad") || uaLower.contains("ios")) os = "iOS";
-        else if (uaLower.contains("linux")) os = "Linux";
+        if (uaLower.contains("iphone") || uaLower.contains("ipad") || uaLower.contains("ios")) {
+            os = "iOS";
+        } else if (uaLower.contains("android")) {
+            os = "Android";
+        } else if (uaLower.contains("windows")) {
+            os = "Windows";
+        } else if (uaLower.contains("mac os") || uaLower.contains("macintosh")) {
+            os = "macOS";
+        } else if (uaLower.contains("linux")) {
+            os = "Linux";
+        }
 
         // 4. Bot Detection
         boolean isBot = uaLower.contains("bot") || uaLower.contains("crawler") || uaLower.contains("spider")
@@ -76,6 +82,10 @@ public class ClickEventConsumer {
                 .geoCountry(location.country())
                 .geoCity(location.city())
                 .referrer(cleanReferrer)
+                .variant(event.variant())
+                .utmSource(event.utmSource())
+                .utmMedium(event.utmMedium())
+                .utmCampaign(event.utmCampaign())
                 .isBot(isBot)
                 .build();
 

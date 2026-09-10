@@ -11,6 +11,7 @@ export const ROUTES = {
 	ANALYTICS: "/analytics",
 	ANALYTICS_DETAIL: "/analytics/:shortCode",
 	CAMPAIGNS: "/campaigns",
+	AB_TESTING: "/ab-testing",
 	PROFILE: "/profile",
 	DOCS: "/docs",
 	OAUTH_CALLBACK: "/oauth2/callback",

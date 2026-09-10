@@ -1,6 +1,5 @@
 syntax = "proto3";
 
-
 package com.urlshortener.grpc;
 
 option java_multiple_files = true;
@@ -20,6 +19,8 @@ message UrlResponse {
   bool is_active = 2;
   bool is_found = 3;
   string short_code = 4;
+  string ab_rules_json = 5;      // Optional: A/B variant JSON configuration
+  string smart_rules_json = 6;   // Optional: Device and Geo targeting rules
 }
 
 message CreateUrlRequest {

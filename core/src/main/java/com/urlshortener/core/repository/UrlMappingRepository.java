@@ -1,6 +1,5 @@
 package com.urlshortener.core.repository;
 
-
 import com.urlshortener.core.entity.UrlMapping;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -22,30 +21,33 @@ public interface UrlMappingRepository extends JpaRepository<UrlMapping, UUID> {
 
     List<UrlMapping> findByUserId(UUID userId);
 
+    Page<UrlMapping> findByUserId(UUID userId, Pageable pageable);
+
+    Page<UrlMapping> findByUserIdAndIsActive(UUID userId, Boolean isActive, Pageable pageable);
+
+    Page<UrlMapping> findByUserIdAndCampaignId(UUID userId, UUID campaignId, Pageable pageable);
+
+    Page<UrlMapping> findByUserIdAndIsActiveAndCampaignId(UUID userId, Boolean isActive, UUID campaignId, Pageable pageable);
+
     List<UrlMapping> findByCampaignId(UUID campaignId);
 
     long countByCampaignId(UUID campaignId);
 
-    @Query("SELECT u FROM UrlMapping u WHERE u.userId = :userId " +
-           "AND (:search IS NULL OR :search = '' OR LOWER(u.shortCode) LIKE LOWER(CONCAT('%', :search, '%')) OR LOWER(u.destinationUrl) LIKE LOWER(CONCAT('%', :search, '%'))) " +
-           "AND (:isActive IS NULL OR u.isActive = :isActive)")
-    Page<UrlMapping> findByUserIdWithFilters(
-            @Param("userId") UUID userId,
-            @Param("search") String search,
-            @Param("isActive") Boolean isActive,
-            Pageable pageable);
+    Page<UrlMapping> findByUserIdAndCampaignIdIsNull(UUID userId, Pageable pageable);
 
+    Page<UrlMapping> findByUserIdAndIsActiveAndCampaignIdIsNull(UUID userId, Boolean isActive, Pageable pageable);
 
     @Query("SELECT u FROM UrlMapping u WHERE u.userId = :userId " +
-            "AND (:search IS NULL OR LOWER(u.shortCode) LIKE LOWER(CONCAT('%', :search, '%')) " +
-            "OR LOWER(u.destinationUrl) LIKE LOWER(CONCAT('%', :search, '%'))) " +
+            "AND (LOWER(u.shortCode) LIKE :search OR LOWER(u.destinationUrl) LIKE :search) " +
             "AND (:isActive IS NULL OR u.isActive = :isActive) " +
-            "AND (:campaignId IS NULL OR u.campaignId = :campaignId)")
+            "AND ((:unassignedOnly = true AND u.campaignId IS NULL) OR (:unassignedOnly = false AND (:campaignId IS NULL OR u.campaignId = :campaignId)))")
     Page<UrlMapping> searchUserUrls(
             @Param("userId") UUID userId,
             @Param("search") String search,
             @Param("isActive") Boolean isActive,
             @Param("campaignId") UUID campaignId,
+            @Param("unassignedOnly") boolean unassignedOnly,
             Pageable pageable
     );
 }
+

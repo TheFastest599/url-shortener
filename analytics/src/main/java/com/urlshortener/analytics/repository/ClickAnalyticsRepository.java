@@ -111,4 +111,43 @@ public interface ClickAnalyticsRepository extends JpaRepository<ClickAnalytics, 
     LIMIT :limit
     """, nativeQuery = true)
     List<StatProjection> findTopReferrers(@Param("shortCode") String shortCode, @Param("includeBots") boolean includeBots, @Param("limit") int limit);
+
+    @Query(value = """
+    SELECT COALESCE(variant, 'Control') AS name, COUNT(*) AS count
+    FROM click_analytics
+    WHERE short_code = :shortCode AND variant IS NOT NULL
+    GROUP BY variant
+    ORDER BY count DESC
+    """, nativeQuery = true)
+    List<StatProjection> findVariantBreakdown(@Param("shortCode") String shortCode);
+
+    @Query(value = """
+    SELECT COALESCE(utm_source, 'Direct') AS name, COUNT(*) AS count
+    FROM click_analytics
+    WHERE short_code = :shortCode AND utm_source IS NOT NULL
+    GROUP BY utm_source
+    ORDER BY count DESC
+    LIMIT :limit
+    """, nativeQuery = true)
+    List<StatProjection> findTopUtmSources(@Param("shortCode") String shortCode, @Param("limit") int limit);
+
+    @Query(value = """
+    SELECT COALESCE(utm_campaign, 'None') AS name, COUNT(*) AS count
+    FROM click_analytics
+    WHERE short_code = :shortCode AND utm_campaign IS NOT NULL
+    GROUP BY utm_campaign
+    ORDER BY count DESC
+    LIMIT :limit
+    """, nativeQuery = true)
+    List<StatProjection> findTopUtmCampaigns(@Param("shortCode") String shortCode, @Param("limit") int limit);
+
+    @Query(value = """
+    SELECT COALESCE(utm_medium, 'None') AS name, COUNT(*) AS count
+    FROM click_analytics
+    WHERE short_code = :shortCode AND utm_medium IS NOT NULL
+    GROUP BY utm_medium
+    ORDER BY count DESC
+    LIMIT :limit
+    """, nativeQuery = true)
+    List<StatProjection> findTopUtmMediums(@Param("shortCode") String shortCode, @Param("limit") int limit);
 }

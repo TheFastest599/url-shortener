@@ -7,5 +7,9 @@ public record ClickEvent(
         Instant timestamp,
         String ipAddress,
         String userAgent,
-        String referrer
+        String referrer,
+        String variant,
+        String utmSource,
+        String utmMedium,
+        String utmCampaign
 ) {}

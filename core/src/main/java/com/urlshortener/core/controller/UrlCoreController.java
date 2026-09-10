@@ -46,7 +46,7 @@ public class UrlCoreController {
             @RequestParam(value = "size", required = false) Integer size,
             @RequestParam(value = "search", required = false) String search,
             @RequestParam(value = "status", required = false) String status,
-            @RequestParam(value = "campaignId", required = false) UUID campaignId,
+            @RequestParam(value = "campaignId", required = false) String campaignId,
             @RequestParam(value = "sortBy", defaultValue = "createdAt") String sortBy,
             @RequestParam(value = "direction", defaultValue = "DESC") String direction,
             @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
@@ -62,11 +62,24 @@ public class UrlCoreController {
             isActive = false;
         }
 
+        UUID targetCampaignId = null;
+        boolean unassignedOnly = false;
+        if (campaignId != null && !campaignId.isBlank()) {
+            if ("unassigned".equalsIgnoreCase(campaignId) || "none".equalsIgnoreCase(campaignId)) {
+                unassignedOnly = true;
+            } else if (!"all".equalsIgnoreCase(campaignId)) {
+                try {
+                    targetCampaignId = UUID.fromString(campaignId);
+                } catch (IllegalArgumentException ignored) {
+                }
+            }
+        }
+
         Sort.Direction sortDirection = "ASC".equalsIgnoreCase(direction) ? Sort.Direction.ASC : Sort.Direction.DESC;
         String sortField = "shortCode".equalsIgnoreCase(sortBy) ? "shortCode" : "createdAt";
         Pageable pageable = PageRequest.of(page, size != null ? size : 10, Sort.by(sortDirection, sortField));
 
-        Page<UrlMapping> pagedResult = urlCoreService.getUserUrlsPaged(userId, search, isActive, campaignId, pageable);
+        Page<UrlMapping> pagedResult = urlCoreService.getUserUrlsPaged(userId, search, isActive, targetCampaignId, unassignedOnly, pageable);
         return ResponseEntity.ok(PagedResponse.from(pagedResult));
     }
 

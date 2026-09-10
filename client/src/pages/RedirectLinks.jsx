@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Link, useParams, useOutletContext } from "react-router-dom";
-import { useUrlsQuery, useDeleteUrlMutation } from "@/queries";
+import { useUrlsQuery, useDeleteUrlMutation, useCampaignsQuery } from "@/queries";
 import { ROUTES } from "@/routes/paths";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +30,7 @@ import {
 	IconArrowsSort,
 	IconFilter,
 	IconSparkles,
+	IconFolder,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
 
@@ -87,6 +88,15 @@ export function RedirectLinksPage() {
 	}, [currentPage, pageSize, debouncedSearch, statusFilter, sortBy]);
 
 	const { data: serverData, isLoading, refetch: refetchUrls } = useUrlsQuery(queryParams);
+	const { data: userCampaigns = [] } = useCampaignsQuery();
+
+	const campaignMap = React.useMemo(() => {
+		const map = {};
+		userCampaigns.forEach((c) => {
+			map[c.id] = c;
+		});
+		return map;
+	}, [userCampaigns]);
 
 	const deleteMutation = useDeleteUrlMutation({
 		onSuccess: () => {
@@ -141,7 +151,7 @@ export function RedirectLinksPage() {
 							Redirect Links
 						</h1>
 						<Badge variant="secondary" className="font-mono text-xs font-semibold">
-							{urls.length} Total
+							{totalItems} Total
 						</Badge>
 					</div>
 					<p className="text-xs sm:text-sm text-muted-foreground">
@@ -283,6 +293,21 @@ export function RedirectLinksPage() {
 														<span className="hidden sm:inline text-[11px] text-muted-foreground font-medium truncate max-w-[150px]">
 															· {url.title}
 														</span>
+													)}
+													{url.isAbTest && (
+														<Link to={ROUTES.AB_TESTING}>
+															<Badge variant="outline" className="text-[10px] text-amber-500 border-amber-500/30 hover:bg-amber-500/10 cursor-pointer">
+																A/B Test
+															</Badge>
+														</Link>
+													)}
+													{url.campaignId && campaignMap[url.campaignId] && (
+														<Link to={`/campaigns?id=${url.campaignId}`} title={`Jump to campaign: ${campaignMap[url.campaignId].name}`}>
+															<Badge variant="secondary" className="text-[10px] gap-1 font-medium max-w-[130px] truncate hidden md:inline-flex hover:bg-primary/20 hover:text-primary transition-colors cursor-pointer">
+																<IconFolder className="size-3 text-primary shrink-0" />
+																<span className="truncate">{campaignMap[url.campaignId].name}</span>
+															</Badge>
+														</Link>
 													)}
 												</div>
 												<div className="mt-1 truncate text-[11px] text-muted-foreground">

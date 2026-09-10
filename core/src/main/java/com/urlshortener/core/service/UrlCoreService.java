@@ -128,7 +128,37 @@ public class UrlCoreService {
             Boolean isActive,
             UUID campaignId,
             Pageable pageable) {
-        return urlRepository.searchUserUrls(userId, search, isActive,campaignId, pageable);
+        return getUserUrlsPaged(userId, search, isActive, campaignId, false, pageable);
+    }
+
+    public Page<UrlMapping> getUserUrlsPaged(
+            UUID userId,
+            String search,
+            Boolean isActive,
+            UUID campaignId,
+            boolean unassignedOnly,
+            Pageable pageable) {
+        if (search != null && !search.trim().isBlank()) {
+            String searchPattern = "%" + search.trim().toLowerCase() + "%";
+            return urlRepository.searchUserUrls(userId, searchPattern, isActive, campaignId, unassignedOnly, pageable);
+        }
+
+        if (unassignedOnly) {
+            if (isActive != null) {
+                return urlRepository.findByUserIdAndIsActiveAndCampaignIdIsNull(userId, isActive, pageable);
+            }
+            return urlRepository.findByUserIdAndCampaignIdIsNull(userId, pageable);
+        }
+
+        if (isActive != null && campaignId != null) {
+            return urlRepository.findByUserIdAndIsActiveAndCampaignId(userId, isActive, campaignId, pageable);
+        } else if (isActive != null) {
+            return urlRepository.findByUserIdAndIsActive(userId, isActive, pageable);
+        } else if (campaignId != null) {
+            return urlRepository.findByUserIdAndCampaignId(userId, campaignId, pageable);
+        } else {
+            return urlRepository.findByUserId(userId, pageable);
+        }
     }
 
     public UrlMapping getUrl(UUID urlId, UUID userId) {

@@ -47,4 +47,14 @@ export const queryKeys = {
 			{ includeBots, limit },
 		],
 	},
+	campaigns: {
+		all: ["campaigns"],
+		list: () => ["campaigns", "list"],
+		detail: (id) => ["campaigns", id],
+		urls: (id) => ["campaigns", id, "urls"],
+	},
+	abTesting: {
+		all: ["abTesting"],
+		byCode: (shortCode) => ["abTesting", shortCode],
+	},
 };

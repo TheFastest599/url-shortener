@@ -118,5 +118,24 @@ export function useDeleteUrlMutation(options = {}) {
 
 export function useUpdateUrlByCodeMutation(shortCode, options = {}) {
 	const queryClient = useQueryClient();
-	return useMutation(urlMutationOptions.updateByCode(queryClient, shortCode, options));
+	return useMutation(
+		urlMutationOptions.updateByCode(queryClient, shortCode, options),
+	);
+}
+
+export function useUpdateUrlMutation(options = {}) {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (payload) => updateUrl(payload.id, payload),
+		onSuccess: async (data, variables, context) => {
+			await queryClient.invalidateQueries({
+				queryKey: queryKeys.urls.all,
+			});
+			await queryClient.invalidateQueries({
+				queryKey: queryKeys.campaigns.all,
+			});
+			options.onSuccess?.(data, variables, context);
+		},
+		onError: options.onError,
+	});
 }

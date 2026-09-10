@@ -50,7 +50,8 @@ public class AnalyticsService {
             List<TimeSeriesPoint> zeroSeries = buildTimeSeries(List.of(), since, now, zone, isHourly);
             return new AnalyticsOverviewDto(
                     shortCode, 0, 0, 0, 0.0,
-                    zeroSeries, List.of(), List.of(), List.of(), List.of(), List.of(), List.of()
+                    zeroSeries, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                    List.of(), List.of(), List.of()
             );
         }
 
@@ -70,6 +71,9 @@ public class AnalyticsService {
         List<StatMetricDto> os = mapMetrics(repository.findTopOperatingSystems(shortCode, includeBots, 10), denominator);
         List<StatMetricDto> devices = mapMetrics(repository.findTopDeviceTypes(shortCode, includeBots, 10), denominator);
         List<StatMetricDto> referrers = mapMetrics(repository.findTopReferrers(shortCode, includeBots, 10), denominator);
+        List<StatMetricDto> variants = mapMetrics(repository.findVariantBreakdown(shortCode), denominator);
+        List<StatMetricDto> utmSources = mapMetrics(repository.findTopUtmSources(shortCode, 10), denominator);
+        List<StatMetricDto> utmCampaigns = mapMetrics(repository.findTopUtmCampaigns(shortCode, 10), denominator);
 
         return new AnalyticsOverviewDto(
                 shortCode,
@@ -83,7 +87,10 @@ public class AnalyticsService {
                 browsers,
                 os,
                 devices,
-                referrers
+                referrers,
+                variants,
+                utmSources,
+                utmCampaigns
         );
     }
 

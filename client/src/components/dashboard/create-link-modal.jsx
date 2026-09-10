@@ -9,7 +9,8 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useCreateUrlMutation } from "@/queries";
+import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useCreateUrlMutation, useCampaignsQuery } from "@/queries";
 import {
 	IconLink,
 	IconSparkles,
@@ -27,8 +28,10 @@ export function CreateLinkModal({
 	onOpenQrModal,
 	initialDestinationUrl = "",
 }) {
+	const { data: campaigns = [] } = useCampaignsQuery();
 	const [destinationUrl, setDestinationUrl] = React.useState(initialDestinationUrl);
 	const [customAlias, setCustomAlias] = React.useState("");
+	const [selectedCampaignId, setSelectedCampaignId] = React.useState("");
 	const [showUtm, setShowUtm] = React.useState(false);
 	const [utmSource, setUtmSource] = React.useState("");
 	const [utmMedium, setUtmMedium] = React.useState("");
@@ -55,6 +58,7 @@ export function CreateLinkModal({
 	const handleReset = () => {
 		setDestinationUrl("");
 		setCustomAlias("");
+		setSelectedCampaignId("");
 		setShowUtm(false);
 		setUtmSource("");
 		setUtmMedium("");
@@ -103,6 +107,7 @@ export function CreateLinkModal({
 		const payload = {
 			destinationUrl: formattedUrl,
 			customAlias: customAlias.trim() || undefined,
+			campaignId: selectedCampaignId || undefined,
 		};
 
 		createUrlMutation.mutate(payload);
@@ -258,6 +263,30 @@ export function CreateLinkModal({
 								/>
 							</div>
 						</div>
+
+						{/* Optional Campaign Assignment */}
+						{campaigns.length > 0 && (
+							<div className="space-y-1.5">
+								<label className="text-xs font-medium text-foreground">
+									Assign to Campaign (Optional)
+								</label>
+								<SearchCombobox
+									items={[
+										{ value: "", label: "No Campaign (Standalone URL)", description: "Leave unattached" },
+										...campaigns.map((c) => ({
+											value: c.id,
+											label: c.name,
+											description: c.description || (c.clickCount ? `${c.clickCount} clicks` : ""),
+											badge: "Campaign",
+										})),
+									]}
+									value={selectedCampaignId}
+									onValueChange={(val) => setSelectedCampaignId(val || "")}
+									placeholder="Search campaigns..."
+									emptyMessage="No campaigns found."
+								/>
+							</div>
+						)}
 
 						{/* Collapsible UTM Builder */}
 						<div className="rounded-xl border border-border/60 bg-muted/20 p-3 space-y-3">

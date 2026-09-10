@@ -5,6 +5,8 @@ import {
 	IconLayoutDashboard,
 	IconLink,
 	IconAdjustments,
+	IconFlask,
+	IconChartBar,
 } from "@tabler/icons-react";
 import { Badge } from "@/components/ui/badge";
 
@@ -31,10 +33,24 @@ export function SidebarNavContent({
 			badge: totalLinksCount > 0 ? totalLinksCount : null,
 		},
 		{
+			title: "A/B Experiments",
+			url: ROUTES.AB_TESTING,
+			icon: IconFlask,
+			isActive: location.pathname === ROUTES.AB_TESTING,
+		},
+		{
 			title: "Campaigns & UTM",
 			url: ROUTES.CAMPAIGNS,
 			icon: IconAdjustments,
 			isActive: location.pathname === ROUTES.CAMPAIGNS,
+		},
+		{
+			title: "Analytics Hub",
+			url: ROUTES.ANALYTICS,
+			icon: IconChartBar,
+			isActive:
+				location.pathname === ROUTES.ANALYTICS ||
+				(location.pathname.startsWith("/analytics") && !location.pathname.includes("/r/")),
 		},
 	];
 
