@@ -1,6 +1,8 @@
 package com.urlshortener.analytics.service;
 
+import com.urlshortener.analytics.dto.AbTestAnalyticsDto;
 import com.urlshortener.analytics.dto.AnalyticsOverviewDto;
+import com.urlshortener.analytics.dto.CampaignAnalyticsDto;
 import com.urlshortener.analytics.dto.CityStatDto;
 import com.urlshortener.analytics.dto.StatMetricDto;
 import com.urlshortener.analytics.dto.TimeSeriesPoint;
@@ -21,6 +23,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -124,6 +127,235 @@ public class AnalyticsService {
         long total = repository.countByShortCode(shortCode);
         if (total == 0) return List.of();
         return mapMetrics(repository.findTopReferrers(shortCode, includeBots, limit), total);
+    }
+
+    // ==========================================
+    // CAMPAIGN ANALYTICS (BY CAMPAIGN_ID)
+    // ==========================================
+
+    public CampaignAnalyticsDto getCampaignAnalytics(UUID campaignId, int days, String interval, String timezone, boolean includeBots) {
+        long totalClicks = repository.countByCampaignId(campaignId);
+        Instant now = Instant.now();
+        ZoneId zone = parseZoneId(timezone);
+        ZonedDateTime localNow = now.atZone(zone);
+        ZonedDateTime localSince = days <= 2
+                ? localNow.minusHours(days * 24L)
+                : localNow.minusDays(days).truncatedTo(ChronoUnit.DAYS);
+        Instant since = localSince.toInstant();
+
+        boolean isHourly = interval != null
+                ? "HOUR".equalsIgnoreCase(interval)
+                : days <= 2;
+
+        if (totalClicks == 0) {
+            List<TimeSeriesPoint> zeroSeries = buildTimeSeries(List.of(), since, now, zone, isHourly);
+            return new CampaignAnalyticsDto(
+                    campaignId.toString(), 0, 0, 0, 0.0,
+                    zeroSeries, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of()
+            );
+        }
+
+        long humanClicks = repository.countHumanClicksByCampaignId(campaignId);
+        long botClicks = repository.countBotClicksByCampaignId(campaignId);
+        double botPercentage = Math.round(((double) botClicks / totalClicks) * 1000.0) / 10.0;
+        long denominator = includeBots ? totalClicks : Math.max(humanClicks, 1);
+
+        List<TimeSeriesProjection> rawHourly = repository.findHourlyTimeSeriesByCampaignId(campaignId, since);
+        List<TimeSeriesPoint> timeSeries = buildTimeSeries(rawHourly, since, now, zone, isHourly);
+
+        List<StatMetricDto> linkBreakdown = mapMetrics(repository.findLinkBreakdownByCampaignId(campaignId), totalClicks);
+        List<StatMetricDto> countries = mapMetrics(repository.findTopCountriesByCampaignId(campaignId, includeBots, 10), denominator);
+        List<CityStatDto> cities = mapCityMetrics(repository.findTopCitiesByCampaignId(campaignId, includeBots, 10), denominator);
+        List<StatMetricDto> browsers = mapMetrics(repository.findTopBrowsersByCampaignId(campaignId, includeBots, 10), denominator);
+        List<StatMetricDto> devices = mapMetrics(repository.findTopDeviceTypesByCampaignId(campaignId, includeBots, 10), denominator);
+        List<StatMetricDto> referrers = mapMetrics(repository.findTopReferrersByCampaignId(campaignId, includeBots, 10), denominator);
+        List<StatMetricDto> utmSources = mapMetrics(repository.findTopUtmSourcesByCampaignId(campaignId, 10), denominator);
+
+        return new CampaignAnalyticsDto(
+                campaignId.toString(),
+                totalClicks,
+                humanClicks,
+                botClicks,
+                botPercentage,
+                timeSeries,
+                linkBreakdown,
+                countries,
+                cities,
+                browsers,
+                devices,
+                referrers,
+                utmSources
+        );
+    }
+
+    // ==========================================
+    // A/B TEST ANALYTICS (BY AB_TEST_ID & SHORTCODE)
+    // ==========================================
+
+    public AbTestAnalyticsDto getAbTestAnalytics(UUID abTestId, int days, String interval, String timezone, boolean includeBots) {
+        long totalClicks = repository.countByAbTestId(abTestId);
+        Instant now = Instant.now();
+        ZoneId zone = parseZoneId(timezone);
+        ZonedDateTime localNow = now.atZone(zone);
+        ZonedDateTime localSince = days <= 2
+                ? localNow.minusHours(days * 24L)
+                : localNow.minusDays(days).truncatedTo(ChronoUnit.DAYS);
+        Instant since = localSince.toInstant();
+
+        boolean isHourly = interval != null
+                ? "HOUR".equalsIgnoreCase(interval)
+                : days <= 2;
+
+        if (totalClicks == 0) {
+            List<TimeSeriesPoint> zeroSeries = buildTimeSeries(List.of(), since, now, zone, isHourly);
+            return new AbTestAnalyticsDto(
+                    abTestId.toString(), 0, 0, 0, 0.0,
+                    List.of(), zeroSeries, List.of(), List.of(), List.of(), List.of()
+            );
+        }
+
+        long humanClicks = repository.countHumanClicksByAbTestId(abTestId);
+        long botClicks = repository.countBotClicksByAbTestId(abTestId);
+        double botPercentage = Math.round(((double) botClicks / totalClicks) * 1000.0) / 10.0;
+        long denominator = includeBots ? totalClicks : Math.max(humanClicks, 1);
+
+        List<TimeSeriesProjection> rawHourly = repository.findHourlyTimeSeriesByAbTestId(abTestId, since);
+        List<TimeSeriesPoint> timeSeries = buildTimeSeries(rawHourly, since, now, zone, isHourly);
+
+        List<StatMetricDto> variants = mapMetrics(repository.findVariantBreakdownByAbTestId(abTestId), denominator);
+        List<StatMetricDto> countries = mapMetrics(repository.findTopCountriesByAbTestId(abTestId, includeBots, 10), denominator);
+        List<StatMetricDto> browsers = mapMetrics(repository.findTopBrowsersByAbTestId(abTestId, includeBots, 10), denominator);
+        List<StatMetricDto> devices = mapMetrics(repository.findTopDeviceTypesByAbTestId(abTestId, includeBots, 10), denominator);
+        List<StatMetricDto> referrers = mapMetrics(repository.findTopReferrersByAbTestId(abTestId, includeBots, 10), denominator);
+
+        return new AbTestAnalyticsDto(
+                abTestId.toString(),
+                totalClicks,
+                humanClicks,
+                botClicks,
+                botPercentage,
+                variants,
+                timeSeries,
+                countries,
+                browsers,
+                devices,
+                referrers
+        );
+    }
+
+    public AbTestAnalyticsDto getAbTestAnalyticsByCode(String shortCode, int days, String interval, String timezone, boolean includeBots) {
+        long totalClicks = repository.countByShortCode(shortCode);
+        Instant now = Instant.now();
+        ZoneId zone = parseZoneId(timezone);
+        ZonedDateTime localNow = now.atZone(zone);
+        ZonedDateTime localSince = days <= 2
+                ? localNow.minusHours(days * 24L)
+                : localNow.minusDays(days).truncatedTo(ChronoUnit.DAYS);
+        Instant since = localSince.toInstant();
+
+        boolean isHourly = interval != null
+                ? "HOUR".equalsIgnoreCase(interval)
+                : days <= 2;
+
+        if (totalClicks == 0) {
+            List<TimeSeriesPoint> zeroSeries = buildTimeSeries(List.of(), since, now, zone, isHourly);
+            return new AbTestAnalyticsDto(
+                    shortCode, 0, 0, 0, 0.0,
+                    List.of(), zeroSeries, List.of(), List.of(), List.of(), List.of()
+            );
+        }
+
+        long humanClicks = repository.countHumanClicksByShortCode(shortCode);
+        long botClicks = repository.countBotClicksByShortCode(shortCode);
+        double botPercentage = Math.round(((double) botClicks / totalClicks) * 1000.0) / 10.0;
+        long denominator = includeBots ? totalClicks : Math.max(humanClicks, 1);
+
+        List<TimeSeriesProjection> rawHourly = repository.findHourlyTimeSeries(shortCode, since);
+        List<TimeSeriesPoint> timeSeries = buildTimeSeries(rawHourly, since, now, zone, isHourly);
+
+        List<StatMetricDto> variants = mapMetrics(repository.findVariantBreakdown(shortCode), denominator);
+        List<StatMetricDto> countries = mapMetrics(repository.findTopCountries(shortCode, includeBots, 10), denominator);
+        List<StatMetricDto> browsers = mapMetrics(repository.findTopBrowsers(shortCode, includeBots, 10), denominator);
+        List<StatMetricDto> devices = mapMetrics(repository.findTopDeviceTypes(shortCode, includeBots, 10), denominator);
+        List<StatMetricDto> referrers = mapMetrics(repository.findTopReferrers(shortCode, includeBots, 10), denominator);
+
+        return new AbTestAnalyticsDto(
+                shortCode,
+                totalClicks,
+                humanClicks,
+                botClicks,
+                botPercentage,
+                variants,
+                timeSeries,
+                countries,
+                browsers,
+                devices,
+                referrers
+        );
+    }
+
+    // ==========================================
+    // URL ANALYTICS (BY URL_ID)
+    // ==========================================
+
+    public AnalyticsOverviewDto getUrlAnalyticsById(UUID urlId, int days, String interval, String timezone, boolean includeBots) {
+        long totalClicks = repository.countByUrlId(urlId);
+        Instant now = Instant.now();
+        ZoneId zone = parseZoneId(timezone);
+        ZonedDateTime localNow = now.atZone(zone);
+        ZonedDateTime localSince = days <= 2
+                ? localNow.minusHours(days * 24L)
+                : localNow.minusDays(days).truncatedTo(ChronoUnit.DAYS);
+        Instant since = localSince.toInstant();
+
+        boolean isHourly = interval != null
+                ? "HOUR".equalsIgnoreCase(interval)
+                : days <= 2;
+
+        if (totalClicks == 0) {
+            List<TimeSeriesPoint> zeroSeries = buildTimeSeries(List.of(), since, now, zone, isHourly);
+            return new AnalyticsOverviewDto(
+                    urlId.toString(), 0, 0, 0, 0.0,
+                    zeroSeries, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                    List.of(), List.of(), List.of()
+            );
+        }
+
+        long humanClicks = repository.countHumanClicksByUrlId(urlId);
+        long botClicks = repository.countBotClicksByUrlId(urlId);
+        double botPercentage = Math.round(((double) botClicks / totalClicks) * 1000.0) / 10.0;
+        long denominator = includeBots ? totalClicks : Math.max(humanClicks, 1);
+
+        List<TimeSeriesProjection> rawHourly = repository.findHourlyTimeSeriesByUrlId(urlId, since);
+        List<TimeSeriesPoint> timeSeries = buildTimeSeries(rawHourly, since, now, zone, isHourly);
+
+        List<StatMetricDto> countries = mapMetrics(repository.findTopCountriesByUrlId(urlId, includeBots, 10), denominator);
+        List<CityStatDto> cities = mapCityMetrics(repository.findTopCitiesByUrlId(urlId, includeBots, 10), denominator);
+        List<StatMetricDto> browsers = mapMetrics(repository.findTopBrowsersByUrlId(urlId, includeBots, 10), denominator);
+        List<StatMetricDto> os = mapMetrics(repository.findTopOperatingSystemsByUrlId(urlId, includeBots, 10), denominator);
+        List<StatMetricDto> devices = mapMetrics(repository.findTopDeviceTypesByUrlId(urlId, includeBots, 10), denominator);
+        List<StatMetricDto> referrers = mapMetrics(repository.findTopReferrersByUrlId(urlId, includeBots, 10), denominator);
+        List<StatMetricDto> variants = mapMetrics(repository.findVariantBreakdownByUrlId(urlId), denominator);
+        List<StatMetricDto> utmSources = mapMetrics(repository.findTopUtmSourcesByUrlId(urlId, 10), denominator);
+        List<StatMetricDto> utmCampaigns = mapMetrics(repository.findTopUtmCampaignsByUrlId(urlId, 10), denominator);
+
+        return new AnalyticsOverviewDto(
+                urlId.toString(),
+                totalClicks,
+                humanClicks,
+                botClicks,
+                botPercentage,
+                timeSeries,
+                countries,
+                cities,
+                browsers,
+                os,
+                devices,
+                referrers,
+                variants,
+                utmSources,
+                utmCampaigns
+        );
     }
 
     // -- Helper Methods --

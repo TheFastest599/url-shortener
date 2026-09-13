@@ -79,6 +79,16 @@ public class UrlGrpcService extends UrlServiceGrpc.UrlServiceImplBase {
             builder.setSmartRulesJson(first.getSmartRules());
         }
 
+        if (first.getUrlId() != null) {
+            builder.setUrlId(first.getUrlId().toString());
+        }
+        if (first.getCampaignId() != null) {
+            builder.setCampaignId(first.getCampaignId().toString());
+        }
+        if (first.getTestId() != null) {
+            builder.setAbTestId(first.getTestId().toString());
+        }
+
         // Process A/B testing variants from joined rows if test is ACTIVE
         if (Boolean.TRUE.equals(first.getIsAbTest()) && "ACTIVE".equalsIgnoreCase(first.getTestStatus())) {
             assembleAbRulesJson(first, rows).ifPresent(builder::setAbRulesJson);

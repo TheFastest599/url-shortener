@@ -13,5 +13,8 @@ public record ClickEvent(
         String variant,
         String utmSource,
         String utmMedium,
-        String utmCampaign
+        String utmCampaign,
+        String urlId,
+        String campaignId,
+        String abTestId
 ) {}

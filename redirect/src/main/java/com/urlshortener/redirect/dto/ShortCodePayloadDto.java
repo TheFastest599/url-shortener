@@ -29,6 +29,9 @@ public class ShortCodePayloadDto {
     private AbConfig abConfig;
     private SmartRules smartRules;
     private long hits;
+    private String urlId;
+    private String campaignId;
+    private String abTestId;
 
     /**
      * Runtime converter: transforms Redis Hash entries into a structured domain DTO.
@@ -42,11 +45,18 @@ public class ShortCodePayloadDto {
         }
 
         String targetUrl = hash.get("target");
+        String urlId = hash.get("urlId");
+        String campaignId = hash.get("campaignId");
+        String abTestId = hash.get("abTestId");
+
         AbConfig abConfig = null;
         String abString = hash.get("ab");
         if (abString != null && !abString.isBlank()) {
             try {
                 abConfig = mapper.readValue(abString, AbConfig.class);
+                if ((abTestId == null || abTestId.isBlank()) && abConfig != null && abConfig.testId() != null) {
+                    abTestId = abConfig.testId();
+                }
             } catch (Exception e) {
                 log.warn("Failed to deserialize AbConfig for {}: {}", shortCode, e.getMessage());
             }
@@ -68,6 +78,9 @@ public class ShortCodePayloadDto {
                 .abConfig(abConfig)
                 .smartRules(smartRules)
                 .hits(hits)
+                .urlId(urlId)
+                .campaignId(campaignId)
+                .abTestId(abTestId)
                 .build();
     }
 
@@ -78,6 +91,18 @@ public class ShortCodePayloadDto {
         Map<String, String> map = new HashMap<>();
         if (targetUrl != null && !targetUrl.isBlank()) {
             map.put("target", targetUrl);
+        }
+
+        if (urlId != null && !urlId.isBlank()) {
+            map.put("urlId", urlId);
+        }
+
+        if (campaignId != null && !campaignId.isBlank()) {
+            map.put("campaignId", campaignId);
+        }
+
+        if (abTestId != null && !abTestId.isBlank()) {
+            map.put("abTestId", abTestId);
         }
 
         if (abConfig != null) {
@@ -104,10 +129,17 @@ public class ShortCodePayloadDto {
      */
     public static ShortCodePayloadDto fromGrpc(String shortCode, UrlResponse response, long hits, ObjectMapper mapper) {
         String targetUrl = response.getDestinationUrl();
+        String urlId = response.getUrlId();
+        String campaignId = response.getCampaignId();
+        String abTestId = response.getAbTestId();
+
         AbConfig abConfig = null;
         if (!response.getAbRulesJson().isEmpty()) {
             try {
                 abConfig = mapper.readValue(response.getAbRulesJson(), AbConfig.class);
+                if ((abTestId == null || abTestId.isBlank()) && abConfig != null && abConfig.testId() != null) {
+                    abTestId = abConfig.testId();
+                }
             } catch (Exception e) {
                 log.warn("Failed to parse gRPC AbRules for {}: {}", shortCode, e.getMessage());
             }
@@ -128,6 +160,9 @@ public class ShortCodePayloadDto {
                 .abConfig(abConfig)
                 .smartRules(smartRules)
                 .hits(hits)
+                .urlId(urlId)
+                .campaignId(campaignId)
+                .abTestId(abTestId)
                 .build();
     }
 

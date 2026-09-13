@@ -51,7 +51,7 @@ public interface UrlMappingRepository extends JpaRepository<UrlMapping, UUID> {
     );
 
     @Query("SELECT u.shortCode as shortCode, u.destinationUrl as destinationUrl, u.isActive as isActive, " +
-            "u.isAbTest as isAbTest, u.smartRules as smartRules, " +
+            "u.isAbTest as isAbTest, u.smartRules as smartRules, u.id as urlId, u.campaignId as campaignId, " +
             "t.id as testId, t.status as testStatus, t.winningVariant as winningVariant, t.cookieTtlSeconds as cookieTtlSeconds, " +
             "v.variantKey as variantKey, v.destinationUrl as variantUrl, v.weight as variantWeight, v.isControl as variantIsControl " +
             "FROM UrlMapping u " +

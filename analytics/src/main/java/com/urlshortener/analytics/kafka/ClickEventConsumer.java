@@ -11,6 +11,7 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.UUID;
 
 @Slf4j
 @Component
@@ -87,9 +88,21 @@ public class ClickEventConsumer {
                 .utmMedium(event.utmMedium())
                 .utmCampaign(event.utmCampaign())
                 .isBot(isBot)
+                .urlId(parseUuidSafe(event.urlId()))
+                .campaignId(parseUuidSafe(event.campaignId()))
+                .abTestId(parseUuidSafe(event.abTestId()))
                 .build();
 
         repository.save(analytics);
         log.info("Logged click for [{}] | Country: [{}] | City: [{}] | Device: [{}] | Browser: [{}]", event.shortCode(), location.country(), location.city(), device, browser);
+    }
+
+    private UUID parseUuidSafe(String str) {
+        if (str == null || str.isBlank()) return null;
+        try {
+            return UUID.fromString(str.trim());
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

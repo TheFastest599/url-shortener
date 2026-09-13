@@ -89,7 +89,7 @@ public class RedirectService {
                     String finalUrl = mergeQueryParams(destinationUrl, request.getQueryParams());
 
                     // Async fire-and-forget Kafka telemetry
-                    emitTelemetry(shortCode, selectedVariant, request);
+                    emitTelemetry(shortCode, selectedVariant, payload, request);
 
                     return Mono.just(finalUrl);
                 });
@@ -237,7 +237,7 @@ public class RedirectService {
                         dest = payload.getTargetUrl();
                     }
 
-                    emitTelemetry(shortCode, selectedVariant, request);
+                    emitTelemetry(shortCode, selectedVariant, payload, request);
                     return Mono.just(mergeQueryParams(dest, request.getQueryParams()));
                 })
                 .onErrorResume(e -> {
@@ -259,7 +259,7 @@ public class RedirectService {
         return builder.build().toUriString();
     }
 
-    private void emitTelemetry(String shortCode, String variant, ServerHttpRequest request) {
+    private void emitTelemetry(String shortCode, String variant, ShortCodePayloadDto payload, ServerHttpRequest request) {
         String ip = request.getHeaders().getFirst("X-Forwarded-For");
         if (ip != null && ip.contains(",")) {
             ip = ip.split(",")[0].trim();
@@ -274,6 +274,10 @@ public class RedirectService {
         String referrer = request.getHeaders().getFirst("Referer");
         MultiValueMap<String, String> params = request.getQueryParams();
 
+        String urlId = payload != null ? payload.getUrlId() : null;
+        String campaignId = payload != null ? payload.getCampaignId() : null;
+        String abTestId = payload != null ? payload.getAbTestId() : null;
+
         ClickEvent event = new ClickEvent(
                 shortCode,
                 Instant.now(),
@@ -283,7 +287,10 @@ public class RedirectService {
                 variant,
                 params.getFirst("utm_source"),
                 params.getFirst("utm_medium"),
-                params.getFirst("utm_campaign")
+                params.getFirst("utm_campaign"),
+                urlId,
+                campaignId,
+                abTestId
         );
         clickEventProducer.publishClickEvent(event);
     }

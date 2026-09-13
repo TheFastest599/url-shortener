@@ -21,6 +21,9 @@ message UrlResponse {
   string short_code = 4;
   string ab_rules_json = 5;
   string smart_rules_json = 6;
+  string url_id = 7;
+  string campaign_id = 8;
+  string ab_test_id = 9;
 }
 
 message CreateUrlRequest {

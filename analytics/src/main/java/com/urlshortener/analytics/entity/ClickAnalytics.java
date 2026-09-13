@@ -70,4 +70,13 @@ public class ClickAnalytics {
 
     @Column(name = "is_bot", nullable = false)
     private Boolean isBot;
+
+    @Column(name = "url_id")
+    private UUID urlId;
+
+    @Column(name = "campaign_id")
+    private UUID campaignId;
+
+    @Column(name = "ab_test_id")
+    private UUID abTestId;
 }

@@ -12,6 +12,8 @@ public interface UrlResolutionProjection {
     Boolean getIsActive();
     Boolean getIsAbTest();
     String getSmartRules();
+    UUID getUrlId();
+    UUID getCampaignId();
 
     // A/B Test fields (null if no active test)
     UUID getTestId();
