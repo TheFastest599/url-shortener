@@ -124,4 +124,13 @@ public class UrlCoreController {
         urlCoreService.deleteShortUrl(urlId, userId);
         return ResponseEntity.noContent().build();
     }
+
+    @DeleteMapping("/code/{shortCode}")
+    public ResponseEntity<Void> deleteUrlByCode(
+            @PathVariable String shortCode,
+            @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
+        urlCoreService.deleteShortUrlByCode(shortCode, userId);
+        return ResponseEntity.noContent().build();
+    }
 }
+

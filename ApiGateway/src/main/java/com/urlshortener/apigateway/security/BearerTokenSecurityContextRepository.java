@@ -35,8 +35,11 @@ public class BearerTokenSecurityContextRepository implements ServerSecurityConte
                 Claims claims = jwtTokenProvider.getClaimsFromToken(token);
                 String userId = claims.getSubject();
                 String role = claims.get("role", String.class);
+                String authority = (role != null && !role.isBlank())
+                        ? (role.startsWith("ROLE_") ? role : "ROLE_" + role)
+                        : "ROLE_USER";
 
-                List<SimpleGrantedAuthority> authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role));
+                List<SimpleGrantedAuthority> authorities = List.of(new SimpleGrantedAuthority(authority));
 
                 UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(userId, null, authorities);
 

@@ -20,7 +20,7 @@ spring:
         - id: core-service-route
           uri: ${CORE_SERVICE_URL:http://localhost:8081}
           predicates:
-            - Path=/api/v1/urls/**, /api/v1/campaigns/**
+            - Path=/api/v1/urls/**, /api/v1/campaigns/**, /api/v1/ab-tests/**
 
         - id: analytics-service-route
           uri: ${ANALYTICS_SERVICE_URL:http://localhost:8083}

@@ -10,6 +10,8 @@ import java.util.UUID;
 public record AbTestResponse(
         UUID id,
         UUID urlMappingId,
+        String shortCode,
+        String destinationUrl,
         String name,
         String status,
         String winningVariant,
@@ -17,7 +19,6 @@ public record AbTestResponse(
         List<VariantDto> variants,
         Instant createdAt,
         Instant updatedAt
-
 ) {
     public record VariantDto(
             UUID id,
@@ -26,24 +27,28 @@ public record AbTestResponse(
             int weight,
             boolean isControl
     ) {
-        public static VariantDto from(AbVariant v){
+        public static VariantDto from(AbVariant v) {
             return new VariantDto(v.getId(), v.getVariantKey(), v.getDestinationUrl(), v.getWeight(), v.getIsControl());
         }
     }
 
-    public static AbTestResponse from(AbTest test, List<AbVariant> variants) {
+    public static AbTestResponse from(AbTest test, List<AbVariant> variants, String shortCode, String destinationUrl) {
         return new AbTestResponse(
                 test.getId(),
                 test.getUrlMappingId(),
+                shortCode,
+                destinationUrl,
                 test.getName(),
                 test.getStatus(),
                 test.getWinningVariant(),
                 test.getCookieTtlSeconds(),
-                variants.stream().map(VariantDto::from).toList(),
+                variants != null ? variants.stream().map(VariantDto::from).toList() : List.of(),
                 test.getCreatedAt(),
                 test.getUpdatedAt()
         );
     }
 
-
+    public static AbTestResponse from(AbTest test, List<AbVariant> variants) {
+        return from(test, variants, null, null);
+    }
 }

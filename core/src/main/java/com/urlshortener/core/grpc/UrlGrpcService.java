@@ -30,8 +30,6 @@ import java.util.UUID;
 public class UrlGrpcService extends UrlServiceGrpc.UrlServiceImplBase {
 
     private final UrlMappingRepository urlMappingRepository;
-    private final AbTestRepository abTestRepository;
-    private final AbVariantRepository abVariantRepository;
     private final UrlCoreService urlCoreService;
     private final ObjectMapper objectMapper;
 
@@ -45,21 +43,23 @@ public class UrlGrpcService extends UrlServiceGrpc.UrlServiceImplBase {
             return;
         }
 
-        Optional<UrlMapping> mappingOpt = urlMappingRepository.findByShortCode(shortCode.trim());
+        // Single joint SQL query across url_mappings, ab_tests, and ab_variants
+        List<com.urlshortener.core.repository.UrlResolutionProjection> rows =
+                urlMappingRepository.findFullResolutionByShortCode(shortCode.trim());
 
         // Guard Clause 2: URL not found in database
-        if (mappingOpt.isEmpty()) {
+        if (rows == null || rows.isEmpty()) {
             sendNotFound(shortCode, responseObserver);
             return;
         }
 
-        UrlMapping mapping = mappingOpt.get();
+        com.urlshortener.core.repository.UrlResolutionProjection first = rows.get(0);
 
-        // Guard Clause 3: Link is deactivated/disabled (short-circuit without loading variants)
-        if (!Boolean.TRUE.equals(mapping.getIsActive())) {
+        // Guard Clause 3: Link is deactivated/disabled
+        if (!Boolean.TRUE.equals(first.getIsActive())) {
             UrlResponse inactiveResponse = UrlResponse.newBuilder()
-                    .setShortCode(mapping.getShortCode())
-                    .setDestinationUrl(mapping.getDestinationUrl())
+                    .setShortCode(first.getShortCode())
+                    .setDestinationUrl(first.getDestinationUrl())
                     .setIsActive(false)
                     .setIsFound(true)
                     .build();
@@ -68,15 +68,21 @@ public class UrlGrpcService extends UrlServiceGrpc.UrlServiceImplBase {
             return;
         }
 
-        // Happy Path: URL is active and found (unindented, linear flow)
+        // URL is active and found: assemble single-pass response
         UrlResponse.Builder builder = UrlResponse.newBuilder()
-                .setShortCode(mapping.getShortCode())
-                .setDestinationUrl(mapping.getDestinationUrl())
+                .setShortCode(first.getShortCode())
+                .setDestinationUrl(first.getDestinationUrl())
                 .setIsActive(true)
                 .setIsFound(true);
 
-        resolveAbRulesJson(mapping).ifPresent(builder::setAbRulesJson);
-        resolveSmartRulesJson(mapping).ifPresent(builder::setSmartRulesJson);
+        if (first.getSmartRules() != null && !first.getSmartRules().isBlank()) {
+            builder.setSmartRulesJson(first.getSmartRules());
+        }
+
+        // Process A/B testing variants from joined rows if test is ACTIVE
+        if (Boolean.TRUE.equals(first.getIsAbTest()) && "ACTIVE".equalsIgnoreCase(first.getTestStatus())) {
+            assembleAbRulesJson(first, rows).ifPresent(builder::setAbRulesJson);
+        }
 
         responseObserver.onNext(builder.build());
         responseObserver.onCompleted();
@@ -134,62 +140,40 @@ public class UrlGrpcService extends UrlServiceGrpc.UrlServiceImplBase {
     }
 
     /**
-     * Resolves active A/B test variant rules using negative space guard clauses.
+     * Assembles active A/B test variants into a JSON payload from the joint query rows.
      */
-    private Optional<String> resolveAbRulesJson(UrlMapping mapping) {
-        // Guard Clause 1: URL mapping is not configured for A/B testing
-        if (!Boolean.TRUE.equals(mapping.getIsAbTest())) {
-            return Optional.empty();
-        }
-
-        Optional<AbTest> abTestOpt = abTestRepository.findByUrlMappingId(mapping.getId());
-
-        // Guard Clause 2: No A/B test record associated with this mapping
-        if (abTestOpt.isEmpty()) {
-            return Optional.empty();
-        }
-
-        AbTest test = abTestOpt.get();
-
-        // Guard Clause 3: Test is not active (paused, concluded, etc.)
-        if (!"ACTIVE".equalsIgnoreCase(test.getStatus())) {
-            return Optional.empty();
-        }
-
-        List<AbVariant> variants = abVariantRepository.findByAbTestId(test.getId());
-
-        // Guard Clause 4: No variants exist for this test
-        if (variants == null || variants.isEmpty()) {
-            return Optional.empty();
-        }
-
-        // Happy Path: Construct JSON configuration payload
+    private Optional<String> assembleAbRulesJson(
+            com.urlshortener.core.repository.UrlResolutionProjection first,
+            List<com.urlshortener.core.repository.UrlResolutionProjection> rows) {
         try {
+            List<Map<String, Object>> variantList = new java.util.ArrayList<>();
+            for (com.urlshortener.core.repository.UrlResolutionProjection row : rows) {
+                if (row.getVariantKey() != null && !row.getVariantKey().isBlank()) {
+                    variantList.add(Map.of(
+                            "key", row.getVariantKey(),
+                            "url", row.getVariantUrl() != null ? row.getVariantUrl() : "",
+                            "weight", row.getVariantWeight() != null ? row.getVariantWeight() : 50,
+                            "isControl", Boolean.TRUE.equals(row.getVariantIsControl())
+                    ));
+                }
+            }
+
+            if (variantList.isEmpty()) {
+                return Optional.empty();
+            }
+
             Map<String, Object> abPayload = new HashMap<>();
-            abPayload.put("testId", test.getId().toString());
-            abPayload.put("status", test.getStatus());
-            abPayload.put("cookieTtlSeconds", test.getCookieTtlSeconds());
-            abPayload.put("variants", variants.stream().map(v -> Map.of(
-                    "key", v.getVariantKey(),
-                    "url", v.getDestinationUrl(),
-                    "weight", v.getWeight(),
-                    "isControl", v.getIsControl()
-            )).toList());
+            abPayload.put("testId", first.getTestId() != null ? first.getTestId().toString() : "");
+            abPayload.put("status", first.getTestStatus());
+            abPayload.put("winningVariant", first.getWinningVariant());
+            abPayload.put("cookieTtlSeconds", first.getCookieTtlSeconds() != null ? first.getCookieTtlSeconds() : 2592000);
+            abPayload.put("variants", variantList);
+
             return Optional.of(objectMapper.writeValueAsString(abPayload));
         } catch (Exception e) {
-            log.error("Failed to serialize A/B rules for shortCode {}: {}", mapping.getShortCode(), e.getMessage());
+            log.error("Failed to assemble A/B rules for shortCode {}: {}", first.getShortCode(), e.getMessage());
             return Optional.empty();
         }
-    }
-
-    /**
-     * Extracts smart routing rules using guard clauses.
-     */
-    private Optional<String> resolveSmartRulesJson(UrlMapping mapping) {
-        if (mapping.getSmartRules() == null || mapping.getSmartRules().isBlank()) {
-            return Optional.empty();
-        }
-        return Optional.of(mapping.getSmartRules());
     }
 
     /**

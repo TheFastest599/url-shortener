@@ -1,7 +1,9 @@
 package com.urlshortener.redirect.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import java.time.Instant;
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 public record ClickEvent(
         String shortCode,
         Instant timestamp,

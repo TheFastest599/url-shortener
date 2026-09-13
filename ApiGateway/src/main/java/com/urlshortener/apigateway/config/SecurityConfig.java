@@ -63,7 +63,7 @@ public class SecurityConfig {
                         .pathMatchers("/", "/health", "/api/v1/health", "/actuator/health", "/favicon.ico").permitAll()
                         .pathMatchers("/api/v1/auth/**").permitAll()
                         .pathMatchers("/r/**", "/s/**").permitAll()
-                        .pathMatchers("/api/v1/urls/short/**").permitAll()
+                        .pathMatchers("/api/v1/urls/code/**", "/api/v1/urls/short/**").permitAll()
                         .anyExchange().authenticated()
                 )
                 .build();

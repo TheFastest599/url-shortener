@@ -49,5 +49,15 @@ public interface UrlMappingRepository extends JpaRepository<UrlMapping, UUID> {
             @Param("unassignedOnly") boolean unassignedOnly,
             Pageable pageable
     );
+
+    @Query("SELECT u.shortCode as shortCode, u.destinationUrl as destinationUrl, u.isActive as isActive, " +
+            "u.isAbTest as isAbTest, u.smartRules as smartRules, " +
+            "t.id as testId, t.status as testStatus, t.winningVariant as winningVariant, t.cookieTtlSeconds as cookieTtlSeconds, " +
+            "v.variantKey as variantKey, v.destinationUrl as variantUrl, v.weight as variantWeight, v.isControl as variantIsControl " +
+            "FROM UrlMapping u " +
+            "LEFT JOIN AbTest t ON t.urlMappingId = u.id " +
+            "LEFT JOIN AbVariant v ON v.abTestId = t.id " +
+            "WHERE u.shortCode = :shortCode")
+    List<UrlResolutionProjection> findFullResolutionByShortCode(@Param("shortCode") String shortCode);
 }
 

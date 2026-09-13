@@ -11,7 +11,7 @@ public record CampaignResponse(
         String description,
         long linkCount,
         Instant createdAt,
-        Instant updatedAr
+        Instant updatedAt
 ) {
     public static CampaignResponse from(Campaign c, long linkCount) {
         return new CampaignResponse(

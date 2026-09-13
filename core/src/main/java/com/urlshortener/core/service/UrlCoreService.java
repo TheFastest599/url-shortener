@@ -118,6 +118,19 @@ public class UrlCoreService {
         evictRedirectCache(mapping.getShortCode());
     }
 
+    @Transactional
+    public void deleteShortUrlByCode(String shortCode, UUID userId) {
+        UrlMapping mapping = urlRepository.findByShortCode(shortCode)
+                .orElseThrow(() -> new IllegalArgumentException("Url Mapping not found for code: " + shortCode));
+
+        if (!mapping.getUserId().equals(userId)) {
+            throw new IllegalStateException("Unauthorized to delete this url");
+        }
+
+        urlRepository.delete(mapping);
+        evictRedirectCache(mapping.getShortCode());
+    }
+
     public List<UrlMapping> getUserUrls(UUID userId) {
         return urlRepository.findByUserId(userId);
     }
@@ -193,33 +206,24 @@ public class UrlCoreService {
     }
 
     /**
-     * Evicts all Strategy 1 keys for a short code across Redis.
+     * Cleanly evicts the consolidated routing hash for a short code across Redis.
      * Called whenever a link is updated, deactivated, or deleted.
      */
     public void evictRedirectCache(String shortCode) {
         try {
-            redisTemplate.delete(List.of(
-                    "url:redirect:" + shortCode,
-                    "url:ab:" + shortCode,
-                    "url:rules:" + shortCode,
-                    "url:hits:" + shortCode
-            ));
-            log.info("Evicted all Redis Strategy 1 keys for shortCode: {}", shortCode);
+            redisTemplate.delete("url:" + shortCode);
+            log.info("Evicted consolidated Redis key url:{} for shortCode", shortCode);
         } catch (Exception e) {
             log.warn("Failed to evict Redis cache for {}: {}", shortCode, e.getMessage());
         }
     }
 
     /**
-     * Specifically evicts only the A/B test configuration key.
-     * Called when an A/B test is paused or concluded without modifying the base URL.
+     * Evicts the consolidated routing cache for a short code when an A/B test changes.
+     * The next visitor triggers a fresh joint query reload.
      */
     public void evictAbCache(String shortCode) {
-        try {
-            redisTemplate.delete("url:ab:" + shortCode);
-            log.info("Evicted Redis A/B test key for shortCode: {}", shortCode);
-        } catch (Exception e) {
-            log.warn("Failed to evict Redis A/B cache for {}: {}", shortCode, e.getMessage());
-        }
+        evictRedirectCache(shortCode);
     }
 }
+
