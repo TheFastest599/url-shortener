@@ -1,3 +1,4 @@
+export { CampaignsTable } from "./CampaignsTable";
 export { CampaignHeader } from "./CampaignHeader";
 export { CampaignStatsCards } from "./CampaignStatsCards";
 export { CampaignCard } from "./CampaignCard";

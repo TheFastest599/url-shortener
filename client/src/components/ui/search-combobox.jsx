@@ -22,10 +22,14 @@ export function SearchCombobox({
 	emptyMessage = "No matches found.",
 	className = "",
 	disabled = false,
+	onSearchChange,
+	isLoading = false,
+	remote = false,
 }) {
 	const [search, setSearch] = React.useState("");
 
 	const filteredItems = React.useMemo(() => {
+		if (remote) return items;
 		if (!search.trim()) return items;
 		const q = search.toLowerCase();
 		return items.filter((item) => {
@@ -34,7 +38,7 @@ export function SearchCombobox({
 			} ${item.badge || ""}`.toLowerCase();
 			return text.includes(q);
 		});
-	}, [items, search]);
+	}, [items, search, remote]);
 
 	const selectedItem = React.useMemo(() => {
 		return items.find((i) => (i.value ?? i.id ?? i.shortCode) === value);
@@ -50,6 +54,7 @@ export function SearchCombobox({
 					);
 					onValueChange?.(newVal, item);
 					setSearch("");
+					onSearchChange?.("");
 				}}
 				disabled={disabled}
 			>
@@ -60,15 +65,26 @@ export function SearchCombobox({
 							: placeholder
 					}
 					value={search}
-					onChange={(e) => setSearch(e.target.value)}
+					onChange={(e) => {
+						const val = e.target.value;
+						setSearch(val);
+						onSearchChange?.(val);
+					}}
 					className="w-full text-xs"
 					showClear={!!value}
 				/>
 				<ComboboxContent className="w-full min-w-[280px] z-50 shadow-xl border-border/80">
 					<ComboboxList className="max-h-60 p-1">
-						<ComboboxEmpty className="py-4 text-xs text-muted-foreground text-center">
-							{emptyMessage}
-						</ComboboxEmpty>
+						{isLoading ? (
+							<div className="py-4 text-xs text-muted-foreground text-center flex items-center justify-center gap-2">
+								<span className="size-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+								<span>Searching...</span>
+							</div>
+						) : filteredItems.length === 0 ? (
+							<div className="py-4 text-xs text-muted-foreground text-center">
+								{emptyMessage}
+							</div>
+						) : null}
 						<ComboboxGroup>
 							{filteredItems.map((item) => {
 								const itemVal =

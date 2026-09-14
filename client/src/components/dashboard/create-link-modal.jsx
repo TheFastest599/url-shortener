@@ -27,7 +27,31 @@ export function CreateLinkModal({
 	onOpenQrModal,
 	initialDestinationUrl = "",
 }) {
-	const { data: campaigns = [] } = useCampaignsQuery({}, { enabled: !!open });
+	const [campaignSearch, setCampaignSearch] = React.useState("");
+	const [debouncedCampaignSearch, setDebouncedCampaignSearch] = React.useState("");
+
+	React.useEffect(() => {
+		const timer = setTimeout(() => {
+			setDebouncedCampaignSearch(campaignSearch);
+		}, 250);
+		return () => clearTimeout(timer);
+	}, [campaignSearch]);
+
+	const { data: campaignsData, isLoading: isCampaignsLoading } = useCampaignsQuery(
+		{
+			page: 0,
+			size: 20,
+			search: debouncedCampaignSearch.trim() || undefined,
+			sortBy: "name",
+			direction: "ASC",
+		},
+		{ enabled: !!open }
+	);
+
+	const campaigns = Array.isArray(campaignsData)
+		? campaignsData
+		: campaignsData?.content || [];
+
 	const [destinationUrl, setDestinationUrl] = React.useState(initialDestinationUrl);
 	const [prevInitialUrl, setPrevInitialUrl] = React.useState(initialDestinationUrl);
 
@@ -59,6 +83,8 @@ export function CreateLinkModal({
 		setDestinationUrl("");
 		setCustomAlias("");
 		setSelectedCampaignId("");
+		setCampaignSearch("");
+		setDebouncedCampaignSearch("");
 		setShowUtm(false);
 		setUtmSource("");
 		setUtmMedium("");
@@ -265,28 +291,29 @@ export function CreateLinkModal({
 						</div>
 
 						{/* Optional Campaign Assignment */}
-						{campaigns.length > 0 && (
-							<div className="space-y-1.5">
-								<label className="text-xs font-medium text-foreground">
-									Assign to Campaign (Optional)
-								</label>
-								<SearchCombobox
-									items={[
-										{ value: "", label: "No Campaign (Standalone URL)", description: "Leave unattached" },
-										...campaigns.map((c) => ({
-											value: c.id,
-											label: c.name,
-											description: c.description || (c.clickCount ? `${c.clickCount} clicks` : ""),
-											badge: "Campaign",
-										})),
-									]}
-									value={selectedCampaignId}
-									onValueChange={(val) => setSelectedCampaignId(val || "")}
-									placeholder="Search campaigns..."
-									emptyMessage="No campaigns found."
-								/>
-							</div>
-						)}
+						<div className="space-y-1.5">
+							<label className="text-xs font-medium text-foreground">
+								Assign to Campaign (Optional)
+							</label>
+							<SearchCombobox
+								items={[
+									{ value: "", label: "No Campaign (Standalone URL)", description: "Leave unattached" },
+									...campaigns.map((c) => ({
+										value: c.id,
+										label: c.name,
+										description: c.description || "",
+										badge: "Campaign",
+									})),
+								]}
+								value={selectedCampaignId}
+								onValueChange={(val) => setSelectedCampaignId(val || "")}
+								placeholder="Search campaigns..."
+								emptyMessage="No campaigns found."
+								onSearchChange={setCampaignSearch}
+								isLoading={isCampaignsLoading}
+								remote={true}
+							/>
+						</div>
 
 						{/* Collapsible UTM Builder */}
 						<div className="rounded-xl border border-border/60 bg-muted/20 p-3 space-y-3">

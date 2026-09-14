@@ -18,7 +18,7 @@ import { toast } from "sonner";
 import {
 	CampaignHeader,
 	CampaignStatsCards,
-	CampaignGrid,
+	CampaignsTable,
 	CampaignUtmTable,
 	CreateCampaignModal,
 	EditCampaignModal,
@@ -34,11 +34,25 @@ export function CampaignsPage() {
 	const queryClient = useQueryClient();
 	const { onOpenCreateModal } = useOutletContext() || {};
 	const [activeTab, setActiveTab] = React.useState("campaigns"); // "campaigns" | "utm_links"
-	const [searchQuery, setSearchQuery] = React.useState("");
+	
+	// Server-side search & pagination for CampaignsTable
+	const [campaignPage, setCampaignPage] = React.useState(1);
+	const [campaignSearch, setCampaignSearch] = React.useState("");
+	const [debouncedCampaignSearch, setDebouncedCampaignSearch] = React.useState("");
+	const campaignPageSize = 20;
+
+	React.useEffect(() => {
+		const timer = setTimeout(() => {
+			setDebouncedCampaignSearch(campaignSearch.trim());
+			setCampaignPage(1);
+		}, 300);
+		return () => clearTimeout(timer);
+	}, [campaignSearch]);
 
 	// Modals state
 	const [isNewCampaignOpen, setIsNewCampaignOpen] = React.useState(false);
 	const [isUtmBuilderOpen, setIsUtmBuilderOpen] = React.useState(false);
+	const [utmSearchQuery, setUtmSearchQuery] = React.useState("");
 	const [searchParams] = useSearchParams();
 	const [selectedCampaignId, setSelectedCampaignId] = React.useState(
 		() => searchParams.get("id") || null
@@ -49,10 +63,24 @@ export function CampaignsPage() {
 
 	// Backend Queries
 	const {
-		data: campaigns = [],
+		data: campaignsData,
 		isLoading: campaignsLoading,
+		isFetching: campaignsFetching,
 		refetch: refetchCampaigns,
-	} = useCampaignsQuery();
+	} = useCampaignsQuery({
+		page: campaignPage - 1,
+		size: campaignPageSize,
+		search: debouncedCampaignSearch || undefined,
+		sortBy: "createdAt",
+		direction: "DESC",
+	});
+
+	const campaigns = React.useMemo(() => {
+		return Array.isArray(campaignsData) ? campaignsData : campaignsData?.content || [];
+	}, [campaignsData]);
+
+	const totalCampaigns = campaignsData?.totalElements ?? campaigns.length;
+	const totalCampaignPages = Math.max(1, campaignsData?.totalPages || 1);
 
 	const { data: serverUrls = [] } = useUrlsQuery(
 		{ page: 0, size: 100 },
@@ -116,21 +144,10 @@ export function CampaignsPage() {
 			.filter((l) => l.hasUtm);
 	}, [urls]);
 
-	// Filter campaigns
-	const filteredCampaigns = React.useMemo(() => {
-		if (!searchQuery.trim()) return campaigns;
-		const q = searchQuery.toLowerCase().trim();
-		return campaigns.filter(
-			(c) =>
-				c.name.toLowerCase().includes(q) ||
-				(c.description && c.description.toLowerCase().includes(q))
-		);
-	}, [campaigns, searchQuery]);
-
 	// Filter UTM links
 	const filteredUtmLinks = React.useMemo(() => {
-		if (!searchQuery.trim()) return campaignLinks;
-		const q = searchQuery.toLowerCase().trim();
+		if (!utmSearchQuery.trim()) return campaignLinks;
+		const q = utmSearchQuery.toLowerCase().trim();
 		return campaignLinks.filter(
 			(c) =>
 				c.utmCampaign.toLowerCase().includes(q) ||
@@ -138,7 +155,7 @@ export function CampaignsPage() {
 				c.utmMedium.toLowerCase().includes(q) ||
 				c.shortCode.toLowerCase().includes(q)
 		);
-	}, [campaignLinks, searchQuery]);
+	}, [campaignLinks, utmSearchQuery]);
 
 	// Mutations
 	const createMutation = useCreateCampaignMutation({
@@ -215,62 +232,63 @@ export function CampaignsPage() {
 
 			{/* 2. Overview KPI Cards */}
 			<CampaignStatsCards
-				totalCampaigns={campaigns.length}
+				totalCampaigns={totalCampaigns}
 				totalUtmLinks={campaignLinks.length}
 				totalUrls={urls.length}
 				totalTaggedClicks={totalTaggedClicks}
 			/>
 
-			{/* 3. Tab Switcher & Search Bar */}
+			{/* 3. Tab Switcher */}
 			<div className="space-y-4">
-				<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/50 pb-2">
-					<div className="flex items-center gap-2">
-						<button
-							onClick={() => setActiveTab("campaigns")}
-							className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
-								activeTab === "campaigns"
-									? "bg-primary text-primary-foreground shadow-2xs"
-									: "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-							}`}
-						>
-							Campaigns List ({campaigns.length})
-						</button>
-						<button
-							onClick={() => setActiveTab("utm_links")}
-							className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
-								activeTab === "utm_links"
-									? "bg-primary text-primary-foreground shadow-2xs"
-									: "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-							}`}
-						>
-							UTM Tagged Links ({campaignLinks.length})
-						</button>
-					</div>
-
-					<div className="relative w-full sm:w-64">
-						<IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-						<Input
-							value={searchQuery}
-							onChange={(e) => setSearchQuery(e.target.value)}
-							placeholder={activeTab === "campaigns" ? "Search campaigns..." : "Search UTM tags or links..."}
-							className="pl-9 h-8.5 text-xs bg-card"
-						/>
-					</div>
+				<div className="flex items-center gap-2 border-b border-border/50 pb-2">
+					<button
+						onClick={() => setActiveTab("campaigns")}
+						className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+							activeTab === "campaigns"
+								? "bg-primary text-primary-foreground shadow-2xs"
+								: "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+						}`}
+					>
+						Campaigns List ({totalCampaigns})
+					</button>
+					<button
+						onClick={() => setActiveTab("utm_links")}
+						className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+							activeTab === "utm_links"
+								? "bg-primary text-primary-foreground shadow-2xs"
+								: "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+						}`}
+					>
+						UTM Tagged Links ({campaignLinks.length})
+					</button>
 				</div>
 
-				{/* 4. Tab Content */}
+				{/* 4. Tab Content: Reusable CampaignsTable or UTM table */}
 				{activeTab === "campaigns" ? (
-					<CampaignGrid
-						campaigns={filteredCampaigns}
+					<CampaignsTable
+						campaigns={campaigns}
 						isLoading={campaignsLoading}
-						onViewUrls={(c) => setSelectedCampaignId(c.id)}
-						onViewAnalytics={(c) => setSelectedCampaignForAnalytics(c)}
-						onEdit={(c) => setCampaignToEdit(c)}
-						onDelete={(c) => setCampaignToDelete(c)}
-						onCreateNew={() => setIsNewCampaignOpen(true)}
+						isFetching={campaignsFetching}
+						totalCampaigns={totalCampaigns}
+						totalPages={totalCampaignPages}
+						currentPage={campaignPage}
+						onPageChange={setCampaignPage}
+						searchQuery={campaignSearch}
+						onSearchChange={setCampaignSearch}
 					/>
 				) : (
-					<CampaignUtmTable links={filteredUtmLinks} />
+					<div className="space-y-3">
+						<div className="relative w-full sm:w-72">
+							<IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+							<Input
+								value={utmSearchQuery}
+								onChange={(e) => setUtmSearchQuery(e.target.value)}
+								placeholder="Search UTM tags or links..."
+								className="pl-9 h-9 text-xs bg-card"
+							/>
+						</div>
+						<CampaignUtmTable links={filteredUtmLinks} />
+					</div>
 				)}
 			</div>
 

@@ -1,6 +1,9 @@
 import * as React from "react";
-import { useOutletContext } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
+import { ROUTES } from "@/routes/paths";
 import { useAuthStore } from "@/store/authStore";
+import { Button } from "@/components/ui/button";
+import { IconArrowRight } from "@tabler/icons-react";
 import {
 	useUrlsQuery,
 	useCampaignsQuery,
@@ -13,10 +16,10 @@ import {
 	DashboardHeader,
 	DashboardKpiCards,
 	CampaignConstellationBar,
-	DashboardLinksTable,
-	DashboardCampaignsTable,
-	DashboardAbTestsTable,
 } from "@/components/dashboard";
+import { LinksTable } from "@/components/links";
+import { CampaignsTable } from "@/components/campaigns";
+import { AbTestsTable } from "@/components/ab-testing";
 
 /* Hallmark · page: Dashboard Mission Control · decomposed into modular components */
 
@@ -29,7 +32,7 @@ export function DashboardPage() {
 	const [searchQuery, setSearchQuery] = React.useState("");
 	const [debouncedSearch, setDebouncedSearch] = React.useState("");
 	const [currentPage, setCurrentPage] = React.useState(1);
-	const pageSize = 15;
+	const pageSize = 5;
 
 	// Debounce search query to trigger backend search
 	React.useEffect(() => {
@@ -189,45 +192,111 @@ export function DashboardPage() {
 			/>
 
 			{/* 4. Table 1: Shortcode Links Table */}
-			<DashboardLinksTable
-				urls={urls}
-				totalLinks={totalLinks}
-				totalPages={totalPages}
-				currentPage={currentPage}
-				onPageChange={setCurrentPage}
-				isLoading={urlsLoading}
-				isFetching={urlsFetching}
-				searchQuery={searchQuery}
-				onSearchChange={setSearchQuery}
-				campaignMap={campaignMap}
-				onToggleActive={handleToggleActive}
-			/>
+			<div className="space-y-2.5 pt-1">
+				<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
+					<div>
+						<h2 className="text-sm sm:text-base font-semibold tracking-tight text-foreground">
+							Active Shortlinks
+						</h2>
+						<p className="text-xs text-muted-foreground">
+							Top short URLs with live traffic routing and click statistics
+						</p>
+					</div>
+					<Link to={ROUTES.REDIRECT_LINKS}>
+						<Button
+							variant="outline"
+							size="sm"
+							className="h-8 gap-1.5 text-xs font-semibold cursor-pointer border-border hover:border-primary/50 hover:bg-primary/5 transition-colors"
+						>
+							<span>Go to URLs</span>
+							<IconArrowRight className="size-3.5 text-primary" />
+						</Button>
+					</Link>
+				</div>
+				<LinksTable
+					urls={urls}
+					totalLinks={totalLinks}
+					totalPages={totalPages}
+					currentPage={currentPage}
+					onPageChange={setCurrentPage}
+					isLoading={urlsLoading}
+					isFetching={urlsFetching}
+					searchQuery={searchQuery}
+					onSearchChange={setSearchQuery}
+					campaignMap={campaignMap}
+					onToggleActive={handleToggleActive}
+				/>
+			</div>
 
-			{/* 5. Table 2: Marketing Campaigns Table (No click data, with page & search params) */}
-			<DashboardCampaignsTable
-				campaigns={campaigns}
-				isLoading={campaignsLoading}
-				totalCampaigns={totalCampaigns}
-				totalPages={totalCampaignPages}
-				currentPage={campaignsPage}
-				onPageChange={setCampaignsPage}
-				isFetching={campaignsFetching}
-				searchQuery={campaignSearch}
-				onSearchChange={setCampaignSearch}
-			/>
+			{/* 5. Table 2: Marketing Campaigns Table */}
+			<div className="space-y-2.5 pt-2">
+				<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
+					<div>
+						<h2 className="text-sm sm:text-base font-semibold tracking-tight text-foreground">
+							Marketing Campaigns
+						</h2>
+						<p className="text-xs text-muted-foreground">
+							Grouped campaigns with UTM parameters and link clusters
+						</p>
+					</div>
+					<Link to={ROUTES.CAMPAIGNS}>
+						<Button
+							variant="outline"
+							size="sm"
+							className="h-8 gap-1.5 text-xs font-semibold cursor-pointer border-border hover:border-primary/50 hover:bg-primary/5 transition-colors"
+						>
+							<span>Go to Campaigns</span>
+							<IconArrowRight className="size-3.5 text-primary" />
+						</Button>
+					</Link>
+				</div>
+				<CampaignsTable
+					campaigns={campaigns}
+					isLoading={campaignsLoading}
+					totalCampaigns={totalCampaigns}
+					totalPages={totalCampaignPages}
+					currentPage={campaignsPage}
+					onPageChange={setCampaignsPage}
+					isFetching={campaignsFetching}
+					searchQuery={campaignSearch}
+					onSearchChange={setCampaignSearch}
+				/>
+			</div>
 
-			{/* 6. Table 3: A/B Split Experiments Table (No click data, with page & search params) */}
-			<DashboardAbTestsTable
-				abTests={abTests}
-				isLoading={abTestsLoading}
-				totalAbTests={totalAbTests}
-				totalPages={totalAbTestPages}
-				currentPage={abTestsPage}
-				onPageChange={setAbTestsPage}
-				isFetching={abTestsFetching}
-				searchQuery={abTestSearch}
-				onSearchChange={setAbTestSearch}
-			/>
+			{/* 6. Table 3: A/B Split Experiments Table */}
+			<div className="space-y-2.5 pt-2">
+				<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
+					<div>
+						<h2 className="text-sm sm:text-base font-semibold tracking-tight text-foreground">
+							A/B Split Experiments
+						</h2>
+						<p className="text-xs text-muted-foreground">
+							Live traffic splitting and variant conversion tracking
+						</p>
+					</div>
+					<Link to={ROUTES.AB_TESTING}>
+						<Button
+							variant="outline"
+							size="sm"
+							className="h-8 gap-1.5 text-xs font-semibold cursor-pointer border-border hover:border-primary/50 hover:bg-primary/5 transition-colors"
+						>
+							<span>Go to A/B Tests</span>
+							<IconArrowRight className="size-3.5 text-primary" />
+						</Button>
+					</Link>
+				</div>
+				<AbTestsTable
+					abTests={abTests}
+					isLoading={abTestsLoading}
+					totalAbTests={totalAbTests}
+					totalPages={totalAbTestPages}
+					currentPage={abTestsPage}
+					onPageChange={setAbTestsPage}
+					isFetching={abTestsFetching}
+					searchQuery={abTestSearch}
+					onSearchChange={setAbTestSearch}
+				/>
+			</div>
 		</div>
 	);
 }

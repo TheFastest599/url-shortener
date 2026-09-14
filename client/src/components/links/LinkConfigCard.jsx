@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useCampaignsQuery } from "@/queries";
 import { IconLink } from "@tabler/icons-react";
 import { toast } from "sonner";
 
@@ -16,15 +17,47 @@ export function LinkConfigCard({
 	const [campaignId, setCampaignId] = React.useState(url?.campaignId || "");
 	const [isActive, setIsActive] = React.useState(url?.isActive !== false);
 
+	const [campaignSearch, setCampaignSearch] = React.useState("");
+	const [debouncedCampaignSearch, setDebouncedCampaignSearch] = React.useState("");
+
+	React.useEffect(() => {
+		const timer = setTimeout(() => {
+			setDebouncedCampaignSearch(campaignSearch);
+		}, 250);
+		return () => clearTimeout(timer);
+	}, [campaignSearch]);
+
+	const { data: searchResults, isLoading: isSearchingCampaigns } = useCampaignsQuery(
+		{
+			page: 0,
+			size: 20,
+			search: debouncedCampaignSearch.trim() || undefined,
+			sortBy: "name",
+			direction: "ASC",
+		}
+	);
+
+	const loadedCampaigns = Array.isArray(searchResults)
+		? searchResults
+		: searchResults?.content || (campaigns.length > 0 ? campaigns : []);
+
 	const campaignItems = React.useMemo(() => {
-		const list = campaigns.map((c) => ({
+		const list = loadedCampaigns.map((c) => ({
 			value: c.id,
 			label: c.name,
 			sub: c.description,
 			badge: "Campaign",
 		}));
+		if (url?.campaignId && url?.campaignName && !list.some((i) => i.value === url.campaignId)) {
+			list.unshift({
+				value: url.campaignId,
+				label: url.campaignName,
+				sub: "Currently assigned",
+				badge: "Campaign",
+			});
+		}
 		return [{ value: "none", label: "None (Standalone link)", badge: "Unassigned" }, ...list];
-	}, [campaigns]);
+	}, [loadedCampaigns, url]);
 
 	const handleSubmit = (e) => {
 		e.preventDefault();
@@ -79,6 +112,9 @@ export function LinkConfigCard({
 							onValueChange={(val) => setCampaignId(val === "none" ? "" : val)}
 							placeholder="Select a campaign folder..."
 							emptyMessage="No matching campaigns found."
+							onSearchChange={setCampaignSearch}
+							isLoading={isSearchingCampaigns}
+							remote={true}
 						/>
 					</div>
 

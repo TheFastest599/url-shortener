@@ -4,42 +4,43 @@ import {
 	useAbTestsQuery,
 	useUrlsQuery,
 	useConfigureAbTestMutation,
-	useUpdateAbTestStatusMutation,
-	useDeleteAbTestMutation,
 } from "@/queries";
 import { queryKeys } from "@/queries/queryKeys";
-import { Input } from "@/components/ui/input";
-import { IconSearch } from "@tabler/icons-react";
 
 import {
 	AbTestHeader,
 	AbTestStatsCards,
-	AbTestGrid,
+	AbTestsTable,
 	CreateAbTestModal,
-	EditAbTestModal,
-	PromoteWinnerDialog,
-	DeleteAbTestDialog,
-	AbTestAnalyticsModal,
 } from "@/components/ab-testing";
 
-/* Hallmark · page: A/B Testing Experiments · decomposed into modular components */
+/* Hallmark · page: A/B Testing Experiments · component-based architecture */
 
 export function AbTestingPage() {
 	const queryClient = useQueryClient();
 
 	// Modal states
 	const [isCreateOpen, setIsCreateOpen] = React.useState(false);
-	const [editingExp, setEditingExp] = React.useState(null);
-	const [promotingExp, setPromotingExp] = React.useState(null);
-	const [deletingShortCode, setDeletingShortCode] = React.useState(null);
-	const [telemetryTarget, setTelemetryTarget] = React.useState(null);
 
 	// Search & candidate links
 	const [searchFilter, setSearchFilter] = React.useState("");
+	const [debouncedSearch, setDebouncedSearch] = React.useState("");
+	const [currentPage, setCurrentPage] = React.useState(1);
+	const [pageSize] = React.useState(20);
+
 	const [linkSearchQuery, setLinkSearchQuery] = React.useState("");
 	const [debouncedLinkQuery, setDebouncedLinkQuery] = React.useState("");
 
-	// Debounce candidate search query
+	// Debounce table search
+	React.useEffect(() => {
+		const timer = setTimeout(() => {
+			setDebouncedSearch(searchFilter.trim());
+			setCurrentPage(1);
+		}, 250);
+		return () => clearTimeout(timer);
+	}, [searchFilter]);
+
+	// Debounce candidate search query for creation modal
 	React.useEffect(() => {
 		const timer = setTimeout(() => {
 			setDebouncedLinkQuery(linkSearchQuery.trim());
@@ -47,13 +48,19 @@ export function AbTestingPage() {
 		return () => clearTimeout(timer);
 	}, [linkSearchQuery]);
 
-	// 1. Single Top-Level Query for A/B Experiments
+	// 1. Query for A/B Experiments with pagination & search
 	const {
 		data: pagedAbTests,
 		isLoading: expLoading,
 		isFetching: expFetching,
 		refetch: refetchExperiments,
-	} = useAbTestsQuery({ page: 0, size: 50 });
+	} = useAbTestsQuery({
+		page: currentPage - 1,
+		size: pageSize,
+		search: debouncedSearch || undefined,
+		sortBy: "createdAt",
+		direction: "DESC",
+	});
 
 	const experimentsList = React.useMemo(() => {
 		return Array.isArray(pagedAbTests)
@@ -61,7 +68,7 @@ export function AbTestingPage() {
 			: pagedAbTests?.content || [];
 	}, [pagedAbTests]);
 
-	// 2. Candidate URLs query for the creation modal (only fetched when create modal is active)
+	// 2. Candidate URLs query for the creation modal
 	const { data: searchResultsData } = useUrlsQuery(
 		{
 			page: 0,
@@ -82,56 +89,15 @@ export function AbTestingPage() {
 		return list.filter((u) => !u.isAbTest);
 	}, [searchResultsData]);
 
-	// Filter experiments by search
-	const filteredExperiments = React.useMemo(() => {
-		if (!searchFilter.trim()) return experimentsList;
-		const q = searchFilter.toLowerCase().trim();
-		return experimentsList.filter((exp) => {
-			return (
-				exp.shortCode?.toLowerCase().includes(q) ||
-				exp.name?.toLowerCase().includes(q) ||
-				exp.variants?.some((v) => v.destinationUrl?.toLowerCase().includes(q))
-			);
-		});
-	}, [experimentsList, searchFilter]);
-
-	// Mutations
+	// Create mutation
 	const configureMutation = useConfigureAbTestMutation({
 		onSuccess: async () => {
 			setIsCreateOpen(false);
-			setEditingExp(null);
 			await queryClient.invalidateQueries({ queryKey: queryKeys.abTesting.all });
 			await queryClient.invalidateQueries({ queryKey: queryKeys.urls.all });
 			refetchExperiments();
 		},
 	});
-
-	const updateStatusMutation = useUpdateAbTestStatusMutation({
-		onSuccess: async () => {
-			setPromotingExp(null);
-			await queryClient.invalidateQueries({ queryKey: queryKeys.abTesting.all });
-			await queryClient.invalidateQueries({ queryKey: queryKeys.urls.all });
-			refetchExperiments();
-		},
-	});
-
-	const deleteMutation = useDeleteAbTestMutation({
-		onSuccess: async () => {
-			setDeletingShortCode(null);
-			await queryClient.invalidateQueries({ queryKey: queryKeys.abTesting.all });
-			await queryClient.invalidateQueries({ queryKey: queryKeys.urls.all });
-			refetchExperiments();
-		},
-	});
-
-	// Status Toggle
-	const handleToggleStatus = (shortCode, currentStatus) => {
-		const newStatus = currentStatus === "ACTIVE" ? "PAUSED" : "ACTIVE";
-		updateStatusMutation.mutate({
-			shortCode,
-			payload: { status: newStatus },
-		});
-	};
 
 	// Statistics
 	const totalExperimentsCount = pagedAbTests?.totalElements ?? experimentsList.length;
@@ -158,36 +124,20 @@ export function AbTestingPage() {
 				concludedExperiments={concludedExperimentsCount}
 			/>
 
-			{/* 3. Toolbar & Search */}
-			<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/50 pb-3">
-				<h2 className="text-sm sm:text-base font-semibold font-heading text-foreground">
-					Experiments List ({experimentsList.length})
-				</h2>
-
-				<div className="relative w-full sm:w-64">
-					<IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-					<Input
-						value={searchFilter}
-						onChange={(e) => setSearchFilter(e.target.value)}
-						placeholder="Search experiments..."
-						className="pl-9 h-8.5 text-xs bg-card"
-					/>
-				</div>
-			</div>
-
-			{/* 4. Experiments Grid */}
-			<AbTestGrid
-				experiments={filteredExperiments}
+			{/* 3. Experiments Table with Integrated Search */}
+			<AbTestsTable
+				abTests={pagedAbTests}
 				isLoading={expLoading}
-				onToggleStatus={handleToggleStatus}
-				onEdit={(exp, shortCode) => setEditingExp({ exp, shortCode })}
-				onPromoteWinner={(exp, shortCode) => setPromotingExp({ exp, shortCode })}
-				onViewTelemetry={(exp, shortCode) => setTelemetryTarget({ exp, shortCode })}
-				onDelete={(shortCode) => setDeletingShortCode(shortCode)}
-				onCreateNew={() => setIsCreateOpen(true)}
+				isFetching={expFetching}
+				totalAbTests={totalExperimentsCount}
+				totalPages={pagedAbTests?.totalPages ?? 1}
+				currentPage={currentPage}
+				onPageChange={setCurrentPage}
+				searchQuery={searchFilter}
+				onSearchChange={setSearchFilter}
 			/>
 
-			{/* 5. Modals & Dialogs */}
+			{/* 4. Create Modal */}
 			<CreateAbTestModal
 				open={isCreateOpen}
 				onOpenChange={setIsCreateOpen}
@@ -195,46 +145,6 @@ export function AbTestingPage() {
 				onSearchUrls={(query) => setLinkSearchQuery(query)}
 				onSubmit={({ shortCode, payload }) => configureMutation.mutate({ shortCode, payload })}
 				isSubmitting={configureMutation.isPending}
-			/>
-
-			<EditAbTestModal
-				key={editingExp?.shortCode}
-				open={!!editingExp}
-				onOpenChange={(open) => !open && setEditingExp(null)}
-				experiment={editingExp?.exp}
-				shortCode={editingExp?.shortCode}
-				onSubmit={({ shortCode, payload }) => configureMutation.mutate({ shortCode, payload })}
-				isSubmitting={configureMutation.isPending}
-			/>
-
-			<PromoteWinnerDialog
-				key={promotingExp?.shortCode}
-				open={!!promotingExp}
-				onOpenChange={(open) => !open && setPromotingExp(null)}
-				experiment={promotingExp?.exp}
-				shortCode={promotingExp?.shortCode}
-				onConfirm={({ shortCode, winningVariant }) =>
-					updateStatusMutation.mutate({
-						shortCode,
-						payload: { status: "CONCLUDED", winningVariant },
-					})
-				}
-				isSubmitting={updateStatusMutation.isPending}
-			/>
-
-			<DeleteAbTestDialog
-				open={!!deletingShortCode}
-				onOpenChange={(open) => !open && setDeletingShortCode(null)}
-				shortCode={deletingShortCode}
-				onConfirm={(shortCode) => deleteMutation.mutate(shortCode)}
-				isDeleting={deleteMutation.isPending}
-			/>
-
-			<AbTestAnalyticsModal
-				open={!!telemetryTarget}
-				onOpenChange={(open) => !open && setTelemetryTarget(null)}
-				shortCode={telemetryTarget?.shortCode}
-				experiment={telemetryTarget?.exp}
 			/>
 		</div>
 	);

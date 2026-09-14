@@ -1,3 +1,4 @@
+export { AbTestsTable } from "./AbTestsTable";
 export { AbTestHeader } from "./AbTestHeader";
 export { AbTestStatsCards } from "./AbTestStatsCards";
 export { AbTestCard } from "./AbTestCard";

@@ -50,13 +50,15 @@ public class CampaignController {
             @RequestParam(value = "direction", defaultValue = "DESC") String direction,
             @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
 
-        if (page == null) {
+        if (page == null && (search == null || search.isBlank())) {
             return ResponseEntity.ok(campaignService.getUserCampaigns(userId));
         }
 
+        int pageNum = page != null ? page : 0;
+        int pageSize = size != null ? size : 10;
         Sort.Direction sortDirection = "ASC".equalsIgnoreCase(direction) ? Sort.Direction.ASC : Sort.Direction.DESC;
         String sortField = "name".equalsIgnoreCase(sortBy) ? "name" : "createdAt";
-        Pageable pageable = PageRequest.of(page, size != null ? size : 10, Sort.by(sortDirection, sortField));
+        Pageable pageable = PageRequest.of(pageNum, pageSize, Sort.by(sortDirection, sortField));
 
         Page<CampaignResponse> pagedResult = campaignService.getUserCampaignsPaged(userId, search, pageable);
         return ResponseEntity.ok(PagedResponse.from(pagedResult));

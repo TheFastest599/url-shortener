@@ -1,13 +1,17 @@
 import * as React from "react";
 import { useParams, useOutletContext } from "react-router-dom";
-import { useUrlsQuery, useDeleteUrlMutation, useCampaignsQuery } from "@/queries";
+import {
+	useUrlsQuery,
+	useDeleteUrlMutation,
+	useCampaignsQuery,
+	useUpdateUrlMutation,
+} from "@/queries";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { IconPlus } from "@tabler/icons-react";
 import { toast } from "sonner";
 
 import {
-	LinksFilterToolbar,
 	LinksTable,
 	DeleteLinkDialog,
 } from "@/components/links";
@@ -21,9 +25,8 @@ export function RedirectLinksPage() {
 	const [searchQuery, setSearchQuery] = React.useState(routeParamCode || "");
 	const [debouncedSearch, setDebouncedSearch] = React.useState(routeParamCode || "");
 	const [statusFilter, setStatusFilter] = React.useState("all");
-	const [sortBy, setSortBy] = React.useState("newest");
 	const [currentPage, setCurrentPage] = React.useState(1);
-	const [pageSize, setPageSize] = React.useState(10);
+	const pageSize = 20;
 	const [deleteTarget, setDeleteTarget] = React.useState(null);
 
 	// Debounce search query input (250ms)
@@ -49,26 +52,20 @@ export function RedirectLinksPage() {
 		const p = {
 			page: currentPage - 1,
 			size: pageSize,
+			sortBy: "createdAt",
+			direction: "DESC",
 		};
 		if (debouncedSearch.trim()) p.search = debouncedSearch.trim();
 		if (statusFilter !== "all") p.status = statusFilter;
-		if (sortBy === "alpha_asc") {
-			p.sortBy = "shortCode";
-			p.direction = "ASC";
-		} else if (sortBy === "alpha_desc") {
-			p.sortBy = "shortCode";
-			p.direction = "DESC";
-		} else if (sortBy === "oldest") {
-			p.sortBy = "createdAt";
-			p.direction = "ASC";
-		} else {
-			p.sortBy = "createdAt";
-			p.direction = "DESC";
-		}
 		return p;
-	}, [currentPage, pageSize, debouncedSearch, statusFilter, sortBy]);
+	}, [currentPage, pageSize, debouncedSearch, statusFilter]);
 
-	const { data: serverData, isLoading, refetch: refetchUrls } = useUrlsQuery(queryParams);
+	const {
+		data: serverData,
+		isLoading,
+		isFetching,
+		refetch: refetchUrls,
+	} = useUrlsQuery(queryParams);
 	const { data: userCampaigns = [] } = useCampaignsQuery();
 
 	const campaignMap = React.useMemo(() => {
@@ -78,6 +75,22 @@ export function RedirectLinksPage() {
 		});
 		return map;
 	}, [userCampaigns]);
+
+	const updateMutation = useUpdateUrlMutation({
+		onSuccess: () => {
+			toast.success("Shortlink status updated real-time!");
+		},
+	});
+
+	const handleToggleActive = (url, e) => {
+		e.stopPropagation();
+		updateMutation.mutate({
+			id: url.id,
+			destinationUrl: url.destinationUrl,
+			campaignId: url.campaignId,
+			isActive: url.isActive === false,
+		});
+	};
 
 	const deleteMutation = useDeleteUrlMutation({
 		onSuccess: () => {
@@ -120,19 +133,7 @@ export function RedirectLinksPage() {
 				</div>
 			</div>
 
-			{/* Search, Filter & Sort Controls Toolbar */}
-			<LinksFilterToolbar
-				searchQuery={searchQuery}
-				onSearchChange={setSearchQuery}
-				statusFilter={statusFilter}
-				onStatusFilterChange={setStatusFilter}
-				sortBy={sortBy}
-				onSortByChange={setSortBy}
-				pageSize={pageSize}
-				onPageSizeChange={setPageSize}
-			/>
-
-			{/* Links Table */}
+			{/* Pure Links Table with Integrated Search, Status Pills & Pagination */}
 			<LinksTable
 				urls={paginatedUrls}
 				totalItems={totalItems}
@@ -141,8 +142,19 @@ export function RedirectLinksPage() {
 				pageSize={pageSize}
 				onPageChange={setCurrentPage}
 				isLoading={isLoading}
+				isFetching={isFetching}
+				searchQuery={searchQuery}
+				onSearchChange={(q) => {
+					setSearchQuery(q);
+				}}
+				statusFilter={statusFilter}
+				onStatusFilterChange={(s) => {
+					setStatusFilter(s);
+					setCurrentPage(1);
+				}}
 				campaignMap={campaignMap}
 				highlightCode={routeParamCode}
+				onToggleActive={handleToggleActive}
 				onOpenQrModal={onOpenQrModal}
 				onDeleteClick={(url) => setDeleteTarget(url)}
 			/>
