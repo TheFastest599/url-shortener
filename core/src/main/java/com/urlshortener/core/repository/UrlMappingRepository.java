@@ -37,11 +37,23 @@ public interface UrlMappingRepository extends JpaRepository<UrlMapping, UUID> {
 
     Page<UrlMapping> findByUserIdAndIsActiveAndCampaignIdIsNull(UUID userId, Boolean isActive, Pageable pageable);
 
-    @Query("SELECT u FROM UrlMapping u WHERE u.userId = :userId " +
-            "AND (LOWER(u.shortCode) LIKE :search OR LOWER(u.destinationUrl) LIKE :search) " +
+    @Query(value = "SELECT new com.urlshortener.core.dto.ShortUrlResponse(" +
+            "u.id, u.shortCode, u.destinationUrl, u.campaignId, c.name, " +
+            "u.isAbTest, t.id, t.name, t.status, u.smartRules, u.tenantId, " +
+            "u.userId, u.isActive, u.expiresAt, u.createdAt, u.updatedAt) " +
+            "FROM UrlMapping u " +
+            "LEFT JOIN Campaign c ON u.campaignId = c.id " +
+            "LEFT JOIN AbTest t ON t.urlMappingId = u.id " +
+            "WHERE u.userId = :userId " +
+            "AND (:search IS NULL OR LOWER(u.shortCode) LIKE :search OR LOWER(u.destinationUrl) LIKE :search) " +
+            "AND (:isActive IS NULL OR u.isActive = :isActive) " +
+            "AND ((:unassignedOnly = true AND u.campaignId IS NULL) OR (:unassignedOnly = false AND (:campaignId IS NULL OR u.campaignId = :campaignId)))",
+            countQuery = "SELECT count(u) FROM UrlMapping u " +
+            "WHERE u.userId = :userId " +
+            "AND (:search IS NULL OR LOWER(u.shortCode) LIKE :search OR LOWER(u.destinationUrl) LIKE :search) " +
             "AND (:isActive IS NULL OR u.isActive = :isActive) " +
             "AND ((:unassignedOnly = true AND u.campaignId IS NULL) OR (:unassignedOnly = false AND (:campaignId IS NULL OR u.campaignId = :campaignId)))")
-    Page<UrlMapping> searchUserUrls(
+    Page<com.urlshortener.core.dto.ShortUrlResponse> searchUserUrls(
             @Param("userId") UUID userId,
             @Param("search") String search,
             @Param("isActive") Boolean isActive,
@@ -49,6 +61,37 @@ public interface UrlMappingRepository extends JpaRepository<UrlMapping, UUID> {
             @Param("unassignedOnly") boolean unassignedOnly,
             Pageable pageable
     );
+
+    @Query("SELECT new com.urlshortener.core.dto.ShortUrlResponse(" +
+            "u.id, u.shortCode, u.destinationUrl, u.campaignId, c.name, " +
+            "u.isAbTest, t.id, t.name, t.status, u.smartRules, u.tenantId, " +
+            "u.userId, u.isActive, u.expiresAt, u.createdAt, u.updatedAt) " +
+            "FROM UrlMapping u " +
+            "LEFT JOIN Campaign c ON u.campaignId = c.id " +
+            "LEFT JOIN AbTest t ON t.urlMappingId = u.id " +
+            "WHERE u.userId = :userId ORDER BY u.createdAt DESC")
+    List<com.urlshortener.core.dto.ShortUrlResponse> findUserUrlsWithDetails(@Param("userId") UUID userId);
+
+    @Query("SELECT new com.urlshortener.core.dto.ShortUrlResponse(" +
+            "u.id, u.shortCode, u.destinationUrl, u.campaignId, c.name, " +
+            "u.isAbTest, t.id, t.name, t.status, u.smartRules, u.tenantId, " +
+            "u.userId, u.isActive, u.expiresAt, u.createdAt, u.updatedAt) " +
+            "FROM UrlMapping u " +
+            "LEFT JOIN Campaign c ON u.campaignId = c.id " +
+            "LEFT JOIN AbTest t ON t.urlMappingId = u.id " +
+            "WHERE u.id = :urlId AND u.userId = :userId")
+    Optional<com.urlshortener.core.dto.ShortUrlResponse> findUserUrlWithDetails(@Param("urlId") UUID urlId, @Param("userId") UUID userId);
+
+    @Query("SELECT new com.urlshortener.core.dto.ShortUrlResponse(" +
+            "u.id, u.shortCode, u.destinationUrl, u.campaignId, c.name, " +
+            "u.isAbTest, t.id, t.name, t.status, u.smartRules, u.tenantId, " +
+            "u.userId, u.isActive, u.expiresAt, u.createdAt, u.updatedAt) " +
+            "FROM UrlMapping u " +
+            "LEFT JOIN Campaign c ON u.campaignId = c.id " +
+            "LEFT JOIN AbTest t ON t.urlMappingId = u.id " +
+            "WHERE u.shortCode = :shortCode")
+    Optional<com.urlshortener.core.dto.ShortUrlResponse> findByShortCodeWithDetails(@Param("shortCode") String shortCode);
+
 
     @Query("SELECT u.shortCode as shortCode, u.destinationUrl as destinationUrl, u.isActive as isActive, " +
             "u.isAbTest as isAbTest, u.smartRules as smartRules, u.id as urlId, u.campaignId as campaignId, " +
@@ -60,4 +103,5 @@ public interface UrlMappingRepository extends JpaRepository<UrlMapping, UUID> {
             "WHERE u.shortCode = :shortCode")
     List<UrlResolutionProjection> findFullResolutionByShortCode(@Param("shortCode") String shortCode);
 }
+
 

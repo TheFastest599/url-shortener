@@ -55,40 +55,39 @@ export function DashboardLinksTable({
 
 	return (
 		<div className="space-y-3">
-			{/* Search & Action Bar */}
-			<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card border border-border/70 rounded-xl p-3 shadow-2xs">
-				<div className="relative flex-1 min-w-0">
-					<IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-					<Input
-						value={searchQuery}
-						onChange={(e) => onSearchChange(e.target.value)}
-						placeholder="Search backend directly by shortcode or destination URL..."
-						className="pl-9 pr-8 h-9 text-xs bg-background/80 w-full font-mono"
-					/>
-					{isFetching && (
-						<div
-							className="absolute right-3 top-1/2 -translate-y-1/2 size-2 rounded-full bg-primary animate-ping"
-							title="Querying backend..."
-						/>
-					)}
-				</div>
-
-				<div className="flex items-center gap-2 shrink-0 text-xs text-muted-foreground font-mono">
-					<span>
-						Showing {urls.length} of {totalLinks} links {searchQuery ? "(Search Match)" : ""}
-					</span>
-				</div>
-			</div>
-
-			{/* The Official Shadcn Table */}
+			{/* Unified Card Container with Integrated Search Header & Table */}
 			<div className="rounded-xl border border-border/70 bg-card overflow-hidden shadow-xs">
+				{/* Integrated Search & Action Toolbar */}
+				<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 border-b border-border/60 bg-muted/20">
+					<div className="relative flex-1 min-w-0">
+						<IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+						<Input
+							value={searchQuery}
+							onChange={(e) => onSearchChange(e.target.value)}
+							placeholder="Search backend directly by shortcode or destination URL..."
+							className="pl-9 pr-8 h-9 text-xs bg-background/80 w-full font-mono border-border/70"
+						/>
+						{isFetching && (
+							<div
+								className="absolute right-3 top-1/2 -translate-y-1/2 size-2 rounded-full bg-primary animate-ping"
+								title="Querying backend..."
+							/>
+						)}
+					</div>
+
+					<div className="flex items-center gap-2 shrink-0 text-xs text-muted-foreground font-mono">
+						<span>
+							Showing {urls.length} of {totalLinks} links {searchQuery ? "(Search Match)" : ""}
+						</span>
+					</div>
+				</div>
+
 				<Table>
 					<TableHeader className="bg-muted/40">
 						<TableRow className="hover:bg-transparent">
 							<TableHead className="w-[280px] text-xs font-semibold">Shortlink & Target</TableHead>
 							<TableHead className="text-xs font-semibold">Campaign Attribution</TableHead>
 							<TableHead className="text-xs font-semibold">Routing Engine</TableHead>
-							<TableHead className="text-xs font-semibold text-center">7D Velocity</TableHead>
 							<TableHead className="text-xs font-semibold text-center">Status</TableHead>
 							<TableHead className="text-xs font-semibold text-right">Relations & Actions</TableHead>
 						</TableRow>
@@ -98,14 +97,14 @@ export function DashboardLinksTable({
 						{isLoading ? (
 							Array.from({ length: 5 }).map((_, i) => (
 								<TableRow key={i}>
-									<TableCell colSpan={6} className="py-4">
+									<TableCell colSpan={5} className="py-4">
 										<Skeleton className="h-6 w-full" />
 									</TableCell>
 								</TableRow>
 							))
 						) : urls.length === 0 ? (
 							<TableRow>
-								<TableCell colSpan={6} className="h-40 text-center text-xs text-muted-foreground">
+								<TableCell colSpan={5} className="h-40 text-center text-xs text-muted-foreground">
 									{searchQuery
 										? `No shortlinks found matching "${searchQuery}".`
 										: "No shortlinks found in this campaign filter."}
@@ -158,18 +157,20 @@ export function DashboardLinksTable({
 
 											{/* Campaign Attribution */}
 											<TableCell className="py-3">
-												{campaign ? (
+												{url.campaignId ? (
 													<Link
-														to={`/campaigns/${campaign.id}`}
+														to={`/campaigns/${url.campaignId}`}
 														onClick={(e) => e.stopPropagation()}
-														title={`Open ${campaign.name} campaign workbench`}
+														title={`Open ${url.campaignName || campaign?.name || "Campaign"} workbench`}
 													>
 														<Badge
 															variant="secondary"
 															className="text-[10px] gap-1 font-medium hover:bg-primary/20 hover:text-primary transition-colors cursor-pointer"
 														>
 															<IconFolder className="size-3 text-primary shrink-0" />
-															<span className="truncate max-w-[120px]">{campaign.name}</span>
+															<span className="truncate max-w-[120px]">
+																{url.campaignName || campaign?.name || "Campaign"}
+															</span>
 															<IconArrowRight className="size-2.5 opacity-60" />
 														</Badge>
 													</Link>
@@ -187,15 +188,16 @@ export function DashboardLinksTable({
 											<TableCell className="py-3">
 												{url.isAbTest ? (
 													<Link
-														to={ROUTES.AB_TESTING}
+														to={url.abTestId ? `/ab-testing/${url.abTestId}` : ROUTES.AB_TESTING}
 														onClick={(e) => e.stopPropagation()}
+														title={url.abTestName ? `Experiment: ${url.abTestName}` : "View A/B Experiment"}
 													>
 														<Badge
 															variant="outline"
-															className="text-[10px] text-amber-500 border-amber-500/30 hover:bg-amber-500/10 cursor-pointer gap-1"
+															className="text-[10px] text-amber-500 border-amber-500/30 hover:bg-amber-500/10 cursor-pointer gap-1 max-w-[140px]"
 														>
 															<IconFlask className="size-3 shrink-0" />
-															<span>A/B Split</span>
+															<span className="truncate">{url.abTestName || "A/B Split"}</span>
 														</Badge>
 													</Link>
 												) : (
@@ -206,23 +208,6 @@ export function DashboardLinksTable({
 														<span>⚡ Direct</span>
 													</Badge>
 												)}
-											</TableCell>
-
-											{/* 7D Velocity */}
-											<TableCell className="py-3 text-center">
-												<div className="flex flex-col items-center justify-center gap-1">
-													<span className="font-mono text-xs font-semibold text-foreground">
-														{(url.clickCount || 0).toLocaleString()} clicks
-													</span>
-													<div className="w-14 h-1 rounded-full bg-muted overflow-hidden">
-														<div
-															className="h-full bg-primary/70 rounded-full transition-all"
-															style={{
-																width: `${Math.min(100, Math.max((url.clickCount ? 15 : 0), ((url.clickCount || 0) / Math.max(1, totalLinks)) * 100))}%`
-															}}
-														/>
-													</div>
-												</div>
 											</TableCell>
 
 											{/* Live Active Status Toggle */}
@@ -286,7 +271,7 @@ export function DashboardLinksTable({
 										{/* Expanded Relational Tray */}
 										{isExpanded && (
 											<TableRow className="bg-transparent hover:bg-transparent">
-												<TableCell colSpan={6} className="p-0">
+												<TableCell colSpan={5} className="p-0">
 													<RelationalTray url={url} campaign={campaign} />
 												</TableCell>
 											</TableRow>

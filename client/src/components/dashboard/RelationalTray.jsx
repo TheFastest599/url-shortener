@@ -21,6 +21,9 @@ export function RelationalTray({ url, campaign }) {
 		/* ignore malformed URL */
 	}
 
+	const campaignName = campaign?.name || url.campaignName;
+	const campaignId = campaign?.id || url.campaignId;
+
 	return (
 		<div className="p-4 bg-muted/20 border-t border-border/60 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
 			{/* 1. Campaign Attribution Node */}
@@ -30,9 +33,9 @@ export function RelationalTray({ url, campaign }) {
 						<IconFolder className="size-3.5 text-primary" />
 						<span>Campaign Attribution</span>
 					</span>
-					{campaign ? (
+					{campaignId ? (
 						<Link
-							to={`/campaigns/${campaign.id}`}
+							to={`/campaigns/${campaignId}`}
 							className="text-[10px] text-primary hover:underline font-medium inline-flex items-center gap-0.5"
 						>
 							<span>Drilldown</span>
@@ -44,14 +47,14 @@ export function RelationalTray({ url, campaign }) {
 						</Badge>
 					)}
 				</div>
-				{campaign ? (
+				{campaignName ? (
 					<div className="space-y-1 pt-1">
-						<div className="font-medium text-foreground text-xs">{campaign.name}</div>
+						<div className="font-medium text-foreground text-xs">{campaignName}</div>
 						<p className="text-[11px] text-muted-foreground line-clamp-2">
-							{campaign.description || "Active marketing campaign channel."}
+							{campaign?.description || "Active marketing campaign channel."}
 						</p>
 						<div className="text-[10px] text-muted-foreground font-mono">
-							Target: {campaign.targetUrl || "Dynamic"}
+							Target: {campaign?.targetUrl || "Dynamic"}
 						</div>
 					</div>
 				) : (
@@ -70,10 +73,10 @@ export function RelationalTray({ url, campaign }) {
 					</span>
 					{url.isAbTest ? (
 						<Link
-							to={ROUTES.AB_TESTING}
+							to={url.abTestId ? `/ab-testing/${url.abTestId}` : ROUTES.AB_TESTING}
 							className="text-[10px] text-amber-500 hover:underline font-medium inline-flex items-center gap-0.5"
 						>
-							<span>View Test</span>
+							<span>{url.abTestStatus || "View Test"}</span>
 							<IconArrowRight className="size-2.5" />
 						</Link>
 					) : (
@@ -85,8 +88,13 @@ export function RelationalTray({ url, campaign }) {
 				<div className="space-y-1 pt-1">
 					{url.isAbTest ? (
 						<div>
-							<div className="text-xs font-semibold text-foreground">
-								Active Traffic Split
+							<div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+								<span>{url.abTestName || "Active Traffic Split"}</span>
+								{url.abTestStatus && (
+									<Badge variant="outline" className="text-[9px] text-amber-500 border-amber-500/30">
+										{url.abTestStatus}
+									</Badge>
+								)}
 							</div>
 							<p className="text-[11px] text-muted-foreground mt-0.5">
 								Redirecting traffic dynamically between variants with statistical tracking.

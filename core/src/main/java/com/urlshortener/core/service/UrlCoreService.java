@@ -2,6 +2,7 @@ package com.urlshortener.core.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.urlshortener.core.dto.CreateUrlRequest;
+import com.urlshortener.core.dto.ShortUrlResponse;
 import com.urlshortener.core.dto.UpdateUrlRequest;
 import com.urlshortener.core.entity.UrlMapping;
 import com.urlshortener.core.repository.AbTestRepository;
@@ -131,11 +132,11 @@ public class UrlCoreService {
         evictRedirectCache(mapping.getShortCode());
     }
 
-    public List<UrlMapping> getUserUrls(UUID userId) {
-        return urlRepository.findByUserId(userId);
+    public List<ShortUrlResponse> getUserUrls(UUID userId) {
+        return urlRepository.findUserUrlsWithDetails(userId);
     }
 
-    public Page<UrlMapping> getUserUrlsPaged(
+    public Page<ShortUrlResponse> getUserUrlsPaged(
             UUID userId,
             String search,
             Boolean isActive,
@@ -144,53 +145,26 @@ public class UrlCoreService {
         return getUserUrlsPaged(userId, search, isActive, campaignId, false, pageable);
     }
 
-    public Page<UrlMapping> getUserUrlsPaged(
+    public Page<ShortUrlResponse> getUserUrlsPaged(
             UUID userId,
             String search,
             Boolean isActive,
             UUID campaignId,
             boolean unassignedOnly,
             Pageable pageable) {
-        if (search != null && !search.trim().isBlank()) {
-            String searchPattern = "%" + search.trim().toLowerCase() + "%";
-            return urlRepository.searchUserUrls(userId, searchPattern, isActive, campaignId, unassignedOnly, pageable);
-        }
-
-        if (unassignedOnly) {
-            if (isActive != null) {
-                return urlRepository.findByUserIdAndIsActiveAndCampaignIdIsNull(userId, isActive, pageable);
-            }
-            return urlRepository.findByUserIdAndCampaignIdIsNull(userId, pageable);
-        }
-
-        if (isActive != null && campaignId != null) {
-            return urlRepository.findByUserIdAndIsActiveAndCampaignId(userId, isActive, campaignId, pageable);
-        } else if (isActive != null) {
-            return urlRepository.findByUserIdAndIsActive(userId, isActive, pageable);
-        } else if (campaignId != null) {
-            return urlRepository.findByUserIdAndCampaignId(userId, campaignId, pageable);
-        } else {
-            return urlRepository.findByUserId(userId, pageable);
-        }
+        String searchPattern = (search != null && !search.trim().isBlank())
+                ? "%" + search.trim().toLowerCase() + "%"
+                : null;
+        return urlRepository.searchUserUrls(userId, searchPattern, isActive, campaignId, unassignedOnly, pageable);
     }
 
-    public UrlMapping getUrl(UUID urlId, UUID userId) {
-        // Guard Clause 1: Validate existence
-        UrlMapping mapping = urlRepository.findById(urlId)
+    public ShortUrlResponse getUrl(UUID urlId, UUID userId) {
+        return urlRepository.findUserUrlWithDetails(urlId, userId)
                 .orElseThrow(() -> new IllegalArgumentException("URL mapping not found"));
-
-        // Guard Clause 2: Validate ownership
-        if (!mapping.getUserId().equals(userId)) {
-            throw new IllegalStateException("Unauthorized to access this URL");
-        }
-
-        // Happy path
-        return mapping;
     }
 
-    public Optional<UrlMapping> getUrlFromShortCode(String shortCode) {
-        // Public lookup by shortcode
-        return urlRepository.findByShortCode(shortCode);
+    public Optional<ShortUrlResponse> getUrlFromShortCode(String shortCode) {
+        return urlRepository.findByShortCodeWithDetails(shortCode);
     }
 
     // ==========================================

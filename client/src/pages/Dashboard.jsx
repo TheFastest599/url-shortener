@@ -4,6 +4,7 @@ import { useAuthStore } from "@/store/authStore";
 import {
 	useUrlsQuery,
 	useCampaignsQuery,
+	useAbTestsQuery,
 	useUpdateUrlMutation,
 } from "@/queries";
 import { toast } from "sonner";
@@ -13,7 +14,8 @@ import {
 	DashboardKpiCards,
 	CampaignConstellationBar,
 	DashboardLinksTable,
-	CampaignSpotlight,
+	DashboardCampaignsTable,
+	DashboardAbTestsTable,
 } from "@/components/dashboard";
 
 /* Hallmark · page: Dashboard Mission Control · decomposed into modular components */
@@ -57,19 +59,78 @@ export function DashboardPage() {
 		return p;
 	}, [currentPage, pageSize, debouncedSearch, activeCampaignFilter]);
 
-	// Direct Backend Queries
+	// 1. Direct Shortlinks Query (Core OLTP)
 	const {
 		data: serverUrls,
 		isLoading: urlsLoading,
 		isFetching: urlsFetching,
 	} = useUrlsQuery(queryParams);
 
-	const { data: campaigns = [] } = useCampaignsQuery();
+	// 2. Campaigns Query (Core OLTP with explicit page & search params)
+	const [campaignsPage, setCampaignsPage] = React.useState(1);
+	const [campaignSearch, setCampaignSearch] = React.useState("");
+	const [debouncedCampaignSearch, setDebouncedCampaignSearch] = React.useState("");
+	const campaignsPageSize = 5;
+
+	React.useEffect(() => {
+		const timer = setTimeout(() => {
+			setDebouncedCampaignSearch(campaignSearch.trim());
+			setCampaignsPage(1);
+		}, 300);
+		return () => clearTimeout(timer);
+	}, [campaignSearch]);
+
+	const {
+		data: serverCampaigns,
+		isLoading: campaignsLoading,
+		isFetching: campaignsFetching,
+	} = useCampaignsQuery({
+		page: campaignsPage - 1,
+		size: campaignsPageSize,
+		search: debouncedCampaignSearch || undefined,
+		sortBy: "createdAt",
+		direction: "DESC",
+	});
+
+	// 3. A/B Tests Query (Core OLTP with explicit page & search params)
+	const [abTestsPage, setAbTestsPage] = React.useState(1);
+	const [abTestSearch, setAbTestSearch] = React.useState("");
+	const [debouncedAbTestSearch, setDebouncedAbTestSearch] = React.useState("");
+	const abTestsPageSize = 5;
+
+	React.useEffect(() => {
+		const timer = setTimeout(() => {
+			setDebouncedAbTestSearch(abTestSearch.trim());
+			setAbTestsPage(1);
+		}, 300);
+		return () => clearTimeout(timer);
+	}, [abTestSearch]);
+
+	const {
+		data: abTestsData,
+		isLoading: abTestsLoading,
+		isFetching: abTestsFetching,
+	} = useAbTestsQuery({
+		page: abTestsPage - 1,
+		size: abTestsPageSize,
+		search: debouncedAbTestSearch || undefined,
+		sortBy: "createdAt",
+		direction: "DESC",
+	});
 
 	const urls = Array.isArray(serverUrls) ? serverUrls : serverUrls?.content || [];
 	const totalLinks = serverUrls?.totalElements ?? urls.length;
 	const totalPages = Math.max(1, serverUrls?.totalPages || 1);
 	const activeLinks = urls.filter((u) => u.isActive !== false).length;
+
+	const campaigns = Array.isArray(serverCampaigns) ? serverCampaigns : serverCampaigns?.content || [];
+	const totalCampaigns = serverCampaigns?.totalElements ?? campaigns.length;
+	const totalCampaignPages = Math.max(1, serverCampaigns?.totalPages || 1);
+
+	const abTests = Array.isArray(abTestsData) ? abTestsData : abTestsData?.content || [];
+	const totalAbTests = abTestsData?.totalElements ?? abTests.length;
+	const totalAbTestPages = Math.max(1, abTestsData?.totalPages || 1);
+	const activeAbTests = abTests.filter((t) => (t.status || "ACTIVE") === "ACTIVE").length;
 
 	// Campaign Map for instant relational lookups
 	const campaignMap = React.useMemo(() => {
@@ -102,10 +163,6 @@ export function DashboardPage() {
 		setCurrentPage(1);
 	};
 
-	const totalCampaignClicks = campaigns.reduce((acc, c) => acc + (c.clickCount || 0), 0);
-	const totalLinkClicks = urls.reduce((acc, u) => acc + (u.clickCount || 0), 0);
-	const totalClicks = totalLinkClicks + totalCampaignClicks;
-
 	return (
 		<div className="space-y-6 sm:space-y-8 max-w-7xl mx-auto">
 			{/* 1. Playful Technical Mission Control Header */}
@@ -114,17 +171,16 @@ export function DashboardPage() {
 				onOpenCreateModal={() => onOpenCreateModal?.()}
 			/>
 
-			{/* 2. Executive Growth & Telemetry HUD */}
+			{/* 2. Executive Growth & Fleet HUD */}
 			<DashboardKpiCards
 				totalLinks={totalLinks}
 				activeLinks={activeLinks}
-				totalClicks={totalClicks}
-				totalCampaigns={campaigns.length}
-				totalCampaignClicks={totalCampaignClicks}
-				humanClicks={totalClicks}
+				totalCampaigns={totalCampaigns}
+				totalAbTests={totalAbTests}
+				activeAbTests={activeAbTests}
 			/>
 
-			{/* 3. Campaign Constellation Filter Strip */}
+			{/* 3. Campaign Constellation Filter Strip for Shortlinks */}
 			<CampaignConstellationBar
 				campaigns={campaigns}
 				totalLinks={totalLinks}
@@ -132,7 +188,7 @@ export function DashboardPage() {
 				onSelectFilter={handleSelectCampaignFilter}
 			/>
 
-			{/* 4. Connected Relational Links Table */}
+			{/* 4. Table 1: Shortcode Links Table */}
 			<DashboardLinksTable
 				urls={urls}
 				totalLinks={totalLinks}
@@ -147,13 +203,36 @@ export function DashboardPage() {
 				onToggleActive={handleToggleActive}
 			/>
 
-			{/* 5. Top Performing Marketing Campaigns Spotlight */}
-			<CampaignSpotlight
+			{/* 5. Table 2: Marketing Campaigns Table (No click data, with page & search params) */}
+			<DashboardCampaignsTable
 				campaigns={campaigns}
-				totalCampaignClicks={totalCampaignClicks}
+				isLoading={campaignsLoading}
+				totalCampaigns={totalCampaigns}
+				totalPages={totalCampaignPages}
+				currentPage={campaignsPage}
+				onPageChange={setCampaignsPage}
+				isFetching={campaignsFetching}
+				searchQuery={campaignSearch}
+				onSearchChange={setCampaignSearch}
+			/>
+
+			{/* 6. Table 3: A/B Split Experiments Table (No click data, with page & search params) */}
+			<DashboardAbTestsTable
+				abTests={abTests}
+				isLoading={abTestsLoading}
+				totalAbTests={totalAbTests}
+				totalPages={totalAbTestPages}
+				currentPage={abTestsPage}
+				onPageChange={setAbTestsPage}
+				isFetching={abTestsFetching}
+				searchQuery={abTestSearch}
+				onSearchChange={setAbTestSearch}
 			/>
 		</div>
 	);
 }
 
 export default DashboardPage;
+
+
+

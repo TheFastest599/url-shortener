@@ -129,17 +129,17 @@ export function LinksTable({
 													</span>
 												)}
 												{url.isAbTest && (
-													<Link to={ROUTES.AB_TESTING}>
-														<Badge variant="outline" className="text-[10px] text-amber-500 border-amber-500/30 hover:bg-amber-500/10 cursor-pointer">
-															A/B Test
+													<Link to={url.abTestId ? `/ab-testing/${url.abTestId}` : ROUTES.AB_TESTING} title={url.abTestName ? `A/B Experiment: ${url.abTestName}` : "A/B Test"}>
+														<Badge variant="outline" className="text-[10px] text-amber-500 border-amber-500/30 hover:bg-amber-500/10 cursor-pointer max-w-[120px] truncate">
+															{url.abTestName || "A/B Test"}
 														</Badge>
 													</Link>
 												)}
-												{url.campaignId && campaignMap[url.campaignId] && (
-													<Link to={`/campaigns/${url.campaignId}`} title={`Jump to campaign: ${campaignMap[url.campaignId].name}`}>
+												{(url.campaignName || (url.campaignId && campaignMap[url.campaignId])) && (
+													<Link to={`/campaigns/${url.campaignId}`} title={`Jump to campaign: ${url.campaignName || campaignMap[url.campaignId]?.name}`}>
 														<Badge variant="secondary" className="text-[10px] gap-1 font-medium max-w-[130px] truncate hidden md:inline-flex hover:bg-primary/20 hover:text-primary transition-colors cursor-pointer">
 															<IconFolder className="size-3 text-primary shrink-0" />
-															<span className="truncate">{campaignMap[url.campaignId].name}</span>
+															<span className="truncate">{url.campaignName || campaignMap[url.campaignId]?.name}</span>
 														</Badge>
 													</Link>
 												)}

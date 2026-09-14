@@ -2,6 +2,7 @@ package com.urlshortener.core.controller;
 
 import com.urlshortener.core.dto.CreateUrlRequest;
 import com.urlshortener.core.dto.PagedResponse;
+import com.urlshortener.core.dto.ShortUrlResponse;
 import com.urlshortener.core.dto.UpdateUrlRequest;
 import com.urlshortener.core.entity.UrlMapping;
 import com.urlshortener.core.service.UrlCoreService;
@@ -79,22 +80,22 @@ public class UrlCoreController {
         String sortField = "shortCode".equalsIgnoreCase(sortBy) ? "shortCode" : "createdAt";
         Pageable pageable = PageRequest.of(page, size != null ? size : 10, Sort.by(sortDirection, sortField));
 
-        Page<UrlMapping> pagedResult = urlCoreService.getUserUrlsPaged(userId, search, isActive, targetCampaignId, unassignedOnly, pageable);
+        Page<ShortUrlResponse> pagedResult = urlCoreService.getUserUrlsPaged(userId, search, isActive, targetCampaignId, unassignedOnly, pageable);
         return ResponseEntity.ok(PagedResponse.from(pagedResult));
     }
 
     @GetMapping("/{urlId}")
-    public ResponseEntity<UrlMapping> getUrl(
+    public ResponseEntity<ShortUrlResponse> getUrl(
             @PathVariable UUID urlId,
             @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
         return ResponseEntity.ok(urlCoreService.getUrl(urlId, userId));
     }
 
     @GetMapping("/code/{shortCode}")
-    public ResponseEntity<UrlMapping> getUrlByCode(
+    public ResponseEntity<ShortUrlResponse> getUrlByCode(
             @PathVariable String shortCode,
             @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
-        UrlMapping mapping = urlCoreService.getUrlFromShortCode(shortCode)
+        ShortUrlResponse mapping = urlCoreService.getUrlFromShortCode(shortCode)
                 .orElseThrow(() -> new IllegalArgumentException("Short code not found: " + shortCode));
         return ResponseEntity.ok(mapping);
     }
@@ -112,10 +113,11 @@ public class UrlCoreController {
             @PathVariable String shortCode,
             @Valid @RequestBody UpdateUrlRequest request,
             @RequestHeader(value = "X-User-Id", defaultValue = "00000000-0000-0000-0000-000000000001") UUID userId) {
-        UrlMapping mapping = urlCoreService.getUrlFromShortCode(shortCode)
+        ShortUrlResponse mapping = urlCoreService.getUrlFromShortCode(shortCode)
                 .orElseThrow(() -> new IllegalArgumentException("Short code not found: " + shortCode));
-        return ResponseEntity.ok(urlCoreService.updateShortUrl(mapping.getId(), request, userId));
+        return ResponseEntity.ok(urlCoreService.updateShortUrl(mapping.id(), request, userId));
     }
+
 
     @DeleteMapping("/{urlId}")
     public ResponseEntity<Void> deleteShortUrl(
