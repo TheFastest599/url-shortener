@@ -1,12 +1,9 @@
-import * as React from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import {
 	IconLink,
 	IconChartBar,
 	IconBolt,
 	IconShieldCheck,
-	IconArrowUpRight,
-	IconRobot,
 } from "@tabler/icons-react";
 
 export function QuickStatCards({

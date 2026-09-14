@@ -13,7 +13,9 @@ import { LinkDetailPage } from "@/pages/LinkDetail";
 import { AnalyticsDetailPage } from "@/pages/AnalyticsDetail";
 import { AnalyticsPage } from "@/pages/Analytics";
 import { CampaignsPage } from "@/pages/Campaigns";
+import { CampaignDetailPage } from "@/pages/CampaignDetail";
 import { AbTestingPage } from "@/pages/AbTesting";
+import { AbTestDetailPage } from "@/pages/AbTestDetail";
 import { ProfilePage } from "@/pages/Profile";
 import { NotFoundPage } from "@/pages/NotFound";
 
@@ -54,11 +56,15 @@ export function AppRoutes() {
 			>
 				<Route path={ROUTES.DASHBOARD} element={<DashboardPage />} />
 				<Route path={ROUTES.REDIRECT_LINKS} element={<RedirectLinksPage />} />
+				<Route path="/redirect-links/:id" element={<LinkDetailPage />} />
 				<Route path="/redirect-links/:shortCode" element={<LinkDetailPage />} />
 				<Route path={ROUTES.ANALYTICS} element={<AnalyticsPage />} />
+				<Route path="/analytics/:id" element={<AnalyticsDetailPage />} />
 				<Route path={ROUTES.ANALYTICS_DETAIL} element={<AnalyticsDetailPage />} />
 				<Route path={ROUTES.CAMPAIGNS} element={<CampaignsPage />} />
+				<Route path={ROUTES.CAMPAIGN_DETAIL} element={<CampaignDetailPage />} />
 				<Route path={ROUTES.AB_TESTING} element={<AbTestingPage />} />
+				<Route path={ROUTES.AB_TEST_DETAIL} element={<AbTestDetailPage />} />
 				<Route path={ROUTES.PROFILE} element={<ProfilePage />} />
 			</Route>
 

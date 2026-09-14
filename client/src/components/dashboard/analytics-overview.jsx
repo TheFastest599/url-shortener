@@ -28,9 +28,30 @@ import {
 	IconDevices,
 	IconArrowUpRight,
 	IconBolt,
-	IconSparkles,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
+
+// Custom Glassmorphic Tooltip
+function CustomTooltip({ active, payload }) {
+	if (active && payload && payload.length) {
+		const pt = payload[0].payload;
+		return (
+			<div className="rounded-xl border border-border bg-card/95 p-3 shadow-xl backdrop-blur-md text-xs space-y-1">
+				<div className="font-semibold text-foreground font-mono">
+					{pt.fullDate || pt.date}
+				</div>
+				<div className="flex items-center gap-2 text-primary">
+					<span className="size-2 rounded-full bg-primary" />
+					<span className="font-bold">
+						{payload[0].value}{" "}
+						{payload[0].value === 1 ? "click" : "clicks"}
+					</span>
+				</div>
+			</div>
+		);
+	}
+	return null;
+}
 
 export function AnalyticsOverview({
 	urls = [],
@@ -39,16 +60,19 @@ export function AnalyticsOverview({
 	const [selectedCode, setSelectedCode] = React.useState(
 		initialShortCode || (urls.length > 0 ? urls[0].shortCode : ""),
 	);
-	const [days, setDays] = React.useState(7);
-	const [isSimulating, setIsSimulating] = React.useState(false);
+	const [prevInitialShortCode, setPrevInitialShortCode] = React.useState(initialShortCode);
 
-	React.useEffect(() => {
+	if (initialShortCode !== prevInitialShortCode) {
+		setPrevInitialShortCode(initialShortCode);
 		if (initialShortCode) {
 			setSelectedCode(initialShortCode);
-		} else if (!selectedCode && urls.length > 0) {
-			setSelectedCode(urls[0].shortCode);
 		}
-	}, [initialShortCode, urls]);
+	} else if (!selectedCode && urls.length > 0) {
+		setSelectedCode(urls[0].shortCode);
+	}
+
+	const [days, setDays] = React.useState(7);
+	const [isSimulating, setIsSimulating] = React.useState(false);
 
 	const interval = days <= 2 ? "HOUR" : "DAY";
 
@@ -129,28 +153,6 @@ export function AnalyticsOverview({
 			setIsSimulating(false);
 			window.open(`http://localhost:8080/r/${selectedCode}`, "_blank");
 		}
-	};
-
-	// Custom Glassmorphic Tooltip
-	const CustomTooltip = ({ active, payload }) => {
-		if (active && payload && payload.length) {
-			const pt = payload[0].payload;
-			return (
-				<div className="rounded-xl border border-border bg-card/95 p-3 shadow-xl backdrop-blur-md text-xs space-y-1">
-					<div className="font-semibold text-foreground font-mono">
-						{pt.fullDate || pt.date}
-					</div>
-					<div className="flex items-center gap-2 text-primary">
-						<span className="size-2 rounded-full bg-primary" />
-						<span className="font-bold">
-							{payload[0].value}{" "}
-							{payload[0].value === 1 ? "click" : "clicks"}
-						</span>
-					</div>
-				</div>
-			);
-		}
-		return null;
 	};
 
 	if (!selectedCode && urls.length === 0) {

@@ -11,8 +11,6 @@ import {
 	IconExternalLink,
 	IconSearch,
 	IconPlus,
-	IconArrowUpRight,
-	IconSparkles,
 } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -131,7 +129,11 @@ export function LinksTable({
 			</div>
 
 			{/* Table / Card List */}
-			{filteredUrls.length === 0 ? (
+			{isLoading ? (
+				<div className="rounded-2xl border border-border/80 bg-card/50 p-12 text-center">
+					<p className="text-xs sm:text-sm text-muted-foreground animate-pulse">Loading links...</p>
+				</div>
+			) : filteredUrls.length === 0 ? (
 				<div className="rounded-2xl border border-dashed border-border/80 bg-card/50 p-12 text-center">
 					<div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground mb-3">
 						<IconLink className="size-6" />

@@ -5,17 +5,19 @@ import {
 	getCampaign,
 	getCampaignUrls,
 	createCampaign,
+	updateCampaign,
 	deleteCampaign,
 } from "@/api/campaigns";
+import { getCampaignAnalytics } from "@/api/analytics";
 import { toast } from "sonner";
 
 /**
- * Fetch all campaigns for the current authenticated user
+ * Fetch all campaigns for the current authenticated user with search/pagination
  */
-export const useCampaignsQuery = (options = {}) => {
+export const useCampaignsQuery = (params = {}, options = {}) => {
 	return useQuery({
-		queryKey: queryKeys.campaigns.list(),
-		queryFn: getUserCampaigns,
+		queryKey: queryKeys.campaigns.list(params),
+		queryFn: () => getUserCampaigns(params),
 		staleTime: 1000 * 60 * 2, // 2 minutes
 		...options,
 	});
@@ -46,6 +48,23 @@ export const useCampaignUrlsQuery = (id, options = {}) => {
 };
 
 /**
+ * Fetch aggregate campaign analytics
+ */
+export const useCampaignAnalyticsQuery = (
+	campaignId,
+	{ days = 30, includeBots = false } = {},
+	options = {}
+) => {
+	return useQuery({
+		queryKey: queryKeys.campaigns.analytics(campaignId, days, includeBots),
+		queryFn: () => getCampaignAnalytics(campaignId, days, includeBots),
+		enabled: !!campaignId,
+		staleTime: 1000 * 30,
+		...options,
+	});
+};
+
+/**
  * Create a new campaign mutation
  */
 export const useCreateCampaignMutation = (options = {}) => {
@@ -60,6 +79,27 @@ export const useCreateCampaignMutation = (options = {}) => {
 		},
 		onError: (error, variables, context) => {
 			toast.error(error?.response?.data?.message || "Failed to create campaign");
+			options.onError?.(error, variables, context);
+		},
+		...options,
+	});
+};
+
+/**
+ * Update an existing campaign mutation
+ */
+export const useUpdateCampaignMutation = (options = {}) => {
+	const queryClient = useQueryClient();
+
+	return useMutation({
+		mutationFn: ({ id, payload }) => updateCampaign(id, payload),
+		onSuccess: (data, variables, context) => {
+			toast.success("Campaign updated successfully!");
+			queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.all });
+			options.onSuccess?.(data, variables, context);
+		},
+		onError: (error, variables, context) => {
+			toast.error(error?.response?.data?.message || "Failed to update campaign");
 			options.onError?.(error, variables, context);
 		},
 		...options,

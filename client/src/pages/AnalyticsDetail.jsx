@@ -1,6 +1,6 @@
 import * as React from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
-import { useAnalyticsOverview } from "@/queries";
+import { useParams, Link } from "react-router-dom";
+import { useAnalyticsOverview, useUrlByIdQuery } from "@/queries";
 import { ROUTES } from "@/routes/paths";
 import {
 	Breadcrumb,
@@ -12,38 +12,35 @@ import {
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
-	IconArrowLeft,
-	IconChartBar,
-	IconUser,
-	IconRobot,
 	IconBolt,
 	IconCopy,
 	IconCheck,
 	IconExternalLink,
 	IconAdjustments,
-	IconWorld,
-	IconBrowser,
-	IconDeviceDesktop,
-	IconShare,
-	IconCalendar,
 } from "@tabler/icons-react";
-import {
-	AreaChart,
-	Area,
-	XAxis,
-	YAxis,
-	Tooltip,
-	ResponsiveContainer,
-	CartesianGrid,
-} from "recharts";
 import { toast } from "sonner";
 
+import {
+	AnalyticsKpiCards,
+	AnalyticsTimeSeriesChart,
+	AnalyticsGeoCard,
+	AnalyticsDeviceCard,
+	AnalyticsReferrersCard,
+} from "@/components/analytics";
+
+/* Hallmark · page: Link Analytics Detail · decomposed into modular components */
+
 export function AnalyticsDetailPage() {
-	const { shortCode } = useParams();
-	const navigate = useNavigate();
+	const params = useParams();
+	const identifier = params.shortCode || params.id;
+	const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(identifier || "");
+
+	const { data: urlData } = useUrlByIdQuery(identifier, {
+		enabled: isUuid && !!identifier,
+	});
+
+	const shortCode = isUuid ? urlData?.shortCode || "" : identifier;
 
 	const [days, setDays] = React.useState(7);
 	const [isSimulating, setIsSimulating] = React.useState(false);
@@ -59,9 +56,10 @@ export function AnalyticsDetailPage() {
 		days,
 		interval,
 		includeBots: true,
+		enabled: !!shortCode,
 	});
 
-	const fullShortUrl = `http://localhost:8080/r/${shortCode}`;
+	const fullShortUrl = `${window.location.origin}/r/${shortCode}`;
 
 	const handleCopy = () => {
 		navigator.clipboard.writeText(fullShortUrl);
@@ -86,8 +84,9 @@ export function AnalyticsDetailPage() {
 
 	// Format time-series points
 	const timeSeriesData = React.useMemo(() => {
-		if (!analytics?.timeSeries) return [];
-		return analytics.timeSeries.map((point) => {
+		const series = analytics?.timeSeries;
+		if (!series) return [];
+		return series.map((point) => {
 			const rawDate = point.timestamp || "";
 			let label = rawDate;
 			try {
@@ -97,357 +96,129 @@ export function AnalyticsDetailPage() {
 				} else {
 					label = d.toLocaleDateString([], { month: "short", day: "numeric" });
 				}
-			} catch {}
+			} catch {
+				/* ignore date parse error */
+			}
 
 			return {
 				date: label,
 				fullDate: rawDate,
-				clicks: point.clicks || 0,
+				clicks: point.clicks,
+				humanClicks: point.humanClicks ?? point.clicks,
+				botClicks: point.botClicks ?? 0,
 			};
 		});
-	}, [analytics?.timeSeries, days]);
+	}, [analytics, days]);
 
 	const totalClicks = analytics?.totalClicks ?? 0;
 	const humanClicks = analytics?.humanClicks ?? 0;
 	const botClicks = analytics?.botClicks ?? 0;
-	const botPercentage = analytics?.botPercentage ?? 0;
+	const uniqueVisitors = analytics?.uniqueVisitors ?? 0;
 
 	return (
-		<div className="space-y-6 max-w-7xl mx-auto">
-			{/* Back Link & Configure Shortcut */}
-			<div className="flex items-center justify-between">
-				<Link
-					to={ROUTES.REDIRECT_LINKS}
-					className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-				>
-					<IconArrowLeft className="size-3.5" />
-					<span>Back to Redirect Links</span>
-				</Link>
-				<Link
-					to={`/redirect-links/${shortCode}`}
-					className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline transition-colors"
-				>
-					<IconAdjustments className="size-3.5" />
-					<span>Configure Link Settings</span>
-				</Link>
-			</div>
-
-			{/* 2. Page Header & Range Controls */}
-			<div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card/60 border border-border/70 rounded-2xl p-4 sm:p-6 shadow-2xs">
-				<div className="space-y-1.5 min-w-0">
-					<div className="flex flex-wrap items-center gap-2.5">
-						<Link
-							to={`/redirect-links/${shortCode}`}
-							className="font-mono text-xl sm:text-2xl font-bold tracking-tight text-foreground hover:text-primary hover:underline transition-colors"
-							title="Configure link settings"
-						>
+		<div className="space-y-6 sm:space-y-8 max-w-7xl mx-auto">
+			{/* 1. Breadcrumbs & Quick Back */}
+			<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/50 pb-4">
+				<div className="space-y-1">
+					<Breadcrumb>
+						<BreadcrumbList className="text-xs">
+							<BreadcrumbItem>
+								<BreadcrumbLink asChild>
+									<Link to={ROUTES.ANALYTICS}>Analytics</Link>
+								</BreadcrumbLink>
+							</BreadcrumbItem>
+							<BreadcrumbSeparator />
+							<BreadcrumbItem>
+								<BreadcrumbPage className="font-mono font-semibold text-foreground">
+									/r/{shortCode}
+								</BreadcrumbPage>
+							</BreadcrumbItem>
+						</BreadcrumbList>
+					</Breadcrumb>
+					<h1 className="font-heading text-xl sm:text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
+						<span>Telemetry & Traffic Attribution</span>
+						<Badge variant="outline" className="font-mono text-xs">
 							/r/{shortCode}
-						</Link>
-						<button
-							onClick={handleCopy}
-							className="inline-flex size-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground hover:text-foreground cursor-pointer transition-colors shadow-2xs"
-							title="Copy short link"
-						>
-							{copied ? (
-								<IconCheck className="size-4 text-emerald-500" />
-							) : (
-								<IconCopy className="size-4" />
-							)}
-						</button>
-						<Link
-							to={`/redirect-links/${shortCode}`}
-							className="inline-flex size-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground hover:text-primary cursor-pointer transition-colors shadow-2xs"
-							title="Configure link settings"
-						>
-							<IconAdjustments className="size-4" />
-						</Link>
-						<a
-							href={fullShortUrl}
-							target="_blank"
-							rel="noreferrer"
-							className="inline-flex size-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground hover:text-primary cursor-pointer transition-colors shadow-2xs"
-							title="Test 302 Redirection"
-						>
-							<IconExternalLink className="size-4" />
-						</a>
-						<Badge variant="outline" className="text-[10px] font-mono text-emerald-500 border-emerald-500/30">
-							Live Stream
 						</Badge>
-					</div>
-
-					<div className="flex items-center gap-2 text-xs text-muted-foreground">
-						<IconCalendar className="size-3.5 shrink-0" />
-						<span>Target: <span className="font-mono text-foreground">{fullShortUrl}</span></span>
-					</div>
+					</h1>
 				</div>
 
-				{/* Range Selector & Simulate Click Action */}
-				<div className="flex flex-wrap items-center gap-2.5">
+				{/* Quick Actions */}
+				<div className="flex items-center gap-2 flex-wrap">
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={handleCopy}
+						className="text-xs h-8.5 gap-1.5 cursor-pointer shadow-2xs"
+					>
+						{copied ? <IconCheck className="size-3.5 text-emerald-500" /> : <IconCopy className="size-3.5" />}
+						<span>Copy Link</span>
+					</Button>
+
+					<a
+						href={fullShortUrl}
+						target="_blank"
+						rel="noreferrer"
+						className="inline-flex items-center gap-1.5 px-3 h-8.5 text-xs font-medium rounded-lg border border-border bg-card text-foreground hover:bg-muted/50 transition-colors shadow-2xs"
+					>
+						<span>Open</span>
+						<IconExternalLink className="size-3.5" />
+					</a>
+
 					<Button
 						variant="outline"
 						size="sm"
 						onClick={handleSimulateClick}
 						disabled={isSimulating}
-						className="h-8.5 gap-1.5 text-xs cursor-pointer shadow-2xs"
-						title="Simulate click event to test real-time stream"
+						className="text-xs h-8.5 gap-1.5 cursor-pointer shadow-2xs text-amber-500 hover:text-amber-600 border-amber-500/30"
+						title="Produce real Kafka click event"
 					>
-						<IconBolt className={`size-3.5 text-amber-500 ${isSimulating ? "animate-pulse" : ""}`} />
-						<span>{isSimulating ? "Sending Click..." : "Simulate Click"}</span>
+						<IconBolt className={`size-3.5 ${isSimulating ? "animate-spin" : ""}`} />
+						<span>Simulate Hit</span>
 					</Button>
 
-					<div className="flex items-center rounded-lg border border-border bg-muted/40 p-0.5 text-xs">
-						{[
-							{ label: "24H", value: 1 },
-							{ label: "7D", value: 7 },
-							{ label: "14D", value: 14 },
-							{ label: "30D", value: 30 },
-						].map((item) => (
-							<button
-								key={item.value}
-								onClick={() => setDays(item.value)}
-								className={`px-3 py-1 font-medium rounded-md transition-all cursor-pointer ${
-									days === item.value
-										? "bg-background text-foreground shadow-2xs font-semibold"
-										: "text-muted-foreground hover:text-foreground"
-								}`}
-							>
-								{item.label}
-							</button>
-						))}
-					</div>
+					<Link to={`/redirect-links/${shortCode}`}>
+						<Button size="sm" className="text-xs h-8.5 gap-1.5 font-semibold cursor-pointer shadow-xs">
+							<IconAdjustments className="size-3.5" />
+							<span>Configure</span>
+						</Button>
+					</Link>
 				</div>
 			</div>
 
-			{/* 3. Primary KPI Telemetry Summary Cards (2 per row on mobile) */}
-			<div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-4">
-				<Card className="border-border/70 bg-card shadow-xs">
-					<CardContent className="p-3 sm:p-4 lg:p-5 flex items-start sm:items-center justify-between gap-2">
-						<div className="min-w-0">
-							<div className="text-[11px] sm:text-xs font-medium text-muted-foreground truncate">Total Clicks</div>
-							<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-foreground mt-0.5 sm:mt-1">
-								{isLoading ? <Skeleton className="h-7 sm:h-8 w-16 sm:w-20" /> : totalClicks}
-							</div>
-							<div className="text-[10px] sm:text-[11px] text-muted-foreground mt-0.5 truncate">
-								Selected {days === 1 ? "24h" : `${days}d`} window
-							</div>
-						</div>
-						<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-primary/10 text-primary border border-primary/20">
-							<IconChartBar className="size-3.5 sm:size-4.5 lg:size-5" />
-						</div>
-					</CardContent>
-				</Card>
+			{/* 2. KPI Summary Cards */}
+			<AnalyticsKpiCards
+				totalClicks={totalClicks}
+				humanClicks={humanClicks}
+				botClicks={botClicks}
+				uniqueVisitors={uniqueVisitors}
+				isLoading={isLoading}
+			/>
 
-				<Card className="border-border/70 bg-card shadow-xs">
-					<CardContent className="p-3 sm:p-4 lg:p-5 flex items-start sm:items-center justify-between gap-2">
-						<div className="min-w-0">
-							<div className="text-[11px] sm:text-xs font-medium text-muted-foreground truncate">Human Clicks</div>
-							<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-emerald-500 mt-0.5 sm:mt-1">
-								{isLoading ? <Skeleton className="h-7 sm:h-8 w-16 sm:w-20" /> : humanClicks}
-							</div>
-							<div className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 font-medium truncate">
-								{totalClicks > 0
-									? `${Math.round((humanClicks / totalClicks) * 100)}% human`
-									: "100% human"}
-							</div>
-						</div>
-						<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
-							<IconUser className="size-3.5 sm:size-4.5 lg:size-5" />
-						</div>
-					</CardContent>
-				</Card>
+			{/* 3. Time Series Chart */}
+			<AnalyticsTimeSeriesChart
+				data={timeSeriesData}
+				isLoading={isLoading}
+				title={`Traffic Trend: /r/${shortCode}`}
+				description="Time-series click frequency across selected resolution window."
+				timeRangeDays={days}
+				onTimeRangeChange={setDays}
+			/>
 
-				<Card className="border-border/70 bg-card shadow-xs col-span-2 sm:col-span-1">
-					<CardContent className="p-3 sm:p-4 lg:p-5 flex items-start sm:items-center justify-between gap-2">
-						<div className="min-w-0">
-							<div className="text-[11px] sm:text-xs font-medium text-muted-foreground truncate">Bots Filtered</div>
-							<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-amber-500 mt-0.5 sm:mt-1">
-								{isLoading ? <Skeleton className="h-7 sm:h-8 w-16 sm:w-20" /> : botClicks}
-							</div>
-							<div className="text-[10px] sm:text-[11px] text-amber-600 dark:text-amber-400 mt-0.5 font-medium truncate">
-								{botPercentage ? `${botPercentage}% bots` : "0% bots"}
-							</div>
-						</div>
-						<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20">
-							<IconRobot className="size-3.5 sm:size-4.5 lg:size-5" />
-						</div>
-					</CardContent>
-				</Card>
-			</div>
-
-			{/* 4. Click Velocity & Trends AreaChart */}
-			<Card className="border-border/70 bg-card shadow-xs overflow-hidden">
-				<CardHeader className="pb-2">
-					<CardTitle className="text-base font-heading font-semibold flex items-center justify-between">
-						<span>Click Velocity Timeline</span>
-						<span className="text-xs font-mono font-normal text-muted-foreground">
-							{days === 1 ? "Hourly Granularity" : "Daily Buckets"}
-						</span>
-					</CardTitle>
-					<CardDescription className="text-xs">
-						Historical traffic distribution over the {days === 1 ? "past 24 hours" : `past ${days} days`} for{" "}
-						<Link
-							to={`/redirect-links/${shortCode}`}
-							className="font-mono font-medium text-primary hover:underline"
-							title="Configure link settings"
-						>
-							/r/{shortCode}
-						</Link>
-					</CardDescription>
-				</CardHeader>
-				<CardContent className="pt-4">
-					{isLoading ? (
-						<Skeleton className="h-64 w-full rounded-lg" />
-					) : timeSeriesData.length > 0 ? (
-						<div className="h-64 sm:h-72 w-full">
-							<ResponsiveContainer width="100%" height="100%">
-								<AreaChart data={timeSeriesData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-									<defs>
-										<linearGradient id="detailVelocityGrad" x1="0" y1="0" x2="0" y2="1">
-											<stop offset="5%" stopColor="var(--primary)" stopOpacity={0.35} />
-											<stop offset="95%" stopColor="var(--primary)" stopOpacity={0.0} />
-										</linearGradient>
-									</defs>
-									<CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" opacity={0.4} />
-									<XAxis
-										dataKey="date"
-										tickLine={false}
-										axisLine={false}
-										tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
-									/>
-									<YAxis
-										allowDecimals={false}
-										tickLine={false}
-										axisLine={false}
-										tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
-									/>
-									<Tooltip
-										content={({ active, payload }) => {
-											if (!active || !payload?.length) return null;
-											const pt = payload[0].payload;
-											return (
-												<div className="rounded-lg border border-border bg-popover p-2.5 shadow-md text-xs space-y-1">
-													<div className="font-semibold text-foreground font-mono">
-														{pt.fullDate || pt.date}
-													</div>
-													<div className="flex items-center gap-2 text-primary">
-														<span className="size-2 rounded-full bg-primary" />
-														<span className="font-bold">
-															{payload[0].value} {payload[0].value === 1 ? "click" : "clicks"}
-														</span>
-													</div>
-												</div>
-											);
-										}}
-									/>
-									<Area
-										type="monotone"
-										dataKey="clicks"
-										stroke="var(--primary)"
-										strokeWidth={2}
-										fill="url(#detailVelocityGrad)"
-									/>
-								</AreaChart>
-							</ResponsiveContainer>
-						</div>
-					) : (
-						<div className="h-64 flex items-center justify-center text-xs text-muted-foreground">
-							No telemetry data available for this range.
-						</div>
-					)}
-				</CardContent>
-			</Card>
-
-			{/* 5. Geographic & Technology Demographic Breakdowns */}
-			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-				{/* Top Countries */}
-				<Card className="border-border/70 bg-card shadow-xs">
-					<CardHeader className="p-4 pb-3">
-						<CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-							<IconWorld className="size-4 text-primary" />
-							<span>Top Geographic Locations</span>
-						</CardTitle>
-					</CardHeader>
-					<CardContent className="p-4 pt-0 space-y-3">
-						{analytics?.topCountries && analytics.topCountries.length > 0 ? (
-							analytics.topCountries.slice(0, 5).map((c) => (
-								<div key={c.name} className="space-y-1">
-									<div className="flex justify-between text-xs">
-										<span className="font-medium text-foreground truncate">{c.name}</span>
-										<span className="font-mono text-muted-foreground">{c.count} ({c.percentage}%)</span>
-									</div>
-									<div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-										<div
-											className="h-full rounded-full bg-primary"
-											style={{ width: `${Math.min(c.percentage || 0, 100)}%` }}
-										/>
-									</div>
-								</div>
-							))
-						) : (
-							<div className="text-xs text-muted-foreground py-4 text-center">No country data</div>
-						)}
-					</CardContent>
-				</Card>
-
-				{/* Top Browsers */}
-				<Card className="border-border/70 bg-card shadow-xs">
-					<CardHeader className="p-4 pb-3">
-						<CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-							<IconBrowser className="size-4 text-emerald-500" />
-							<span>Browsers</span>
-						</CardTitle>
-					</CardHeader>
-					<CardContent className="p-4 pt-0 space-y-3">
-						{analytics?.topBrowsers && analytics.topBrowsers.length > 0 ? (
-							analytics.topBrowsers.slice(0, 5).map((b) => (
-								<div key={b.name} className="space-y-1">
-									<div className="flex justify-between text-xs">
-										<span className="font-medium text-foreground truncate">{b.name}</span>
-										<span className="font-mono text-muted-foreground">{b.count} ({b.percentage}%)</span>
-									</div>
-									<div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-										<div
-											className="h-full rounded-full bg-emerald-500"
-											style={{ width: `${Math.min(b.percentage || 0, 100)}%` }}
-										/>
-									</div>
-								</div>
-							))
-						) : (
-							<div className="text-xs text-muted-foreground py-4 text-center">No browser data</div>
-						)}
-					</CardContent>
-				</Card>
-
-				{/* Top Devices & Platforms */}
-				<Card className="border-border/70 bg-card shadow-xs">
-					<CardHeader className="p-4 pb-3">
-						<CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-							<IconDeviceDesktop className="size-4 text-blue-500" />
-							<span>Device Types & Platforms</span>
-						</CardTitle>
-					</CardHeader>
-					<CardContent className="p-4 pt-0 space-y-3">
-						{analytics?.topDevices && analytics.topDevices.length > 0 ? (
-							analytics.topDevices.slice(0, 5).map((d) => (
-								<div key={d.name} className="space-y-1">
-									<div className="flex justify-between text-xs">
-										<span className="font-medium text-foreground truncate">{d.name}</span>
-										<span className="font-mono text-muted-foreground">{d.count} ({d.percentage}%)</span>
-									</div>
-									<div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-										<div
-											className="h-full rounded-full bg-blue-500"
-											style={{ width: `${Math.min(d.percentage || 0, 100)}%` }}
-										/>
-									</div>
-								</div>
-							))
-						) : (
-							<div className="text-xs text-muted-foreground py-4 text-center">No device data</div>
-						)}
-					</CardContent>
-				</Card>
+			{/* 4. Deep Breakdown Cards */}
+			<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+				<AnalyticsGeoCard
+					countries={analytics?.topCountries || []}
+					totalClicks={totalClicks}
+				/>
+				<AnalyticsDeviceCard
+					browsers={analytics?.topBrowsers || []}
+					totalClicks={totalClicks}
+				/>
+				<AnalyticsReferrersCard
+					referrers={analytics?.topReferrers || []}
+					totalClicks={totalClicks}
+				/>
 			</div>
 		</div>
 	);

@@ -10,7 +10,6 @@ import {
 	IconExternalLink,
 	IconSparkles,
 	IconTag,
-	IconArrowRight,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
 
@@ -165,6 +164,19 @@ export function UtmBuilderView({ onOpenCreateModal }) {
 									value={campaign}
 									onChange={(e) => setCampaign(e.target.value)}
 									placeholder="e.g. black_friday_2026"
+									className="h-8.5 text-xs bg-muted/30"
+								/>
+							</div>
+
+							<div className="space-y-1">
+								<label className="text-xs font-medium text-foreground">
+									Campaign Term (<span className="font-mono text-[11px] text-primary">utm_term</span>)
+								</label>
+								<Input
+									type="text"
+									value={term}
+									onChange={(e) => setTerm(e.target.value)}
+									placeholder="e.g. running_shoes, keyword"
 									className="h-8.5 text-xs bg-muted/30"
 								/>
 							</div>

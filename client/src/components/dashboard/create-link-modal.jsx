@@ -17,7 +17,6 @@ import {
 	IconAdjustments,
 	IconCheck,
 	IconCopy,
-	IconArrowRight,
 	IconQrcode,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
@@ -28,8 +27,15 @@ export function CreateLinkModal({
 	onOpenQrModal,
 	initialDestinationUrl = "",
 }) {
-	const { data: campaigns = [] } = useCampaignsQuery();
+	const { data: campaigns = [] } = useCampaignsQuery({}, { enabled: !!open });
 	const [destinationUrl, setDestinationUrl] = React.useState(initialDestinationUrl);
+	const [prevInitialUrl, setPrevInitialUrl] = React.useState(initialDestinationUrl);
+
+	if (initialDestinationUrl !== prevInitialUrl) {
+		setPrevInitialUrl(initialDestinationUrl);
+		setDestinationUrl(initialDestinationUrl);
+	}
+
 	const [customAlias, setCustomAlias] = React.useState("");
 	const [selectedCampaignId, setSelectedCampaignId] = React.useState("");
 	const [showUtm, setShowUtm] = React.useState(false);
@@ -38,12 +44,6 @@ export function CreateLinkModal({
 	const [utmCampaign, setUtmCampaign] = React.useState("");
 	const [utmTerm, setUtmTerm] = React.useState("");
 	const [utmContent, setUtmContent] = React.useState("");
-
-	React.useEffect(() => {
-		if (initialDestinationUrl && open) {
-			setDestinationUrl(initialDestinationUrl);
-		}
-	}, [initialDestinationUrl, open]);
 
 	const [createdResult, setCreatedResult] = React.useState(null);
 	const [copied, setCopied] = React.useState(false);
