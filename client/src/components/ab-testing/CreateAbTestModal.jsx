@@ -64,10 +64,31 @@ export function CreateAbTestModal({
 	const isWeightValid = totalWeight === 100;
 
 	const handleVariantWeightChange = (index, value) => {
-		const parsed = Math.max(0, Math.min(100, parseInt(value, 10) || 0));
+		if (value === "") {
+			setVariants((prev) => {
+				const updated = [...prev];
+				updated[index] = { ...updated[index], weight: "" };
+				return updated;
+			});
+			return;
+		}
+		const num = parseInt(value, 10);
+		if (!isNaN(num)) {
+			const clamped = Math.max(0, Math.min(100, num));
+			setVariants((prev) => {
+				const updated = [...prev];
+				updated[index] = { ...updated[index], weight: clamped };
+				return updated;
+			});
+		}
+	};
+
+	const handleVariantWeightBlur = (index) => {
 		setVariants((prev) => {
 			const updated = [...prev];
-			updated[index] = { ...updated[index], weight: parsed };
+			const current = updated[index]?.weight;
+			const fallback = current === "" || isNaN(current) ? 0 : Math.max(0, Math.min(100, Number(current)));
+			updated[index] = { ...updated[index], weight: fallback };
 			return updated;
 		});
 	};
@@ -283,6 +304,7 @@ export function CreateAbTestModal({
 													onChange={(e) =>
 														handleVariantWeightChange(index, e.target.value)
 													}
+													onBlur={() => handleVariantWeightBlur(index)}
 													className="w-16 h-7 text-xs text-center"
 												/>
 												<span className="text-muted-foreground">%</span>

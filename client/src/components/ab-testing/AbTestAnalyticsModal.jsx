@@ -44,9 +44,27 @@ export function AbTestAnalyticsModal({
 	const totalClicks = analytics?.totalClicks ?? 0;
 	const uniqueVisitors = analytics?.uniqueVisitors ?? 0;
 	const botClicks = analytics?.botClicks ?? 0;
-	const variantSplit = analytics?.variantSplit || {};
-	const devices = analytics?.devices || [];
-	const referrers = analytics?.referrers || [];
+
+	const variantSplit = React.useMemo(() => {
+		if (Array.isArray(analytics?.variantBreakdown)) {
+			const map = {};
+			analytics.variantBreakdown.forEach((vb) => {
+				const key = vb.name || vb.key || vb.variantKey;
+				if (key) {
+					map[key] = {
+						clicks: vb.count ?? vb.clicks ?? vb.totalClicks ?? 0,
+						percentage: vb.percentage ?? 0,
+						destinationUrl: vb.destinationUrl,
+					};
+				}
+			});
+			return map;
+		}
+		return analytics?.variantSplit || {};
+	}, [analytics]);
+
+	const devices = analytics?.devices || analytics?.topDevices || [];
+	const referrers = analytics?.referrers || analytics?.topReferrers || [];
 
 	const variantKeys = Object.keys(variantSplit);
 

@@ -230,9 +230,9 @@ export function CampaignDetailPage() {
 					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
 						<div>
 							<p className="text-[11px] font-medium text-muted-foreground">Total Clicks</p>
-							<p className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-foreground mt-0.5">
+							<div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-foreground mt-0.5">
 								{isAnalyticsLoading ? <Skeleton className="h-7 w-16" /> : totalClicks.toLocaleString()}
-							</p>
+							</div>
 							<p className="text-[10px] text-muted-foreground mt-0.5">Last {days} days</p>
 						</div>
 						<div className="size-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
@@ -245,9 +245,9 @@ export function CampaignDetailPage() {
 					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
 						<div>
 							<p className="text-[11px] font-medium text-muted-foreground">Human Traffic</p>
-							<p className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-emerald-500 mt-0.5">
+							<div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-emerald-500 mt-0.5">
 								{isAnalyticsLoading ? <Skeleton className="h-7 w-16" /> : humanClicks.toLocaleString()}
-							</p>
+							</div>
 							<p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5">
 								{humanPercentage}% organic
 							</p>
@@ -262,9 +262,9 @@ export function CampaignDetailPage() {
 					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
 						<div>
 							<p className="text-[11px] font-medium text-muted-foreground">Bot / Scraper</p>
-							<p className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-amber-500 mt-0.5">
+							<div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-amber-500 mt-0.5">
 								{isAnalyticsLoading ? <Skeleton className="h-7 w-16" /> : botClicks.toLocaleString()}
-							</p>
+							</div>
 							<p className="text-[10px] text-muted-foreground mt-0.5">Filtered automations</p>
 						</div>
 						<div className="size-10 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center">
@@ -277,9 +277,9 @@ export function CampaignDetailPage() {
 					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
 						<div>
 							<p className="text-[11px] font-medium text-muted-foreground">Assigned URLs</p>
-							<p className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-foreground mt-0.5">
+							<div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-foreground mt-0.5">
 								{isUrlsLoading ? <Skeleton className="h-7 w-16" /> : urls.length}
-							</p>
+							</div>
 							<p className="text-[10px] text-muted-foreground mt-0.5">Active routing nodes</p>
 						</div>
 						<div className="size-10 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center">

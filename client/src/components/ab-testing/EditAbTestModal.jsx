@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { IconEdit, IconScale, IconPlus, IconTrash } from "@tabler/icons-react";
+import { useUpdateAbTestMutation } from "@/queries/abTestingQueries";
 import { toast } from "sonner";
 
 export function EditAbTestModal({
@@ -34,6 +35,40 @@ export function EditAbTestModal({
 		}))
 	);
 
+	// Sync state whenever modal opens or experiment changes
+	React.useEffect(() => {
+		if (open && experiment) {
+			setName(experiment.name || "");
+			setCookieDays(
+				experiment.cookieTtlSeconds
+					? Math.round(experiment.cookieTtlSeconds / 86400)
+					: 30
+			);
+			setVariants(
+				(experiment.variants && experiment.variants.length > 0
+					? experiment.variants
+					: [
+							{ key: "A", destinationUrl: "", weight: 50, isControl: true },
+							{ key: "B", destinationUrl: "", weight: 50, isControl: false },
+					  ]
+				).map((v, i) => ({
+					key: v.key || (i === 0 ? "A" : "B"),
+					destinationUrl: v.destinationUrl || v.url || "",
+					weight: v.weight ?? 50,
+					isControl: typeof v.isControl === "boolean" ? v.isControl : i === 0,
+				}))
+			);
+		}
+	}, [open, experiment]);
+
+	const defaultMutation = useUpdateAbTestMutation({
+		onSuccess: () => {
+			onOpenChange?.(false);
+		},
+	});
+
+	const isProcessing = isSubmitting || defaultMutation.isPending;
+
 	const totalWeight = variants.reduce(
 		(sum, v) => sum + (parseInt(v.weight, 10) || 0),
 		0
@@ -41,12 +76,50 @@ export function EditAbTestModal({
 	const isWeightValid = totalWeight === 100;
 
 	const handleVariantWeightChange = (index, value) => {
-		const parsed = Math.max(0, Math.min(100, parseInt(value, 10) || 0));
+		if (value === "") {
+			setVariants((prev) => {
+				const updated = [...prev];
+				updated[index] = { ...updated[index], weight: "" };
+				return updated;
+			});
+			return;
+		}
+		const num = parseInt(value, 10);
+		if (!isNaN(num)) {
+			const clamped = Math.max(0, Math.min(100, num));
+			setVariants((prev) => {
+				const updated = [...prev];
+				updated[index] = { ...updated[index], weight: clamped };
+				return updated;
+			});
+		}
+	};
+
+	const handleVariantWeightBlur = (index) => {
 		setVariants((prev) => {
 			const updated = [...prev];
-			updated[index] = { ...updated[index], weight: parsed };
+			const current = updated[index]?.weight;
+			const fallback = current === "" || isNaN(current) ? 0 : Math.max(0, Math.min(100, Number(current)));
+			updated[index] = { ...updated[index], weight: fallback };
 			return updated;
 		});
+	};
+
+	const handleCookieDaysChange = (value) => {
+		if (value === "") {
+			setCookieDays("");
+			return;
+		}
+		const num = parseInt(value, 10);
+		if (!isNaN(num)) {
+			setCookieDays(Math.max(1, Math.min(365, num)));
+		}
+	};
+
+	const handleCookieDaysBlur = () => {
+		setCookieDays((prev) =>
+			prev === "" || isNaN(prev) ? 30 : Math.max(1, Math.min(365, Number(prev)))
+		);
 	};
 
 	const handleEqualSplit = () => {
@@ -101,62 +174,81 @@ export function EditAbTestModal({
 			}
 		}
 
-		onSubmit({
-			shortCode,
-			payload: {
-				name: name.trim(),
-				cookieTtlSeconds: (parseInt(cookieDays, 10) || 30) * 86400,
-				variants: variants.map((v) => ({
-					key: v.key,
-					destinationUrl: v.destinationUrl.trim(),
-					weight: parseInt(v.weight, 10),
-					isControl: !!v.isControl,
-				})),
-			},
-		});
+		const cookieDaysNum = parseInt(cookieDays, 10) || 30;
+		const payload = {
+			name: name.trim(),
+			cookieTtlSeconds: cookieDaysNum * 86400,
+			variants: variants.map((v) => ({
+				key: v.key,
+				destinationUrl: v.destinationUrl.trim(),
+				weight: parseInt(v.weight, 10) || 0,
+				isControl: !!v.isControl,
+			})),
+		};
+
+		const targetId = experiment?.id;
+		const targetCode = experiment?.shortCode || shortCode;
+
+		if (typeof onSubmit === "function") {
+			onSubmit({
+				id: targetId,
+				shortCode: targetCode,
+				payload,
+			});
+		} else if (targetId) {
+			defaultMutation.mutate({
+				id: targetId,
+				payload,
+			});
+		} else {
+			toast.error("Unable to update: Experiment ID missing");
+		}
 	};
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
-				<DialogHeader>
-					<DialogTitle className="flex items-center gap-2">
-						<IconEdit className="size-5 text-primary" />
-						<span>Edit A/B Experiment: /r/{shortCode}</span>
-					</DialogTitle>
-					<DialogDescription className="text-xs">
-						Modify destination URLs, adjust traffic split weights, or change session stickiness.
-					</DialogDescription>
-				</DialogHeader>
+				<form onSubmit={handleSubmit} className="space-y-4">
+					<DialogHeader>
+						<DialogTitle className="flex items-center gap-2">
+							<IconEdit className="size-5 text-primary" />
+							<span>Edit A/B Experiment: /r/{experiment?.shortCode || shortCode}</span>
+						</DialogTitle>
+						<DialogDescription className="text-xs">
+							Modify destination URLs, adjust traffic split weights, or change session stickiness.
+						</DialogDescription>
+					</DialogHeader>
 
-				<form onSubmit={handleSubmit} className="space-y-4 py-2 text-xs">
-					{/* Name & Stickiness */}
+					{/* Experiment Basic Details */}
 					<div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
 						<div className="sm:col-span-2 space-y-1.5">
-							<label className="font-semibold text-foreground">
+							<label className="text-xs font-semibold text-foreground">
 								Experiment Name <span className="text-destructive">*</span>
 							</label>
 							<Input
 								value={name}
 								onChange={(e) => setName(e.target.value)}
-								placeholder="e.g. Hero CTA Copy Optimization"
+								placeholder="e.g. Landing Page Headline Test"
 								className="text-xs"
 								required
 							/>
 						</div>
 
 						<div className="space-y-1.5">
-							<label className="font-semibold text-foreground">Cookie Stickiness</label>
+							<label className="text-xs font-semibold text-foreground">
+								Cookie Stickiness
+							</label>
 							<div className="flex items-center gap-1.5">
 								<Input
 									type="number"
 									min="1"
 									max="365"
 									value={cookieDays}
-									onChange={(e) => setCookieDays(e.target.value)}
+									onChange={(e) => handleCookieDaysChange(e.target.value)}
+									onBlur={handleCookieDaysBlur}
 									className="text-xs"
 								/>
-								<span className="text-muted-foreground shrink-0">days</span>
+								<span className="text-muted-foreground shrink-0 text-xs">days</span>
 							</div>
 						</div>
 					</div>
@@ -165,7 +257,7 @@ export function EditAbTestModal({
 					<div className="space-y-3 pt-2 border-t border-border/50">
 						<div className="flex items-center justify-between">
 							<div className="flex items-center gap-2">
-								<span className="font-semibold uppercase tracking-wider text-foreground">
+								<span className="font-semibold uppercase tracking-wider text-foreground text-xs">
 									Test Variants
 								</span>
 								<Badge
@@ -182,18 +274,19 @@ export function EditAbTestModal({
 									variant="outline"
 									size="sm"
 									onClick={handleEqualSplit}
-									className="text-[11px] h-7 gap-1 cursor-pointer"
+									className="h-7 text-xs gap-1 cursor-pointer"
 								>
 									<IconScale className="size-3" />
 									<span>Equal Split</span>
 								</Button>
+
 								{variants.length < 4 && (
 									<Button
 										type="button"
 										variant="outline"
 										size="sm"
 										onClick={handleAddVariant}
-										className="text-[11px] h-7 gap-1 cursor-pointer"
+										className="h-7 text-xs gap-1 cursor-pointer"
 									>
 										<IconPlus className="size-3" />
 										<span>Add Variant</span>
@@ -234,9 +327,10 @@ export function EditAbTestModal({
 													onChange={(e) =>
 														handleVariantWeightChange(index, e.target.value)
 													}
+													onBlur={() => handleVariantWeightBlur(index)}
 													className="w-16 h-7 text-xs text-center"
 												/>
-												<span className="text-muted-foreground">%</span>
+												<span className="text-muted-foreground text-xs">%</span>
 											</div>
 
 											{variants.length > 2 && (
@@ -287,10 +381,10 @@ export function EditAbTestModal({
 						<Button
 							type="submit"
 							size="sm"
-							disabled={isSubmitting || !isWeightValid}
+							disabled={isProcessing || !isWeightValid}
 							className="text-xs font-semibold cursor-pointer"
 						>
-							{isSubmitting ? "Saving..." : "Save Changes"}
+							{isProcessing ? "Saving..." : "Save Changes"}
 						</Button>
 					</DialogFooter>
 				</form>

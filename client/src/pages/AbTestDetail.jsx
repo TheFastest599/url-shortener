@@ -1,4 +1,5 @@
-import { useState } from "react";
+import * as React from "react";
+import { useState, useMemo } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import {
 	useAbTestByIdQuery,
@@ -10,21 +11,25 @@ import { ROUTES } from "@/routes/paths";
 import { getShortUrl } from "@/config/constants";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
 	EditAbTestModal,
 	PromoteWinnerDialog,
 	DeleteAbTestDialog,
-	AbTestAnalyticsModal,
 } from "@/components/ab-testing";
+import {
+	AnalyticsTimeSeriesChart,
+	AnalyticsGeoCard,
+	AnalyticsDeviceCard,
+	AnalyticsReferrersCard,
+} from "@/components/analytics";
 import {
 	IconFlask,
 	IconArrowLeft,
 	IconPencil,
 	IconTrash,
 	IconTrophy,
-	IconChartBar,
 	IconPlayerPause,
 	IconPlayerPlay,
 	IconCopy,
@@ -33,6 +38,8 @@ import {
 	IconUsers,
 	IconMouse,
 	IconPercentage,
+	IconRobot,
+	IconDeviceDesktop,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
 
@@ -42,12 +49,11 @@ export function AbTestDetailPage() {
 	const { id } = useParams();
 	const navigate = useNavigate();
 
-	const days = 30;
-	const includeBots = false;
+	const [days, setDays] = useState(30);
+	const [includeBots, setIncludeBots] = useState(false);
 	const [editModalOpen, setEditModalOpen] = useState(false);
 	const [promoteDialogOpen, setPromoteDialogOpen] = useState(false);
 	const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-	const [analyticsModalOpen, setAnalyticsModalOpen] = useState(false);
 	const [copied, setCopied] = useState(false);
 
 	// 1. Fetch Experiment by ID
@@ -57,7 +63,7 @@ export function AbTestDetailPage() {
 		error: expError,
 	} = useAbTestByIdQuery(id);
 
-	// 2. Fetch Aggregate A/B Analytics
+	// 2. Fetch Aggregate A/B Analytics directly for inline telemetry
 	const {
 		data: analytics,
 		isLoading: isAnalyticsLoading,
@@ -97,6 +103,74 @@ export function AbTestDetailPage() {
 		const nextStatus = experiment.status === "ACTIVE" ? "PAUSED" : "ACTIVE";
 		statusMutation.mutate({ id: experiment.id, payload: { status: nextStatus } });
 	};
+
+	// Map variant performance breakdown from backend DTO (variantBreakdown: [{ name, count, percentage }])
+	const variantStats = useMemo(() => {
+		const map = {};
+		if (Array.isArray(analytics?.variantBreakdown)) {
+			analytics.variantBreakdown.forEach((vb) => {
+				const key = vb.name || vb.key || vb.variantKey;
+				if (key) {
+					map[key] = {
+						totalClicks: vb.count ?? vb.clicks ?? vb.totalClicks ?? 0,
+						percentage: vb.percentage ?? 0,
+					};
+				}
+			});
+		} else if (analytics?.variantStats && typeof analytics.variantStats === "object") {
+			Object.entries(analytics.variantStats).forEach(([k, val]) => {
+				map[k] = {
+					totalClicks: typeof val === "number" ? val : val?.totalClicks ?? val?.count ?? 0,
+					percentage: val?.percentage ?? 0,
+				};
+			});
+		} else if (analytics?.variantSplit && typeof analytics.variantSplit === "object") {
+			Object.entries(analytics.variantSplit).forEach(([k, val]) => {
+				map[k] = {
+					totalClicks: typeof val === "number" ? val : val?.totalClicks ?? val?.clicks ?? val?.count ?? 0,
+					percentage: val?.percentage ?? 0,
+				};
+			});
+		}
+		return map;
+	}, [analytics]);
+
+	// Aggregate clicks
+	const totalClicks =
+		analytics?.totalClicks ??
+		Object.values(variantStats).reduce((sum, s) => sum + (s.totalClicks || 0), 0);
+	const humanClicks = analytics?.humanClicks ?? 0;
+	const botClicks = analytics?.botClicks ?? 0;
+	const humanPct = totalClicks > 0 ? Math.round((humanClicks / totalClicks) * 100) : 100;
+	const botPct = totalClicks > 0 ? Math.round((botClicks / totalClicks) * 100) : 0;
+
+	// Format time-series points
+	const timeSeriesData = useMemo(() => {
+		const series = analytics?.timeSeries;
+		if (!series) return [];
+		return series.map((point) => {
+			const rawDate = point.timestamp || "";
+			let label = rawDate;
+			try {
+				const d = new Date(rawDate);
+				if (days === 1) {
+					label = d.toLocaleTimeString([], { hour: "numeric", hour12: true });
+				} else {
+					label = d.toLocaleDateString([], { month: "short", day: "numeric" });
+				}
+			} catch {
+				/* ignore date parse error */
+			}
+
+			return {
+				date: label,
+				fullDate: rawDate,
+				clicks: point.clicks,
+				humanClicks: point.humanClicks ?? point.clicks,
+				botClicks: point.botClicks ?? 0,
+			};
+		});
+	}, [analytics, days]);
 
 	if (isExpLoading) {
 		return (
@@ -140,13 +214,6 @@ export function AbTestDetailPage() {
 	const isConcluded = experiment.status === "CONCLUDED";
 	const isRunning = experiment.status === "ACTIVE";
 	const variants = experiment.variants || [];
-	const variantStats = analytics?.variantStats || {};
-
-	// Aggregate clicks
-	const totalClicks =
-		analytics?.totalClicks ??
-		Object.values(variantStats).reduce((sum, s) => sum + (s.totalClicks || 0), 0);
-	const humanClicks = analytics?.humanClicks ?? 0;
 
 	return (
 		<div className="space-y-6 max-w-6xl mx-auto">
@@ -212,16 +279,6 @@ export function AbTestDetailPage() {
 						<span>Test Split</span>
 					</Button>
 
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => setAnalyticsModalOpen(true)}
-						className="text-xs gap-1.5 shadow-2xs cursor-pointer"
-					>
-						<IconChartBar className="size-3.5 text-primary" />
-						<span>Telemetry</span>
-					</Button>
-
 					{!isConcluded && (
 						<Button
 							variant="outline"
@@ -278,15 +335,48 @@ export function AbTestDetailPage() {
 				</div>
 			</div>
 
-			{/* 2. Key Metrics HUD */}
-			<div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+			{/* 2. Inline Telemetry Resolution & Filter Toolbar */}
+			<div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl border border-border/70 bg-card shadow-xs text-xs">
+				<div className="flex items-center gap-2">
+					<span className="text-xs font-medium text-muted-foreground">Analytics Resolution:</span>
+					<div className="flex items-center gap-1 bg-muted/50 p-0.5 rounded-lg border border-border/60">
+						{[7, 30, 90].map((d) => (
+							<button
+								key={d}
+								type="button"
+								onClick={() => setDays(d)}
+								className={`px-3 py-1 rounded-md text-xs font-medium cursor-pointer transition-colors ${
+									days === d
+										? "bg-primary text-primary-foreground font-semibold shadow-2xs"
+										: "text-muted-foreground hover:text-foreground"
+								}`}
+							>
+								{d}d
+							</button>
+						))}
+					</div>
+				</div>
+
+				<label className="flex items-center gap-2 cursor-pointer text-xs text-muted-foreground hover:text-foreground select-none">
+					<input
+						type="checkbox"
+						checked={includeBots}
+						onChange={(e) => setIncludeBots(e.target.checked)}
+						className="rounded border-border text-primary size-3.5 cursor-pointer"
+					/>
+					<span>Include Bot Traffic</span>
+				</label>
+			</div>
+
+			{/* 3. Key Metrics HUD */}
+			<div className="grid grid-cols-2 sm:grid-cols-5 gap-3 sm:gap-4">
 				<Card className="border-border/70 bg-card shadow-xs">
 					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
 						<div>
 							<p className="text-[11px] font-medium text-muted-foreground">Total Routed</p>
-							<p className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-foreground mt-0.5">
+							<div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-foreground mt-0.5">
 								{isAnalyticsLoading ? <Skeleton className="h-7 w-16" /> : totalClicks.toLocaleString()}
-							</p>
+							</div>
 							<p className="text-[10px] text-muted-foreground mt-0.5">Redirect requests</p>
 						</div>
 						<div className="size-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
@@ -299,10 +389,10 @@ export function AbTestDetailPage() {
 					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
 						<div>
 							<p className="text-[11px] font-medium text-muted-foreground">Human Traffic</p>
-							<p className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-emerald-500 mt-0.5">
+							<div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-emerald-500 mt-0.5">
 								{isAnalyticsLoading ? <Skeleton className="h-7 w-16" /> : humanClicks.toLocaleString()}
-							</p>
-							<p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5">Verified organic</p>
+							</div>
+							<p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5">{humanPct}% organic</p>
 						</div>
 						<div className="size-10 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
 							<IconUsers className="size-5" />
@@ -313,10 +403,25 @@ export function AbTestDetailPage() {
 				<Card className="border-border/70 bg-card shadow-xs">
 					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
 						<div>
+							<p className="text-[11px] font-medium text-muted-foreground">Automated Bots</p>
+							<div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-amber-500 mt-0.5">
+								{isAnalyticsLoading ? <Skeleton className="h-7 w-16" /> : botClicks.toLocaleString()}
+							</div>
+							<p className="text-[10px] text-muted-foreground mt-0.5">{botPct}% filtered</p>
+						</div>
+						<div className="size-10 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center">
+							<IconRobot className="size-5" />
+						</div>
+					</CardContent>
+				</Card>
+
+				<Card className="border-border/70 bg-card shadow-xs">
+					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
+						<div>
 							<p className="text-[11px] font-medium text-muted-foreground">Variants</p>
-							<p className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-foreground mt-0.5">
+							<div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-foreground mt-0.5">
 								{variants.length}
-							</p>
+							</div>
 							<p className="text-[10px] text-muted-foreground mt-0.5">Active split targets</p>
 						</div>
 						<div className="size-10 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center">
@@ -325,23 +430,23 @@ export function AbTestDetailPage() {
 					</CardContent>
 				</Card>
 
-				<Card className="border-border/70 bg-card shadow-xs">
+				<Card className="border-border/70 bg-card shadow-xs col-span-2 sm:col-span-1">
 					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
 						<div>
 							<p className="text-[11px] font-medium text-muted-foreground">Cookie TTL</p>
-							<p className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-foreground mt-0.5">
+							<div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-foreground mt-0.5">
 								{Math.round((experiment.cookieTtlSeconds || 2592000) / 86400)}d
-							</p>
+							</div>
 							<p className="text-[10px] text-muted-foreground mt-0.5">User stickiness</p>
 						</div>
-						<div className="size-10 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center">
+						<div className="size-10 rounded-xl bg-purple-500/10 text-purple-500 flex items-center justify-center">
 							<IconFlask className="size-5" />
 						</div>
 					</CardContent>
 				</Card>
 			</div>
 
-			{/* 3. Traffic Ratio Visualizer */}
+			{/* 4. Traffic Ratio Visualizer */}
 			<Card className="border-border/70 bg-card shadow-xs">
 				<CardHeader className="p-5 pb-3">
 					<CardTitle className="text-sm font-semibold flex items-center justify-between">
@@ -351,7 +456,7 @@ export function AbTestDetailPage() {
 						</span>
 					</CardTitle>
 				</CardHeader>
-				<CardContent className="p-5 pt-0 space-y-2">
+				<CardContent className="p-5 pt-0 space-y-3">
 					<div className="h-4 w-full rounded-full overflow-hidden flex bg-muted border border-border/50">
 						{variants.map((v, i) => {
 							const colorClass =
@@ -373,29 +478,40 @@ export function AbTestDetailPage() {
 						})}
 					</div>
 
-					<div className="flex items-center gap-4 text-xs font-medium pt-1 flex-wrap">
-						{variants.map((v, i) => {
-							const dotColor =
-								i === 0
-									? "bg-primary"
-									: i === 1
-									? "bg-blue-500"
-									: i === 2
-									? "bg-purple-500"
-									: "bg-emerald-500";
-							return (
-								<div key={v.key} className="flex items-center gap-1.5">
-									<span className={`size-2.5 rounded-full ${dotColor}`} />
-									<span className="font-semibold text-foreground">Variant {v.key}:</span>
-									<span className="font-mono text-muted-foreground">{v.weight}%</span>
-								</div>
-							);
-						})}
+					<div className="flex items-center justify-between text-xs pt-1 flex-wrap gap-2">
+						<div className="flex items-center gap-4 flex-wrap">
+							{variants.map((v, i) => {
+								const dotColor =
+									i === 0
+										? "bg-primary"
+										: i === 1
+										? "bg-blue-500"
+										: i === 2
+										? "bg-purple-500"
+										: "bg-emerald-500";
+								return (
+									<div key={v.key} className="flex items-center gap-1.5">
+										<span className={`size-2.5 rounded-full ${dotColor}`} />
+										<span className="font-semibold text-foreground">Variant {v.key}:</span>
+										<span className="font-mono text-muted-foreground">{v.weight}% configured</span>
+									</div>
+								);
+							})}
+						</div>
+
+						<div className="text-xs font-mono text-muted-foreground">
+							Observed:{" "}
+							{variants.map((v) => {
+								const stat = variantStats[v.key] || variantStats[v.name];
+								const pct = stat?.percentage !== undefined ? Math.round(stat.percentage) : 0;
+								return `${v.key}: ${pct}% (${stat?.totalClicks ?? 0})`;
+							}).join(" · ")}
+						</div>
 					</div>
 				</CardContent>
 			</Card>
 
-			{/* 4. Variants Breakdown Cards */}
+			{/* 5. Variants Breakdown Cards */}
 			<div className="space-y-4">
 				<h2 className="font-heading text-base font-bold text-foreground flex items-center gap-2">
 					<span>Configured Destinations & Variant Performance</span>
@@ -403,10 +519,14 @@ export function AbTestDetailPage() {
 
 				<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 					{variants.map((v) => {
-						const stat = variantStats[v.key];
-						const clicks = stat?.totalClicks || 0;
+						const stat = variantStats[v.key] || variantStats[v.name] || variantStats[v.id];
+						const clicks = stat?.totalClicks ?? 0;
 						const conversionPct =
-							totalClicks > 0 ? Math.round((clicks / totalClicks) * 100) : 0;
+							stat?.percentage !== undefined
+								? Math.round(stat.percentage)
+								: totalClicks > 0
+								? Math.round((clicks / totalClicks) * 100)
+								: 0;
 						const isWinner =
 							experiment.winnerVariantKey === v.key ||
 							experiment.winningVariantKey === v.key;
@@ -460,13 +580,13 @@ export function AbTestDetailPage() {
 									<div className="grid grid-cols-2 gap-2 pt-2 border-t border-border/50 text-xs">
 										<div>
 											<span className="text-muted-foreground text-[11px]">Clicks:</span>
-											<p className="font-mono text-sm font-bold text-foreground mt-0.5">
+											<p className="font-mono text-base font-bold text-foreground mt-0.5">
 												{clicks.toLocaleString()}
 											</p>
 										</div>
 										<div>
 											<span className="text-muted-foreground text-[11px]">Click Share:</span>
-											<p className="font-mono text-sm font-bold text-primary mt-0.5">
+											<p className="font-mono text-base font-bold text-primary mt-0.5">
 												{conversionPct}%
 											</p>
 										</div>
@@ -490,7 +610,55 @@ export function AbTestDetailPage() {
 				</div>
 			</div>
 
-			{/* 5. Modals */}
+			{/* 6. Telemetry Time Series Trend */}
+			{analytics?.timeSeries && analytics.timeSeries.length > 0 && (
+				<AnalyticsTimeSeriesChart
+					data={timeSeriesData}
+					isLoading={isAnalyticsLoading}
+					title={`Traffic Trend: /r/${experiment.shortCode}`}
+					description={`Time-series click velocity across past ${days} days.`}
+					timeRangeDays={days}
+					onTimeRangeChange={setDays}
+				/>
+			)}
+
+			{/* 7. Telemetry Deep Breakdown: Geo, Devices, Referrers */}
+			<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+				<AnalyticsGeoCard
+					countries={analytics?.topCountries || []}
+					totalClicks={totalClicks}
+				/>
+				<AnalyticsDeviceCard
+					browsers={analytics?.topBrowsers || []}
+					totalClicks={totalClicks}
+				/>
+				<AnalyticsReferrersCard
+					referrers={analytics?.topReferrers || []}
+					totalClicks={totalClicks}
+				/>
+				<Card className="border-border/70 bg-card shadow-xs">
+					<CardHeader className="p-4 pb-2">
+						<CardTitle className="text-xs font-semibold flex items-center justify-between">
+							<span>Device Types</span>
+							<IconDeviceDesktop className="size-3.5 text-primary" />
+						</CardTitle>
+					</CardHeader>
+					<CardContent className="p-4 pt-1 space-y-2 text-xs">
+						{(analytics?.topDevices && analytics.topDevices.length > 0) ? (
+							analytics.topDevices.map((d) => (
+								<div key={d.name} className="flex items-center justify-between">
+									<span className="text-muted-foreground truncate">{d.name || "Desktop"}</span>
+									<span className="font-mono font-semibold">{d.count}</span>
+								</div>
+							))
+						) : (
+							<span className="text-muted-foreground text-[11px]">No device telemetry yet</span>
+						)}
+					</CardContent>
+				</Card>
+			</div>
+
+			{/* 8. Modals (Edit, Promote Winner, Delete only - No Telemetry Modal) */}
 			<EditAbTestModal
 				experiment={experiment}
 				open={editModalOpen}
@@ -509,12 +677,6 @@ export function AbTestDetailPage() {
 				onOpenChange={setDeleteDialogOpen}
 				onConfirm={() => deleteMutation.mutate(experiment.id)}
 				isDeleting={deleteMutation.isPending}
-			/>
-
-			<AbTestAnalyticsModal
-				experiment={experiment}
-				open={analyticsModalOpen}
-				onOpenChange={setAnalyticsModalOpen}
 			/>
 		</div>
 	);
