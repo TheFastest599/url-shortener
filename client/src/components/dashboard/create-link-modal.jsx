@@ -26,6 +26,7 @@ export function CreateLinkModal({
 	onOpenChange,
 	onOpenQrModal,
 	initialDestinationUrl = "",
+	initialCampaignId = "",
 }) {
 	const [campaignSearch, setCampaignSearch] = React.useState("");
 	const [debouncedCampaignSearch, setDebouncedCampaignSearch] = React.useState("");
@@ -60,8 +61,15 @@ export function CreateLinkModal({
 		setDestinationUrl(initialDestinationUrl);
 	}
 
-	const [customAlias, setCustomAlias] = React.useState("");
-	const [selectedCampaignId, setSelectedCampaignId] = React.useState("");
+	const [customAlias, setCustomAlias] = React.useState(initialCampaignId ? "" : "");
+	const [selectedCampaignId, setSelectedCampaignId] = React.useState(initialCampaignId || "");
+
+	React.useEffect(() => {
+		if (open && initialCampaignId) {
+			setSelectedCampaignId(initialCampaignId);
+		}
+	}, [open, initialCampaignId]);
+
 	const [showUtm, setShowUtm] = React.useState(false);
 	const [utmSource, setUtmSource] = React.useState("");
 	const [utmMedium, setUtmMedium] = React.useState("");
@@ -82,7 +90,7 @@ export function CreateLinkModal({
 	const handleReset = () => {
 		setDestinationUrl("");
 		setCustomAlias("");
-		setSelectedCampaignId("");
+		setSelectedCampaignId(initialCampaignId || "");
 		setCampaignSearch("");
 		setDebouncedCampaignSearch("");
 		setShowUtm(false);

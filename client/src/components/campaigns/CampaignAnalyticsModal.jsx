@@ -170,25 +170,29 @@ export function CampaignAnalyticsModal({ campaign, open, onOpenChange }) {
 											</tr>
 										</thead>
 										<tbody className="divide-y divide-border/50">
-											{linkBreakdown.map((item) => {
+											{linkBreakdown.map((item, idx) => {
+												const code = item.name?.replace(/^\/r\//, "") || item.shortCode || item.urlId || `link-${idx}`;
+												const clicks = item.count ?? item.clicks ?? item.totalClicks ?? 0;
 												const sharePercent =
-													totalClicks > 0
-														? Math.round((item.clicks / totalClicks) * 100)
+													item.percentage !== undefined
+														? Math.round(item.percentage)
+														: totalClicks > 0
+														? Math.round((clicks / totalClicks) * 100)
 														: 0;
 
 												return (
 													<tr
-														key={item.shortCode || item.urlId}
+														key={code}
 														className="hover:bg-muted/30 transition-colors"
 													>
 														<td className="py-2.5 px-3 font-mono font-semibold text-primary">
-															/r/{item.shortCode}
+															/r/{code}
 														</td>
 														<td className="py-2.5 px-3 max-w-[200px] truncate text-muted-foreground" title={item.destinationUrl}>
 															{item.destinationUrl || "Direct"}
 														</td>
 														<td className="py-2.5 px-3 text-right font-mono font-semibold text-foreground">
-															{item.clicks.toLocaleString()}
+															{clicks.toLocaleString()}
 														</td>
 														<td className="py-2.5 px-3 text-right min-w-[90px]">
 															<div className="flex items-center justify-end gap-2">
@@ -200,7 +204,7 @@ export function CampaignAnalyticsModal({ campaign, open, onOpenChange }) {
 														</td>
 														<td className="py-2.5 px-3 text-center">
 															<Link
-																to={`/analytics/${item.shortCode}`}
+																to={`/analytics/${code}`}
 																className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
 															>
 																<span>Inspect</span>

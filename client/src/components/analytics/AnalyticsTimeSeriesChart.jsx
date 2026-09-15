@@ -20,6 +20,34 @@ export function AnalyticsTimeSeriesChart({
 	onTimeRangeChange,
 	showRangeSelector = true,
 }) {
+	const chartData = (data || []).map((pt) => {
+		const rawDate = pt.date || pt.timestamp || "";
+		let label = pt.date;
+		if (!label && rawDate) {
+			try {
+				const d = new Date(rawDate);
+				if (timeRangeDays === 1) {
+					label = d.toLocaleTimeString([], { hour: "numeric", hour12: true });
+				} else {
+					label = d.toLocaleDateString([], { month: "short", day: "numeric" });
+				}
+			} catch {
+				label = rawDate;
+			}
+		}
+		const total = pt.clicks ?? pt.count ?? ((pt.humanClicks || 0) + (pt.botClicks || 0));
+		return {
+			...pt,
+			date: label || "—",
+			fullDate: pt.fullDate || pt.timestamp || label,
+			clicks: total,
+			humanClicks: pt.humanClicks !== undefined ? pt.humanClicks : total,
+			botClicks: pt.botClicks ?? 0,
+		};
+	});
+
+	const hasClicks = chartData.some((d) => (d.clicks > 0 || d.humanClicks > 0 || d.botClicks > 0));
+
 	return (
 		<Card className="border-border/70 bg-card shadow-xs">
 			<CardHeader className="p-4 sm:p-5 pb-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -56,7 +84,7 @@ export function AnalyticsTimeSeriesChart({
 			<CardContent className="p-4 sm:p-5 pt-2">
 				{isLoading ? (
 					<Skeleton className="h-64 w-full rounded-xl" />
-				) : data.length === 0 || data.every((d) => d.clicks === 0) ? (
+				) : chartData.length === 0 || !hasClicks ? (
 					<div className="h-64 flex flex-col items-center justify-center text-muted-foreground text-xs space-y-1">
 						<IconChartBar className="size-8 opacity-30" />
 						<p>No traffic recorded in this selected timeframe.</p>
@@ -64,7 +92,7 @@ export function AnalyticsTimeSeriesChart({
 				) : (
 					<div className="h-64 w-full">
 						<ResponsiveContainer width="100%" height="100%">
-							<AreaChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+							<AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
 								<defs>
 									<linearGradient id="colorHuman" x1="0" y1="0" x2="0" y2="1">
 										<stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />

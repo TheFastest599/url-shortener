@@ -18,7 +18,9 @@ export function EditCampaignModal({
 	open,
 	onOpenChange,
 	onSubmit,
+	onSave,
 	isSubmitting = false,
+	isSaving = false,
 }) {
 	const [name, setName] = React.useState("");
 	const [description, setDescription] = React.useState("");
@@ -36,14 +38,21 @@ export function EditCampaignModal({
 			toast.error("Campaign name is required");
 			return;
 		}
-		onSubmit({
-			id: campaign.id,
-			payload: {
-				name: name.trim(),
-				description: description.trim() || null,
-			},
-		});
+		const payload = {
+			name: name.trim(),
+			description: description.trim() || null,
+		};
+		if (onSubmit) {
+			onSubmit({
+				id: campaign.id,
+				payload,
+			});
+		} else if (onSave) {
+			onSave(payload);
+		}
 	};
+
+	const pending = isSubmitting || isSaving;
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
@@ -96,10 +105,10 @@ export function EditCampaignModal({
 						<Button
 							type="submit"
 							size="sm"
-							disabled={isSubmitting || !name.trim()}
+							disabled={pending || !name.trim()}
 							className="text-xs font-semibold cursor-pointer"
 						>
-							{isSubmitting ? "Saving..." : "Save Changes"}
+							{pending ? "Saving..." : "Save Changes"}
 						</Button>
 					</DialogFooter>
 				</form>

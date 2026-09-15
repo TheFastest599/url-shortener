@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -8,11 +8,12 @@ import {
 	useUpdateCampaignMutation,
 	useDeleteCampaignMutation,
 } from "@/queries/campaignQueries";
-import { useUpdateUrlMutation } from "@/queries/urlQueries";
+import { useUrlsQuery, useUpdateUrlMutation } from "@/queries/urlQueries";
 import { queryKeys } from "@/queries/queryKeys";
 import { ROUTES } from "@/routes/paths";
 import { getShortUrl } from "@/config/constants";
-import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,8 +29,15 @@ import {
 import {
 	EditCampaignModal,
 	DeleteCampaignDialog,
-	CampaignAnalyticsModal,
+	CampaignLinksModal,
 } from "@/components/campaigns";
+import { CreateLinkModal } from "@/components/dashboard/create-link-modal";
+import {
+	AnalyticsTimeSeriesChart,
+	AnalyticsGeoCard,
+	AnalyticsDeviceCard,
+	AnalyticsReferrersCard,
+} from "@/components/analytics";
 import {
 	IconFolder,
 	IconArrowLeft,
@@ -44,10 +52,13 @@ import {
 	IconUsers,
 	IconRobot,
 	IconCalendar,
+	IconDeviceDesktop,
+	IconPlus,
+	IconUnlink,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
 
-/* Hallmark · page: Dedicated Campaign Details & Telemetry Workbench */
+/* Hallmark · page: Dedicated Campaign Details & Inline Telemetry Workbench */
 
 export function CampaignDetailPage() {
 	const { id } = useParams();
@@ -55,10 +66,11 @@ export function CampaignDetailPage() {
 	const queryClient = useQueryClient();
 
 	const [days, setDays] = useState(30);
-	const includeBots = false;
+	const [includeBots, setIncludeBots] = useState(false);
 	const [editModalOpen, setEditModalOpen] = useState(false);
 	const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-	const [analyticsModalOpen, setAnalyticsModalOpen] = useState(false);
+	const [linksModalOpen, setLinksModalOpen] = useState(false);
+	const [isCreateLinkOpen, setIsCreateLinkOpen] = useState(false);
 	const [copiedShortCode, setCopiedShortCode] = useState(null);
 
 	// 1. Fetch Campaign Metadata
@@ -74,13 +86,33 @@ export function CampaignDetailPage() {
 		isLoading: isUrlsLoading,
 	} = useCampaignUrlsQuery(id);
 
-	// 3. Fetch Aggregate Campaign Analytics
+	// 3. Fetch All User URLs to find unassigned links available to attach
+	const { data: allUrlsData } = useUrlsQuery({ page: 0, size: 200 });
+	const allUrls = useMemo(() => {
+		if (Array.isArray(allUrlsData)) return allUrlsData;
+		if (Array.isArray(allUrlsData?.content)) return allUrlsData.content;
+		return [];
+	}, [allUrlsData]);
+
+	// URLs available to be attached to this campaign
+	const unassignedUrlItems = useMemo(() => {
+		return allUrls
+			.filter((u) => !urls.some((cu) => cu.id === u.id))
+			.map((u) => ({
+				value: u.id,
+				label: `/r/${u.shortCode}`,
+				sub: u.destinationUrl,
+				badge: u.isAbTest ? "A/B Test" : "Direct",
+			}));
+	}, [allUrls, urls]);
+
+	// 4. Fetch Aggregate Campaign Analytics
 	const {
 		data: analytics,
 		isLoading: isAnalyticsLoading,
 	} = useCampaignAnalyticsQuery(id, { days, includeBots });
 
-	// 4. Mutations
+	// 5. Mutations
 	const updateMutation = useUpdateCampaignMutation({
 		onSuccess: () => {
 			setEditModalOpen(false);
@@ -97,7 +129,9 @@ export function CampaignDetailPage() {
 	const toggleUrlMutation = useUpdateUrlMutation({
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.urls(id) });
-			toast.success("Shortlink status updated");
+			queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.analytics(id, days, includeBots) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.all });
+			queryClient.invalidateQueries({ queryKey: queryKeys.urls.all });
 		},
 	});
 
@@ -117,7 +151,65 @@ export function CampaignDetailPage() {
 			campaignId: url.campaignId,
 			isActive: url.isActive === false,
 		});
+		toast.success("Shortlink status updated");
 	};
+
+	const handleAssignLinkToCampaign = async (linkId) => {
+		if (!linkId || !campaign?.id) return;
+		try {
+			const targetUrl = allUrls.find((u) => u.id === linkId || u.shortCode === linkId);
+			if (!targetUrl) return;
+			await toggleUrlMutation.mutateAsync({
+				id: targetUrl.id,
+				destinationUrl: targetUrl.destinationUrl,
+				campaignId: campaign.id,
+			});
+			toast.success(`Shortlink /r/${targetUrl.shortCode} added to campaign!`);
+		} catch (err) {
+			toast.error(err?.response?.data?.message || "Failed to assign link to campaign");
+		}
+	};
+
+	const handleUnlinkFromCampaign = async (url) => {
+		try {
+			await toggleUrlMutation.mutateAsync({
+				id: url.id,
+				destinationUrl: url.destinationUrl,
+				campaignId: null,
+			});
+			toast.success(`Shortlink /r/${url.shortCode} removed from campaign`);
+		} catch (err) {
+			toast.error(err?.response?.data?.message || "Failed to remove link from campaign");
+		}
+	};
+
+	const timeSeriesData = useMemo(() => {
+		const series = analytics?.timeSeries;
+		if (!series) return [];
+		return series.map((point) => {
+			const rawDate = point.timestamp || "";
+			let label = rawDate;
+			try {
+				const d = new Date(rawDate);
+				if (days === 1) {
+					label = d.toLocaleTimeString([], { hour: "numeric", hour12: true });
+				} else {
+					label = d.toLocaleDateString([], { month: "short", day: "numeric" });
+				}
+			} catch {
+				/* ignore date parse error */
+			}
+
+			const clicks = point.clicks ?? point.count ?? 0;
+			return {
+				date: label,
+				fullDate: rawDate,
+				clicks,
+				humanClicks: point.humanClicks ?? clicks,
+				botClicks: point.botClicks ?? 0,
+			};
+		});
+	}, [analytics?.timeSeries, days]);
 
 	if (isCampaignLoading) {
 		return (
@@ -193,15 +285,15 @@ export function CampaignDetailPage() {
 					)}
 				</div>
 
-				<div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+				<div className="flex items-center gap-2 self-start sm:self-auto shrink-0 flex-wrap">
 					<Button
 						variant="outline"
 						size="sm"
-						onClick={() => setAnalyticsModalOpen(true)}
+						onClick={() => setLinksModalOpen(true)}
 						className="text-xs gap-1.5 shadow-2xs cursor-pointer"
 					>
-						<IconChartBar className="size-3.5 text-primary" />
-						<span>Analytics Modal</span>
+						<IconLink className="size-3.5 text-primary" />
+						<span>Manage Links</span>
 					</Button>
 					<Button
 						variant="outline"
@@ -224,7 +316,40 @@ export function CampaignDetailPage() {
 				</div>
 			</div>
 
-			{/* 2. Key Telemetry KPI HUD */}
+			{/* 2. Inline Telemetry Resolution & Filter Toolbar */}
+			<div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl border border-border/70 bg-card shadow-xs text-xs">
+				<div className="flex items-center gap-2">
+					<span className="text-xs font-medium text-muted-foreground">Analytics Resolution:</span>
+					<div className="flex items-center gap-1 bg-muted/50 p-0.5 rounded-lg border border-border/60">
+						{[7, 30, 90].map((d) => (
+							<button
+								key={d}
+								type="button"
+								onClick={() => setDays(d)}
+								className={`px-3 py-1 rounded-md text-xs font-medium cursor-pointer transition-colors ${
+									days === d
+										? "bg-primary text-primary-foreground font-semibold shadow-2xs"
+										: "text-muted-foreground hover:text-foreground"
+								}`}
+							>
+								{d}d
+							</button>
+						))}
+					</div>
+				</div>
+
+				<label className="flex items-center gap-2 cursor-pointer text-xs text-muted-foreground hover:text-foreground select-none">
+					<input
+						type="checkbox"
+						checked={includeBots}
+						onChange={(e) => setIncludeBots(e.target.checked)}
+						className="rounded border-border text-primary size-3.5 cursor-pointer"
+					/>
+					<span>Include Bot Traffic</span>
+				</label>
+			</div>
+
+			{/* 3. Key Telemetry KPI HUD */}
 			<div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
 				<Card className="border-border/70 bg-card shadow-xs">
 					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
@@ -289,7 +414,7 @@ export function CampaignDetailPage() {
 				</Card>
 			</div>
 
-			{/* 3. Campaign Metadata & Attribution Overview */}
+			{/* 4. Campaign Information & Per-Link Attribution Overview */}
 			<div className="grid grid-cols-1 md:grid-cols-3 gap-6">
 				{/* Campaign Meta Card */}
 				<Card className="border-border/70 bg-card shadow-xs md:col-span-1">
@@ -341,23 +466,6 @@ export function CampaignDetailPage() {
 								Traffic distribution across short URLs configured under this campaign
 							</CardDescription>
 						</div>
-
-						<div className="flex items-center gap-1 bg-muted/40 p-1 rounded-lg border border-border/60 text-xs">
-							{[7, 30, 90].map((d) => (
-								<button
-									key={d}
-									type="button"
-									onClick={() => setDays(d)}
-									className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer transition-colors ${
-										days === d
-											? "bg-card text-foreground font-semibold shadow-2xs border border-border/70"
-											: "text-muted-foreground hover:text-foreground"
-									}`}
-								>
-									{d}d
-								</button>
-							))}
-						</div>
 					</CardHeader>
 					<CardContent className="p-5 pt-0">
 						{isAnalyticsLoading ? (
@@ -372,20 +480,28 @@ export function CampaignDetailPage() {
 							</div>
 						) : (
 							<div className="space-y-3">
-								{linkAttribution.map((item) => {
-									const sharePct = totalClicks > 0 ? Math.round(((item.totalClicks || 0) / totalClicks) * 100) : 0;
+								{linkAttribution.map((item, idx) => {
+									const shortCode = item.name?.replace(/^\/r\//, "") || item.shortCode || item.urlId || `link-${idx}`;
+									const clicks = item.count ?? item.clicks ?? item.totalClicks ?? 0;
+									const sharePct =
+										item.percentage !== undefined
+											? Math.round(item.percentage)
+											: totalClicks > 0
+											? Math.round((clicks / totalClicks) * 100)
+											: 0;
+
 									return (
-										<div key={item.shortCode || item.urlId} className="space-y-1">
+										<div key={shortCode} className="space-y-1">
 											<div className="flex items-center justify-between text-xs">
 												<Link
-													to={`/redirect-links/${item.shortCode}`}
+													to={`/redirect-links/${shortCode}`}
 													className="font-mono font-bold text-primary hover:underline flex items-center gap-1"
 												>
-													<span>/r/{item.shortCode}</span>
+													<span>/r/{shortCode}</span>
 													<IconExternalLink className="size-3 opacity-60" />
 												</Link>
 												<div className="flex items-center gap-2 font-mono">
-													<span className="font-semibold text-foreground">{item.totalClicks || 0} clicks</span>
+													<span className="font-semibold text-foreground">{clicks.toLocaleString()} clicks</span>
 													<span className="text-muted-foreground text-[10px]">({sharePct}%)</span>
 												</div>
 											</div>
@@ -399,18 +515,74 @@ export function CampaignDetailPage() {
 				</Card>
 			</div>
 
-			{/* 4. Assigned Short URLs Table */}
+			{/* 5. Telemetry Time Series Trend */}
+			<AnalyticsTimeSeriesChart
+				data={timeSeriesData}
+				isLoading={isAnalyticsLoading}
+				title={`Traffic Trend: ${campaign.name}`}
+				description={`Time-series click velocity across past ${days} days.`}
+				timeRangeDays={days}
+				onTimeRangeChange={setDays}
+			/>
+
+			{/* 6. Telemetry Deep Breakdown: Geo, Devices, Referrers, Device Types */}
+			<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+				<AnalyticsGeoCard
+					countries={analytics?.topCountries || []}
+					totalClicks={totalClicks}
+				/>
+				<AnalyticsDeviceCard
+					browsers={analytics?.topBrowsers || []}
+					totalClicks={totalClicks}
+				/>
+				<AnalyticsReferrersCard
+					referrers={analytics?.topReferrers || []}
+					totalClicks={totalClicks}
+				/>
+				<Card className="border-border/70 bg-card shadow-xs">
+					<CardHeader className="p-4 pb-2">
+						<CardTitle className="text-xs font-semibold flex items-center justify-between">
+							<span>Device Types</span>
+							<IconDeviceDesktop className="size-3.5 text-primary" />
+						</CardTitle>
+					</CardHeader>
+					<CardContent className="p-4 pt-1 space-y-2 text-xs">
+						{(analytics?.topDevices && analytics.topDevices.length > 0) ? (
+							analytics.topDevices.map((d, idx) => (
+								<div key={d.name || idx} className="flex items-center justify-between">
+									<span className="text-muted-foreground truncate">{d.name || "Desktop"}</span>
+									<span className="font-mono font-semibold">{d.count}</span>
+								</div>
+							))
+						) : (
+							<span className="text-muted-foreground text-[11px]">No device telemetry yet</span>
+						)}
+					</CardContent>
+				</Card>
+			</div>
+
+			{/* 7. Assigned Short URLs Table */}
 			<Card className="border-border/70 bg-card shadow-xs">
 				<CardHeader className="p-5 pb-3">
-					<CardTitle className="text-sm font-semibold flex items-center justify-between">
-						<div className="flex items-center gap-2">
-							<IconLink className="size-4 text-primary" />
-							<span>Campaign Shortlinks ({urls.length})</span>
+					<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+						<div>
+							<CardTitle className="text-sm font-semibold flex items-center gap-2">
+								<IconLink className="size-4 text-primary" />
+								<span>Campaign Shortlinks ({urls.length})</span>
+							</CardTitle>
+							<CardDescription className="text-xs">
+								Direct routing targets and tracking codes organized under this campaign
+							</CardDescription>
 						</div>
-					</CardTitle>
-					<CardDescription className="text-xs">
-						Direct routing targets and tracking codes organized under this campaign
-					</CardDescription>
+						<Button
+							size="sm"
+							onClick={() => setLinksModalOpen(true)}
+							className="text-xs h-8 gap-1.5 cursor-pointer shadow-2xs self-start sm:self-auto"
+						>
+							<IconPlus className="size-3.5" />
+							<span>Attach Shortlink</span>
+						</Button>
+					</div>
 				</CardHeader>
 
 				<CardContent className="p-0">
@@ -420,12 +592,31 @@ export function CampaignDetailPage() {
 							<Skeleton className="h-10 w-full" />
 						</div>
 					) : urls.length === 0 ? (
-						<div className="p-12 text-center text-xs text-muted-foreground space-y-2">
-							<IconLink className="size-8 mx-auto opacity-30" />
-							<p className="font-medium text-foreground">No Shortlinks Assigned</p>
-							<p className="max-w-sm mx-auto">
-								Assign existing shortlinks to this campaign or generate tagged URLs via the UTM builder.
-							</p>
+						<div className="p-12 text-center text-xs text-muted-foreground space-y-3">
+							<IconLink className="size-8 mx-auto opacity-30 text-muted-foreground" />
+							<div>
+								<p className="font-medium text-foreground">No shortlinks in this campaign yet</p>
+								<p className="text-[11px] text-muted-foreground mt-0.5">Create a new link or attach existing links to view aggregated telemetry and attribution.</p>
+							</div>
+							<div className="flex items-center justify-center gap-2 pt-1">
+								<Button
+									size="sm"
+									onClick={() => setIsCreateLinkOpen(true)}
+									className="text-xs gap-1.5 cursor-pointer shadow-2xs"
+								>
+									<IconPlus className="size-3.5" />
+									<span>Create New Link</span>
+								</Button>
+								<Button
+									size="sm"
+									variant="outline"
+									onClick={() => setLinksModalOpen(true)}
+									className="text-xs gap-1.5 cursor-pointer"
+								>
+									<IconLink className="size-3.5" />
+									<span>Attach Existing Link</span>
+								</Button>
+							</div>
 						</div>
 					) : (
 						<div className="overflow-x-auto">
@@ -433,7 +624,7 @@ export function CampaignDetailPage() {
 								<TableHeader className="bg-muted/40">
 									<TableRow className="hover:bg-transparent">
 										<TableHead className="text-xs font-semibold">Shortlink & Target</TableHead>
-										<TableHead className="text-xs font-semibold text-center">7D Velocity</TableHead>
+										<TableHead className="text-xs font-semibold text-center">{days}D Velocity</TableHead>
 										<TableHead className="text-xs font-semibold text-center">Status</TableHead>
 										<TableHead className="text-xs font-semibold text-right">Actions</TableHead>
 									</TableRow>
@@ -480,7 +671,10 @@ export function CampaignDetailPage() {
 															(lb) => lb.name === u.shortCode || lb.name === `/r/${u.shortCode}`
 														);
 														const clicks = linkStat?.count ?? u.clickCount ?? 0;
-														const pct = linkStat?.percentage ?? (totalClicks > 0 ? Math.round((clicks / totalClicks) * 100) : 0);
+														const pct = linkStat?.percentage !== undefined
+															? Math.round(linkStat.percentage)
+															: (totalClicks > 0 ? Math.round((clicks / totalClicks) * 100) : 0);
+
 														return (
 															<div className="flex flex-col items-center justify-center gap-1">
 																<span className="font-mono text-xs font-semibold text-foreground">
@@ -513,16 +707,24 @@ export function CampaignDetailPage() {
 
 												<TableCell className="py-3 text-right">
 													<div className="flex items-center justify-end gap-1">
-														<Button
-															asChild
-															variant="ghost"
-															size="icon-sm"
-															className="size-7 text-muted-foreground hover:text-foreground cursor-pointer"
+														<Link
+															to={`/redirect-links/${u.shortCode}`}
+															className={cn(
+																buttonVariants({ variant: "ghost", size: "icon-sm" }),
+																"size-7 text-muted-foreground hover:text-foreground cursor-pointer"
+															)}
 															title="View link details"
 														>
-															<Link to={`/redirect-links/${u.shortCode}`}>
-																<IconExternalLink className="size-3.5" />
-															</Link>
+															<IconExternalLink className="size-3.5" />
+														</Link>
+														<Button
+															variant="ghost"
+															size="icon-sm"
+															onClick={() => handleUnlinkFromCampaign(u)}
+															className="size-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+															title="Remove from campaign"
+														>
+															<IconUnlink className="size-3.5" />
 														</Button>
 													</div>
 												</TableCell>
@@ -536,7 +738,7 @@ export function CampaignDetailPage() {
 				</CardContent>
 			</Card>
 
-			{/* 5. Modals */}
+			{/* 8. Modals */}
 			<EditCampaignModal
 				campaign={campaign}
 				open={editModalOpen}
@@ -545,18 +747,30 @@ export function CampaignDetailPage() {
 				isSaving={updateMutation.isPending}
 			/>
 
+			<CampaignLinksModal
+				campaign={campaign}
+				open={linksModalOpen}
+				onOpenChange={setLinksModalOpen}
+				campaignUrls={urls}
+				isLoading={isUrlsLoading}
+				unassignedUrlItems={unassignedUrlItems}
+				onAssignLink={handleAssignLinkToCampaign}
+				onUnlinkLink={handleUnlinkFromCampaign}
+				onCreateNewLink={() => setIsCreateLinkOpen(true)}
+			/>
+
+			<CreateLinkModal
+				open={isCreateLinkOpen}
+				onOpenChange={setIsCreateLinkOpen}
+				initialCampaignId={campaign.id}
+			/>
+
 			<DeleteCampaignDialog
 				campaign={campaign}
 				open={deleteDialogOpen}
 				onOpenChange={setDeleteDialogOpen}
 				onConfirm={() => deleteMutation.mutate(campaign.id)}
 				isDeleting={deleteMutation.isPending}
-			/>
-
-			<CampaignAnalyticsModal
-				campaign={campaign}
-				open={analyticsModalOpen}
-				onOpenChange={setAnalyticsModalOpen}
 			/>
 		</div>
 	);

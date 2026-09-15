@@ -57,6 +57,9 @@ export const urlMutationOptions = {
 			await queryClient.invalidateQueries({
 				queryKey: queryKeys.urls.all,
 			});
+			await queryClient.invalidateQueries({
+				queryKey: queryKeys.campaigns.all,
+			});
 			onSuccess?.(data, variables, context);
 		},
 		onError,
