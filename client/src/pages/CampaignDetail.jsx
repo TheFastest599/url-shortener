@@ -95,16 +95,53 @@ export function CampaignDetailPage() {
 	}, [allUrlsData]);
 
 	// URLs available to be attached to this campaign
+	// All URLs are shown, but URLs already assigned to a campaign (either this one or another)
+	// are clearly presented as disabled and unselectable.
 	const unassignedUrlItems = useMemo(() => {
-		return allUrls
-			.filter((u) => !urls.some((cu) => cu.id === u.id))
-			.map((u) => ({
+		const items = allUrls.map((u) => {
+			const isInThisCampaign =
+				u.campaignId === id ||
+				urls.some((cu) => cu.id === u.id || cu.shortCode === u.shortCode);
+			const isInOtherCampaign =
+				Boolean(u.campaignId && u.campaignId !== id);
+
+			if (isInThisCampaign) {
+				return {
+					value: u.id,
+					label: `/r/${u.shortCode}`,
+					sub: u.destinationUrl,
+					badge: "In this campaign",
+					disabled: true,
+					disabledReason: "Already in this campaign",
+				};
+			}
+
+			if (isInOtherCampaign) {
+				return {
+					value: u.id,
+					label: `/r/${u.shortCode}`,
+					sub: u.destinationUrl,
+					badge: `In "${u.campaignName || "Other Campaign"}"`,
+					disabled: true,
+					disabledReason: `In "${u.campaignName || "Other Campaign"}"`,
+				};
+			}
+
+			return {
 				value: u.id,
 				label: `/r/${u.shortCode}`,
 				sub: u.destinationUrl,
-				badge: u.isAbTest ? "A/B Test" : "Direct",
-			}));
-	}, [allUrls, urls]);
+				badge: u.isAbTest ? "A/B Test" : "Available",
+				disabled: false,
+			};
+		});
+
+		// Sort so unassigned/available links appear first, followed by disabled ones
+		return items.sort((a, b) => {
+			if (a.disabled === b.disabled) return 0;
+			return a.disabled ? 1 : -1;
+		});
+	}, [allUrls, urls, id]);
 
 	// 4. Fetch Aggregate Campaign Analytics
 	const {
@@ -286,6 +323,14 @@ export function CampaignDetailPage() {
 				</div>
 
 				<div className="flex items-center gap-2 self-start sm:self-auto shrink-0 flex-wrap">
+					<Button
+						size="sm"
+						onClick={() => setIsCreateLinkOpen(true)}
+						className="text-xs gap-1.5 shadow-xs cursor-pointer font-medium"
+					>
+						<IconPlus className="size-3.5" />
+						<span>Create Link</span>
+					</Button>
 					<Button
 						variant="outline"
 						size="sm"
@@ -574,14 +619,25 @@ export function CampaignDetailPage() {
 								Direct routing targets and tracking codes organized under this campaign
 							</CardDescription>
 						</div>
-						<Button
-							size="sm"
-							onClick={() => setLinksModalOpen(true)}
-							className="text-xs h-8 gap-1.5 cursor-pointer shadow-2xs self-start sm:self-auto"
-						>
-							<IconPlus className="size-3.5" />
-							<span>Attach Shortlink</span>
-						</Button>
+						<div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+							<Button
+								size="sm"
+								onClick={() => setIsCreateLinkOpen(true)}
+								className="text-xs h-8 gap-1.5 cursor-pointer shadow-2xs"
+							>
+								<IconPlus className="size-3.5" />
+								<span>Create Link</span>
+							</Button>
+							<Button
+								size="sm"
+								variant="outline"
+								onClick={() => setLinksModalOpen(true)}
+								className="text-xs h-8 gap-1.5 cursor-pointer"
+							>
+								<IconLink className="size-3.5 text-primary" />
+								<span>Attach Existing</span>
+							</Button>
+						</div>
 					</div>
 				</CardHeader>
 

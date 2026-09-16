@@ -103,16 +103,56 @@ export function CampaignsPage() {
 
 
 	// URLs available to be attached
+	// All URLs are shown, but URLs already assigned to a campaign (either this one or another)
+	// are clearly presented as disabled and unselectable.
 	const unassignedUrlItems = React.useMemo(() => {
-		return urls
-			.filter((u) => !campaignUrls.some((cu) => cu.id === u.id))
-			.map((u) => ({
+		const targetCampaignId = selectedCampaignForUrls?.id;
+
+		const items = urls.map((u) => {
+			const isInThisCampaign =
+				Boolean(targetCampaignId && u.campaignId === targetCampaignId) ||
+				campaignUrls.some((cu) => cu.id === u.id || cu.shortCode === u.shortCode);
+			const isInOtherCampaign =
+				Boolean(u.campaignId && targetCampaignId && u.campaignId !== targetCampaignId) ||
+				Boolean(u.campaignId && !targetCampaignId);
+
+			if (isInThisCampaign) {
+				return {
+					value: u.id,
+					label: `/r/${u.shortCode}`,
+					sub: u.destinationUrl,
+					badge: "In this campaign",
+					disabled: true,
+					disabledReason: "Already in this campaign",
+				};
+			}
+
+			if (isInOtherCampaign) {
+				return {
+					value: u.id,
+					label: `/r/${u.shortCode}`,
+					sub: u.destinationUrl,
+					badge: `In "${u.campaignName || "Other Campaign"}"`,
+					disabled: true,
+					disabledReason: `In "${u.campaignName || "Other Campaign"}"`,
+				};
+			}
+
+			return {
 				value: u.id,
 				label: `/r/${u.shortCode}`,
 				sub: u.destinationUrl,
-				badge: u.isAbTest ? "A/B Test" : "Direct",
-			}));
-	}, [urls, campaignUrls]);
+				badge: u.isAbTest ? "A/B Test" : "Available",
+				disabled: false,
+			};
+		});
+
+		// Sort so unassigned/available links appear first, followed by disabled ones
+		return items.sort((a, b) => {
+			if (a.disabled === b.disabled) return 0;
+			return a.disabled ? 1 : -1;
+		});
+	}, [urls, campaignUrls, selectedCampaignForUrls]);
 
 	// Parse UTM links
 	const campaignLinks = React.useMemo(() => {

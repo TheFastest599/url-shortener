@@ -7,3 +7,4 @@ export { LinkAbTestWidget } from "./LinkAbTestWidget";
 export { LinkTelemetrySnapshot } from "./LinkTelemetrySnapshot";
 export { LinkQrCard } from "./LinkQrCard";
 export { RelationalTray } from "./RelationalTray";
+export { UtmEditor } from "./UtmEditor";

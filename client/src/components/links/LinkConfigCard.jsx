@@ -6,6 +6,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useCampaignsQuery } from "@/queries";
 import { IconLink } from "@tabler/icons-react";
 import { toast } from "sonner";
+import { UtmEditor } from "./UtmEditor";
 
 export function LinkConfigCard({
 	url,
@@ -101,6 +102,10 @@ export function LinkConfigCard({
 							placeholder="https://example.com/target"
 							className="font-mono text-xs"
 							required
+						/>
+						<UtmEditor
+							url={destinationUrl}
+							onChange={setDestinationUrl}
 						/>
 					</div>
 

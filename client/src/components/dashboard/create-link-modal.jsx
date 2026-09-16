@@ -14,12 +14,12 @@ import { useCreateUrlMutation, useCampaignsQuery } from "@/queries";
 import {
 	IconLink,
 	IconSparkles,
-	IconAdjustments,
 	IconCheck,
 	IconCopy,
 	IconQrcode,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
+import { UtmEditor } from "@/components/links/UtmEditor";
 
 export function CreateLinkModal({
 	open,
@@ -29,7 +29,8 @@ export function CreateLinkModal({
 	initialCampaignId = "",
 }) {
 	const [campaignSearch, setCampaignSearch] = React.useState("");
-	const [debouncedCampaignSearch, setDebouncedCampaignSearch] = React.useState("");
+	const [debouncedCampaignSearch, setDebouncedCampaignSearch] =
+		React.useState("");
 
 	React.useEffect(() => {
 		const timer = setTimeout(() => {
@@ -38,44 +39,46 @@ export function CreateLinkModal({
 		return () => clearTimeout(timer);
 	}, [campaignSearch]);
 
-	const { data: campaignsData, isLoading: isCampaignsLoading } = useCampaignsQuery(
-		{
-			page: 0,
-			size: 20,
-			search: debouncedCampaignSearch.trim() || undefined,
-			sortBy: "name",
-			direction: "ASC",
-		},
-		{ enabled: !!open }
-	);
+	const { data: campaignsData, isLoading: isCampaignsLoading } =
+		useCampaignsQuery(
+			{
+				page: 0,
+				size: 20,
+				search: debouncedCampaignSearch.trim() || undefined,
+				sortBy: "name",
+				direction: "ASC",
+			},
+			{ enabled: !!open },
+		);
 
 	const campaigns = Array.isArray(campaignsData)
 		? campaignsData
 		: campaignsData?.content || [];
 
-	const [destinationUrl, setDestinationUrl] = React.useState(initialDestinationUrl);
-	const [prevInitialUrl, setPrevInitialUrl] = React.useState(initialDestinationUrl);
+	const [destinationUrl, setDestinationUrl] = React.useState(
+		initialDestinationUrl,
+	);
+	const [prevInitialUrl, setPrevInitialUrl] = React.useState(
+		initialDestinationUrl,
+	);
 
 	if (initialDestinationUrl !== prevInitialUrl) {
 		setPrevInitialUrl(initialDestinationUrl);
 		setDestinationUrl(initialDestinationUrl);
 	}
 
-	const [customAlias, setCustomAlias] = React.useState(initialCampaignId ? "" : "");
-	const [selectedCampaignId, setSelectedCampaignId] = React.useState(initialCampaignId || "");
+	const [customAlias, setCustomAlias] = React.useState(
+		initialCampaignId ? "" : "",
+	);
+	const [selectedCampaignId, setSelectedCampaignId] = React.useState(
+		initialCampaignId || "",
+	);
 
 	React.useEffect(() => {
 		if (open && initialCampaignId) {
 			setSelectedCampaignId(initialCampaignId);
 		}
 	}, [open, initialCampaignId]);
-
-	const [showUtm, setShowUtm] = React.useState(false);
-	const [utmSource, setUtmSource] = React.useState("");
-	const [utmMedium, setUtmMedium] = React.useState("");
-	const [utmCampaign, setUtmCampaign] = React.useState("");
-	const [utmTerm, setUtmTerm] = React.useState("");
-	const [utmContent, setUtmContent] = React.useState("");
 
 	const [createdResult, setCreatedResult] = React.useState(null);
 	const [copied, setCopied] = React.useState(false);
@@ -93,12 +96,6 @@ export function CreateLinkModal({
 		setSelectedCampaignId(initialCampaignId || "");
 		setCampaignSearch("");
 		setDebouncedCampaignSearch("");
-		setShowUtm(false);
-		setUtmSource("");
-		setUtmMedium("");
-		setUtmCampaign("");
-		setUtmTerm("");
-		setUtmContent("");
 		setCreatedResult(null);
 		setCopied(false);
 	};
@@ -123,19 +120,6 @@ export function CreateLinkModal({
 			!formattedUrl.startsWith("https://")
 		) {
 			formattedUrl = "https://" + formattedUrl;
-		}
-
-		// Bake UTM parameters directly into the destination URL query string
-		try {
-			const parsed = new URL(formattedUrl);
-			if (utmSource.trim()) parsed.searchParams.set("utm_source", utmSource.trim());
-			if (utmMedium.trim()) parsed.searchParams.set("utm_medium", utmMedium.trim());
-			if (utmCampaign.trim()) parsed.searchParams.set("utm_campaign", utmCampaign.trim());
-			if (utmTerm.trim()) parsed.searchParams.set("utm_term", utmTerm.trim());
-			if (utmContent.trim()) parsed.searchParams.set("utm_content", utmContent.trim());
-			formattedUrl = parsed.toString();
-		} catch (e) {
-			console.warn("Could not parse destination URL for UTM baking:", e);
 		}
 
 		const payload = {
@@ -305,7 +289,11 @@ export function CreateLinkModal({
 							</label>
 							<SearchCombobox
 								items={[
-									{ value: "", label: "No Campaign (Standalone URL)", description: "Leave unattached" },
+									{
+										value: "",
+										label: "No Campaign (Standalone URL)",
+										description: "Leave unattached",
+									},
 									...campaigns.map((c) => ({
 										value: c.id,
 										label: c.name,
@@ -314,7 +302,9 @@ export function CreateLinkModal({
 									})),
 								]}
 								value={selectedCampaignId}
-								onValueChange={(val) => setSelectedCampaignId(val || "")}
+								onValueChange={(val) =>
+									setSelectedCampaignId(val || "")
+								}
 								placeholder="Search campaigns..."
 								emptyMessage="No campaigns found."
 								onSearchChange={setCampaignSearch}
@@ -323,83 +313,11 @@ export function CreateLinkModal({
 							/>
 						</div>
 
-						{/* Collapsible UTM Builder */}
-						<div className="rounded-xl border border-border/60 bg-muted/20 p-3 space-y-3">
-							<button
-								type="button"
-								onClick={() => setShowUtm(!showUtm)}
-								className="flex w-full items-center justify-between text-xs font-medium text-foreground hover:text-primary transition-colors cursor-pointer"
-							>
-								<span className="flex items-center gap-1.5">
-									<IconAdjustments className="size-3.5" />
-									<span>UTM Campaign Parameters</span>
-								</span>
-								<span className="text-[11px] text-muted-foreground">
-									{showUtm ? "Hide" : "Add Tags"}
-								</span>
-							</button>
-
-							{showUtm && (
-								<div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
-									<div className="space-y-1">
-										<label className="text-[11px] text-muted-foreground">
-											UTM Source
-										</label>
-										<Input
-											type="text"
-											value={utmSource}
-											onChange={(e) =>
-												setUtmSource(e.target.value)
-											}
-											placeholder="e.g. twitter, newsletter"
-											className="h-8 text-xs bg-background"
-										/>
-									</div>
-									<div className="space-y-1">
-										<label className="text-[11px] text-muted-foreground">
-											UTM Medium
-										</label>
-										<Input
-											type="text"
-											value={utmMedium}
-											onChange={(e) =>
-												setUtmMedium(e.target.value)
-											}
-											placeholder="e.g. cpc, email, social"
-											className="h-8 text-xs bg-background"
-										/>
-									</div>
-									<div className="space-y-1">
-										<label className="text-[11px] text-muted-foreground">
-											UTM Campaign
-										</label>
-										<Input
-											type="text"
-											value={utmCampaign}
-											onChange={(e) =>
-												setUtmCampaign(e.target.value)
-											}
-											placeholder="e.g. spring_launch"
-											className="h-8 text-xs bg-background"
-										/>
-									</div>
-									<div className="space-y-1">
-										<label className="text-[11px] text-muted-foreground">
-											UTM Content / Term
-										</label>
-										<Input
-											type="text"
-											value={utmContent}
-											onChange={(e) =>
-												setUtmContent(e.target.value)
-											}
-											placeholder="e.g. banner_top"
-											className="h-8 text-xs bg-background"
-										/>
-									</div>
-								</div>
-							)}
-						</div>
+						{/* Unified Live UTM Editor */}
+						<UtmEditor
+							url={destinationUrl}
+							onChange={setDestinationUrl}
+						/>
 
 						<DialogFooter className="pt-2">
 							<Button

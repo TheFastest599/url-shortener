@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { IconEdit, IconScale, IconPlus, IconTrash } from "@tabler/icons-react";
+import { UtmEditor } from "@/components/links/UtmEditor";
 import { useUpdateAbTestMutation } from "@/queries/abTestingQueries";
 import { toast } from "sonner";
 
@@ -347,7 +348,7 @@ export function EditAbTestModal({
 										</div>
 									</div>
 
-									<div>
+									<div className="space-y-1.5">
 										<Input
 											value={v.destinationUrl}
 											onChange={(e) => {
@@ -361,6 +362,17 @@ export function EditAbTestModal({
 											placeholder={`https://mysite.com/variant-${v.key.toLowerCase()}`}
 											className="text-xs font-mono"
 											required
+										/>
+										<UtmEditor
+											url={v.destinationUrl}
+											onChange={(newUrl) => {
+												setVariants((prev) => {
+													const upd = [...prev];
+													upd[index] = { ...upd[index], destinationUrl: newUrl };
+													return upd;
+												});
+											}}
+											compact
 										/>
 									</div>
 								</div>

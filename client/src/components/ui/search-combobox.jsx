@@ -9,6 +9,7 @@ import {
 	ComboboxGroup,
 } from "@/components/ui/combobox";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 /**
  * High-level SearchCombobox built directly on top of the official shadcn Combobox components.
@@ -35,7 +36,7 @@ export function SearchCombobox({
 		return items.filter((item) => {
 			const text = `${item.label || item.name || item.shortCode || ""} ${
 				item.sub || item.description || item.destinationUrl || ""
-			} ${item.badge || ""}`.toLowerCase();
+			} ${item.badge || ""} ${item.disabledReason || ""}`.toLowerCase();
 			return text.includes(q);
 		});
 	}, [items, search, remote]);
@@ -52,6 +53,7 @@ export function SearchCombobox({
 					const item = items.find(
 						(i) => (i.value ?? i.id ?? i.shortCode) === newVal,
 					);
+					if (item?.disabled) return;
 					onValueChange?.(newVal, item);
 					setSearch("");
 					onSearchChange?.("");
@@ -90,21 +92,36 @@ export function SearchCombobox({
 								const itemVal =
 									item.value ?? item.id ?? item.shortCode;
 								const isSelected = itemVal === value;
+								const isDisabled = Boolean(item.disabled);
 
 								return (
 									<ComboboxItem
 										key={itemVal}
 										value={itemVal}
+										disabled={isDisabled}
 										onClick={() => {
+											if (isDisabled) return;
 											onValueChange?.(itemVal, item);
 											setSearch("");
 										}}
-										className="cursor-pointer py-1.5 px-2.5 rounded-lg flex items-center justify-between"
+										className={cn(
+											"py-1.5 px-2.5 rounded-lg flex items-center justify-between",
+											isDisabled
+												? "opacity-50 cursor-not-allowed bg-muted/15 select-none"
+												: "cursor-pointer"
+										)}
 									>
 										<div className="flex flex-col min-w-0 flex-1 pr-2">
 											<div className="flex items-center gap-2">
 												<span
-													className={`font-medium text-xs truncate ${isSelected ? "text-primary font-semibold" : ""}`}
+													className={cn(
+														"font-medium text-xs truncate",
+														isDisabled
+															? "text-muted-foreground"
+															: isSelected
+															? "text-primary font-semibold"
+															: "text-foreground"
+													)}
 												>
 													{item.label ||
 														item.name ||
@@ -113,24 +130,44 @@ export function SearchCombobox({
 												{item.badge && (
 													<Badge
 														variant={
-															isSelected
+															isDisabled
+																? "outline"
+																: isSelected
 																? "default"
 																: "secondary"
 														}
-														className="text-[9px] font-mono px-1 py-0 shrink-0"
+														className={cn(
+															"text-[9px] font-mono px-1.5 py-0 shrink-0",
+															isDisabled && "text-muted-foreground border-border/70 bg-muted/30 font-normal"
+														)}
 													>
 														{item.badge}
 													</Badge>
 												)}
 											</div>
-											{(item.sub ||
+											{(item.disabledReason ||
+												item.sub ||
 												item.destinationUrl ||
 												item.description) && (
-												<span className="text-[10px] text-muted-foreground truncate font-mono mt-0.5">
-													{item.sub ||
+												<div className="flex items-center gap-1.5 text-[10px] mt-0.5 min-w-0">
+													{item.disabledReason && (
+														<span className="text-amber-500/90 dark:text-amber-400/90 font-medium shrink-0">
+															{item.disabledReason}
+														</span>
+													)}
+													{item.disabledReason && (item.sub || item.destinationUrl || item.description) && (
+														<span className="text-muted-foreground/50 shrink-0">•</span>
+													)}
+													{(item.sub ||
 														item.destinationUrl ||
-														item.description}
-												</span>
+														item.description) && (
+														<span className="text-muted-foreground truncate font-mono">
+															{item.sub ||
+																item.destinationUrl ||
+																item.description}
+														</span>
+													)}
+												</div>
 											)}
 										</div>
 									</ComboboxItem>

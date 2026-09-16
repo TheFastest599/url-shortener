@@ -33,6 +33,8 @@ export function CampaignLinksModal({
 
 	const handleAssign = () => {
 		if (!linkToAssignId) return;
+		const selected = unassignedUrlItems.find((i) => i.value === linkToAssignId);
+		if (selected?.disabled) return;
 		onAssignLink(linkToAssignId);
 		setLinkToAssignId("");
 	};
@@ -62,7 +64,7 @@ export function CampaignLinksModal({
 								value={linkToAssignId}
 								onValueChange={(val) => setLinkToAssignId(val)}
 								placeholder="Search by code, URL, or type..."
-								emptyMessage="No unattached URLs found."
+								emptyMessage="No matching URLs found."
 							/>
 						</div>
 						<Button
@@ -154,7 +156,19 @@ export function CampaignLinksModal({
 					)}
 				</div>
 
-				<DialogFooter>
+				<DialogFooter className="flex items-center justify-between sm:justify-between w-full gap-2">
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={() => {
+							onOpenChange(false);
+							onCreateNewLink?.();
+						}}
+						className="text-xs gap-1.5 cursor-pointer"
+					>
+						<IconPlus className="size-3.5" />
+						<span>Create New Link</span>
+					</Button>
 					<Button
 						variant="outline"
 						size="sm"
