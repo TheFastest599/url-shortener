@@ -314,3 +314,5 @@ export function SignupPage() {
 		</div>
 	);
 }
+
+export default SignupPage;

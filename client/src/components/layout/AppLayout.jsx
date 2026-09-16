@@ -13,6 +13,25 @@ import {
 	SheetDescription,
 } from "@/components/ui/sheet";
 import { ChevronRight } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+
+function WorkspacePageFallback() {
+	return (
+		<div className="space-y-6 max-w-6xl mx-auto py-2 animate-pulse">
+			<div className="space-y-2">
+				<Skeleton className="h-7 w-48 rounded-lg" />
+				<Skeleton className="h-4 w-72 rounded-md" />
+			</div>
+			<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+				<Skeleton className="h-28 rounded-xl" />
+				<Skeleton className="h-28 rounded-xl" />
+				<Skeleton className="h-28 rounded-xl" />
+				<Skeleton className="h-28 rounded-xl" />
+			</div>
+			<Skeleton className="h-72 w-full rounded-xl" />
+		</div>
+	);
+}
 
 export function AppLayout() {
 	const [isCreateOpen, setIsCreateOpen] = React.useState(false);
@@ -59,12 +78,14 @@ export function AppLayout() {
 
 					{/* Active Workspace Page View */}
 					<main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 overflow-y-auto">
-						<Outlet
-							context={{
-								onOpenCreateModal: handleOpenCreateModal,
-								onOpenQrModal: handleOpenQrModal,
-							}}
-						/>
+						<React.Suspense fallback={<WorkspacePageFallback />}>
+							<Outlet
+								context={{
+									onOpenCreateModal: handleOpenCreateModal,
+									onOpenQrModal: handleOpenQrModal,
+								}}
+							/>
+						</React.Suspense>
 					</main>
 				</div>
 			</div>
