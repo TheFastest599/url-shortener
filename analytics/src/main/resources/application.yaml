@@ -14,7 +14,8 @@ spring:
   application:
     name: url-analytics-service
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:url_shortener_analytics}
+    # reWriteBatchedInserts=true rewrites batched PreparedStatement inserts into a single multi-row INSERT query in PostgreSQL
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:url_shortener_analytics}?reWriteBatchedInserts=true
     username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD:postgres_password}
     driver-class-name: org.postgresql.Driver
@@ -34,12 +35,18 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    listener:
+      type: batch
+      ack-mode: manual_immediate
     consumer:
-      group-id: analytics-ingest-group
+      group-id: ${KAFKA_CONSUMER_GROUP:analytics-ingest-group}
       auto-offset-reset: earliest
+      max-poll-records: ${ANALYTICS_BATCH_SIZE:5000}
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
         spring.json.trusted.packages: "com.urlshortener.*"
         spring.json.value.default.type: "com.urlshortener.analytics.dto.ClickEvent"
         spring.json.use.type.headers: false
+        fetch.max.wait.ms: ${ANALYTICS_BATCH_TIMEOUT_MS:5000}
+        fetch.min.bytes: ${ANALYTICS_BATCH_FETCH_MIN_BYTES:1048576}
