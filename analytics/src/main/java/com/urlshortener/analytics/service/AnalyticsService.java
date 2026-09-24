@@ -6,7 +6,7 @@ import com.urlshortener.analytics.dto.CampaignAnalyticsDto;
 import com.urlshortener.analytics.dto.CityStatDto;
 import com.urlshortener.analytics.dto.StatMetricDto;
 import com.urlshortener.analytics.dto.TimeSeriesPoint;
-import com.urlshortener.analytics.repository.ClickAnalyticsRepository;
+import com.urlshortener.analytics.repository.ClickAnalyticsQueryRepository;
 import com.urlshortener.analytics.repository.projection.CityStatProjection;
 import com.urlshortener.analytics.repository.projection.StatProjection;
 import com.urlshortener.analytics.repository.projection.TimeSeriesProjection;
@@ -29,7 +29,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class AnalyticsService {
 
-    private final ClickAnalyticsRepository repository;
+    private final ClickAnalyticsQueryRepository repository;
 
     public AnalyticsOverviewDto getOverview(String shortCode, int days, boolean includeBots) {
         return getOverview(shortCode, days, null, "UTC", includeBots);

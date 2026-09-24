@@ -6,6 +6,7 @@ import com.urlshortener.core.entity.AbVariant;
 import com.urlshortener.core.entity.UrlMapping;
 import com.urlshortener.core.repository.AbTestRepository;
 import com.urlshortener.core.repository.AbVariantRepository;
+import com.urlshortener.core.repository.UrlMappingQueryRepository;
 import com.urlshortener.core.repository.UrlMappingRepository;
 import com.urlshortener.core.service.UrlCoreService;
 import com.urlshortener.grpc.CreateUrlRequest;
@@ -29,7 +30,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class UrlGrpcService extends UrlServiceGrpc.UrlServiceImplBase {
 
-    private final UrlMappingRepository urlMappingRepository;
+    private final UrlMappingQueryRepository urlMappingQueryRepository;
     private final UrlCoreService urlCoreService;
     private final ObjectMapper objectMapper;
 
@@ -43,9 +44,9 @@ public class UrlGrpcService extends UrlServiceGrpc.UrlServiceImplBase {
             return;
         }
 
-        // Single joint SQL query across url_mappings, ab_tests, and ab_variants
+        // Single joint SQL query across url_mappings, ab_tests, and ab_variants via jOOQ
         List<com.urlshortener.core.repository.UrlResolutionProjection> rows =
-                urlMappingRepository.findFullResolutionByShortCode(shortCode.trim());
+                urlMappingQueryRepository.findFullResolutionByShortCode(shortCode.trim());
 
         // Guard Clause 2: URL not found in database
         if (rows == null || rows.isEmpty()) {

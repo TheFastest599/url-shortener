@@ -7,6 +7,7 @@ import com.urlshortener.core.dto.UpdateUrlRequest;
 import com.urlshortener.core.entity.UrlMapping;
 import com.urlshortener.core.repository.AbTestRepository;
 import com.urlshortener.core.repository.AbVariantRepository;
+import com.urlshortener.core.repository.UrlMappingQueryRepository;
 import com.urlshortener.core.repository.UrlMappingRepository;
 import com.urlshortener.core.util.Base62;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,7 @@ import java.util.UUID;
 public class UrlCoreService {
 
     private final UrlMappingRepository urlRepository;
+    private final UrlMappingQueryRepository urlQueryRepository;
     private final AbTestRepository abTestRepository;
     private final AbVariantRepository abVariantRepository;
     private final Base62 base62;
@@ -133,7 +135,7 @@ public class UrlCoreService {
     }
 
     public List<ShortUrlResponse> getUserUrls(UUID userId) {
-        return urlRepository.findUserUrlsWithDetails(userId);
+        return urlQueryRepository.findUserUrlsWithDetails(userId);
     }
 
     public Page<ShortUrlResponse> getUserUrlsPaged(
@@ -155,16 +157,16 @@ public class UrlCoreService {
         String searchPattern = (search != null && !search.trim().isBlank())
                 ? "%" + search.trim().toLowerCase() + "%"
                 : null;
-        return urlRepository.searchUserUrls(userId, searchPattern, isActive, campaignId, unassignedOnly, pageable);
+        return urlQueryRepository.searchUserUrls(userId, searchPattern, isActive, campaignId, unassignedOnly, pageable);
     }
 
     public ShortUrlResponse getUrl(UUID urlId, UUID userId) {
-        return urlRepository.findUserUrlWithDetails(urlId, userId)
+        return urlQueryRepository.findUserUrlWithDetails(urlId, userId)
                 .orElseThrow(() -> new IllegalArgumentException("URL mapping not found"));
     }
 
     public Optional<ShortUrlResponse> getUrlFromShortCode(String shortCode) {
-        return urlRepository.findByShortCodeWithDetails(shortCode);
+        return urlQueryRepository.findByShortCodeWithDetails(shortCode);
     }
 
     // ==========================================
