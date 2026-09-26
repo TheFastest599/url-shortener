@@ -13,12 +13,4 @@ import java.util.UUID;
  */
 @Repository
 public interface ClickAnalyticsRepository extends JpaRepository<ClickAnalytics, UUID> {
-
-    long countByShortCode(String shortCode);
-
-    long countByCampaignId(UUID campaignId);
-
-    long countByAbTestId(UUID abTestId);
-
-    long countByUrlId(UUID urlId);
 }

@@ -444,7 +444,7 @@ To avoid corrupted analytics (e.g., `twitter` vs `Twitter` vs `t.co`), the platf
 * `utm_content`: Specific ad creative or button (`header_cta`, `sidebar_banner`).
 
 ### Frontend UTM Builder Architecture
-The frontend provides a URL Builder component ([utm-builder-view.jsx](file:///d:/Java%20save%20files/url-shortener/client/src/components/dashboard/utm-builder-view.jsx)) with standard presets:
+The frontend provides a URL Builder component ([utm-builder-view.jsx](../client/src/components/dashboard/utm-builder-view.jsx)) with standard presets:
 
 ```javascript
 export const UTM_PRESETS = [
@@ -473,7 +473,7 @@ For a single campaign (e.g., `summer_launch`), multiple channel-specific links c
 | `sho.rt/sl-em` | Email Newsletter | `https://site.com/product?utm_source=newsletter&utm_medium=email&utm_campaign=summer_launch` |
 
 ### Aggregated Campaign View
-In [Campaigns.jsx](file:///d:/Java%20save%20files/url-shortener/client/src/pages/Campaigns.jsx), the frontend groups links by `campaign_id` (or `utm_campaign` parameter) and computes:
+In [Campaigns.jsx](../client/src/pages/Campaigns.jsx), the frontend groups links by `campaign_id` (or `utm_campaign` parameter) and computes:
 * **Aggregate Click Volume**: Total clicks across all channel links in the campaign.
 * **Channel Performance Breakdown**: Traffic comparison between Twitter, LinkedIn, and Email.
 * **Cost Per Click (CPC) / Conversion Attribution**: Integration with conversion events.
@@ -593,6 +593,6 @@ Returns the distribution of clicks by traffic source:
 
 ### Phase 5: Frontend (`client`) Updates
 - [ ] In `client/src/api/url.js` and `client/src/api/analytics.js`, add corresponding API client functions.
-- [ ] In [Campaigns.jsx](file:///d:/Java%20save%20files/url-shortener/client/src/pages/Campaigns.jsx), wire real campaign creation and link grouping.
-- [ ] In [create-link-modal.jsx](file:///d:/Java%20save%20files/url-shortener/client/src/components/dashboard/create-link-modal.jsx), add the "A/B Testing" toggle with dynamic variant rows and weight sliders.
-- [ ] In [analytics-overview.jsx](file:///d:/Java%20save%20files/url-shortener/client/src/components/dashboard/analytics-overview.jsx), add the A/B Split Distribution card.
+- [ ] In [Campaigns.jsx](../client/src/pages/Campaigns.jsx), wire real campaign creation and link grouping.
+- [ ] In [create-link-modal.jsx](../client/src/components/dashboard/create-link-modal.jsx), add the "A/B Testing" toggle with dynamic variant rows and weight sliders.
+- [ ] In [analytics-overview.jsx](../client/src/components/dashboard/analytics-overview.jsx), add the A/B Split Distribution card.

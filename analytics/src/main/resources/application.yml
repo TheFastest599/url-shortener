@@ -10,6 +10,9 @@ logging:
     root: INFO
     com.urlshortener.analytics: DEBUG
 
+# ==============================================================================
+# DEFAULT PROFILE: Local Development (Host Machine)
+# ==============================================================================
 spring:
   application:
     name: url-analytics-service
@@ -17,13 +20,13 @@ spring:
     # reWriteBatchedInserts=true rewrites batched PreparedStatement inserts into a single multi-row INSERT query in PostgreSQL
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:url_shortener_analytics}?reWriteBatchedInserts=true
     username: ${DB_USERNAME:postgres}
-    password: ${DB_PASSWORD}
+    password: ${DB_PASSWORD:postgres_password}
     driver-class-name: org.postgresql.Driver
   flyway:
     enabled: true
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:url_shortener_analytics}
     user: ${DB_USERNAME:postgres}
-    password: ${DB_PASSWORD}
+    password: ${DB_PASSWORD:postgres_password}
     baseline-on-migrate: true
     locations: classpath:db/migration
   jpa:
@@ -50,3 +53,18 @@ spring:
         spring.json.use.type.headers: false
         fetch.max.wait.ms: ${ANALYTICS_BATCH_TIMEOUT_MS:5000}
         fetch.min.bytes: ${ANALYTICS_BATCH_FETCH_MIN_BYTES:1048576}
+
+---
+# ==============================================================================
+# DOCKER PROFILE: Production Container Network (Activated via SPRING_PROFILES_ACTIVE=docker)
+# ==============================================================================
+spring:
+  config:
+    activate:
+      on-profile: docker
+  datasource:
+    url: jdbc:postgresql://postgres:${DB_PORT:5432}/${DB_NAME:url_shortener_analytics}?reWriteBatchedInserts=true
+  flyway:
+    url: jdbc:postgresql://postgres:${DB_PORT:5432}/${DB_NAME:url_shortener_analytics}
+  kafka:
+    bootstrap-servers: kafka:29092

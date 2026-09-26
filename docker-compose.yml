@@ -1,45 +1,203 @@
-version: '3.8'
-
 services:
-  # 1. PostgreSQL DB Instance (Disabled: Using local machine PostgreSQL on port 5432)
-  # postgres:
-  #   image: postgres:16-alpine
-  #   container_name: postgres-db
-  #   environment:
-  #     POSTGRES_DB: postgres
-  #     POSTGRES_USER: postgres
-  #     POSTGRES_PASSWORD: postgres_password
-  #   ports:
-  #     - "5432:5432"
-  #   volumes:
-  #     - pg_data:/var/lib/postgresql/data
+    # ============================================================================
+    # 1. Relational Database: PostgreSQL 16
+    # ============================================================================
+    postgres:
+        image: postgres:16-alpine
+        container_name: postgres-db
+        restart: unless-stopped
+        environment:
+            POSTGRES_DB: postgres
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: postgres_password
+        volumes:
+            - pg_data:/var/lib/postgresql/data
+            - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U postgres"]
+            interval: 5s
+            timeout: 5s
+            retries: 5
+            start_period: 10s
+        networks:
+            - url-shortener-net
 
-  # 2. Redis Cache & Limit Store
-  redis:
-    image: redis:7.2-alpine
-    container_name: redis-cache
-    ports:
-      - "6379:6379"
+    # ============================================================================
+    # 2. In-Memory Cache & Rate Limiting: Redis 7.2
+    # ============================================================================
+    redis:
+        image: redis:7.2-alpine
+        container_name: redis-cache
+        restart: unless-stopped
+        volumes:
+            - redis_data:/data
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 5s
+            timeout: 3s
+            retries: 5
+            start_period: 5s
+        networks:
+            - url-shortener-net
 
-  # 3. Apache Kafka (KRaft mode - No Zookeeper needed!)
-  kafka:
-    image: confluentinc/cp-kafka:7.6.0
-    container_name: kafka-broker
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: 'broker,controller'
-      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29093'
-      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092'
-      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092'
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
-      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
-      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
-      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+    # ============================================================================
+    # 3. Message Broker: Apache Kafka (KRaft mode - ZooKeeper-less)
+    # ============================================================================
+    kafka:
+        image: confluentinc/cp-kafka:7.6.0
+        container_name: kafka-broker
+        restart: unless-stopped
+        environment:
+            KAFKA_NODE_ID: 1
+            KAFKA_PROCESS_ROLES: "broker,controller"
+            KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
+            KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093"
+            KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:29092"
+            KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+            KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+            KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+            KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+            KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+            KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+            CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+        volumes:
+            - kafka_data:/var/lib/kafka/data
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "kafka-broker-api-versions --bootstrap-server localhost:29092 || exit 1",
+                ]
+            interval: 10s
+            timeout: 10s
+            retries: 5
+            start_period: 15s
+        networks:
+            - url-shortener-net
+
+    # ============================================================================
+    # 4. Core Administration & CRUD Microservice (Spring Boot REST + gRPC)
+    # ============================================================================
+    core:
+        build:
+            context: ./core
+            dockerfile: Dockerfile
+        container_name: core-service
+        restart: unless-stopped
+        env_file:
+            - ./core/.env
+        environment:
+            SPRING_PROFILES_ACTIVE: docker
+            DB_PASSWORD: postgres_password
+        depends_on:
+            postgres:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+        networks:
+            - url-shortener-net
+
+    # ============================================================================
+    # 5. Analytics Aggregation Microservice (Spring Boot Kafka Consumer + gRPC)
+    # ============================================================================
+    analytics:
+        build:
+            context: ./analytics
+            dockerfile: Dockerfile
+        container_name: analytics-service
+        restart: unless-stopped
+        env_file:
+            - ./analytics/.env
+        environment:
+            SPRING_PROFILES_ACTIVE: docker
+            DB_PASSWORD: postgres_password
+        depends_on:
+            postgres:
+                condition: service_healthy
+            kafka:
+                condition: service_healthy
+        networks:
+            - url-shortener-net
+
+    # ============================================================================
+    # 6. High-Speed Redirection Microservice (Spring Boot + Redis + Kafka Producer)
+    # ============================================================================
+    redirect:
+        build:
+            context: ./redirect
+            dockerfile: Dockerfile
+        container_name: redirect-service
+        restart: unless-stopped
+        env_file:
+            - ./redirect/.env
+        environment:
+            SPRING_PROFILES_ACTIVE: docker
+        depends_on:
+            redis:
+                condition: service_healthy
+            kafka:
+                condition: service_healthy
+            core:
+                condition: service_started
+        networks:
+            - url-shortener-net
+
+    # ============================================================================
+    # 7. Edge API Gateway & Authentication (Spring Cloud Gateway)
+    # ============================================================================
+    apigateway:
+        build:
+            context: ./apigateway
+            dockerfile: Dockerfile
+        container_name: apigateway-service
+        restart: unless-stopped
+        env_file:
+            - ./apigateway/.env
+        environment:
+            SPRING_PROFILES_ACTIVE: docker
+            DB_PASSWORD: postgres_password
+        depends_on:
+            postgres:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+            core:
+                condition: service_started
+            analytics:
+                condition: service_started
+        networks:
+            - url-shortener-net
+
+    # ============================================================================
+    # 8. Unified Ingress Reverse Proxy & React Client (Nginx)
+    # ============================================================================
+    nginx:
+        build:
+            context: .
+            dockerfile: nginx/Dockerfile
+        container_name: nginx-ingress
+        restart: unless-stopped
+        ports:
+            - "80:80"
+        depends_on:
+            apigateway:
+                condition: service_started
+            redirect:
+                condition: service_started
+        networks:
+            - url-shortener-net
+
+# ==============================================================================
+# Networks & Persistent Storage Volumes
+# ==============================================================================
+networks:
+    url-shortener-net:
+        driver: bridge
 
 volumes:
-  pg_data:
+    pg_data:
+        driver: local
+    redis_data:
+        driver: local
+    kafka_data:
+        driver: local
