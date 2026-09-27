@@ -13,6 +13,12 @@ export const queryKeys = {
 		list: (params = {}) => ["urls", "list", params],
 		detail: (id) => ["urls", id],
 		byCode: (shortCode) => ["urls", "code", shortCode],
+		analyticsById: (urlId, days = 30, includeBots = false) => [
+			"urls",
+			urlId,
+			"analytics",
+			{ days, includeBots },
+		],
 	},
 	analytics: {
 		all: (shortCode) => ["analytics", shortCode],
@@ -45,6 +51,30 @@ export const queryKeys = {
 			shortCode,
 			"referrers",
 			{ includeBots, limit },
+		],
+	},
+	campaigns: {
+		all: ["campaigns"],
+		list: (params = {}) => ["campaigns", "list", params],
+		detail: (id) => ["campaigns", id],
+		urls: (id) => ["campaigns", id, "urls"],
+		analytics: (id, days = 30, includeBots = false) => [
+			"campaigns",
+			id,
+			"analytics",
+			{ days, includeBots },
+		],
+	},
+	abTesting: {
+		all: ["abTesting"],
+		list: (params = {}) => ["abTesting", "list", params],
+		detail: (id) => ["abTesting", "detail", id],
+		byCode: (shortCode) => ["abTesting", "byCode", shortCode],
+		analytics: (identifier, days = 30, includeBots = false) => [
+			"abTesting",
+			identifier,
+			"analytics",
+			{ days, includeBots },
 		],
 	},
 };

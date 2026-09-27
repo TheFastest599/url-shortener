@@ -8,7 +8,8 @@ export const queryClient = new QueryClient({
 			refetchOnWindowFocus: false, // Prevents background re-fetching on tab switch
 			retry: (failureCount, error) => {
 				// Never retry on 401 Unauthorized, 403 Forbidden, or 404 Not Found
-				if (error?.status === 401 || error?.status === 403 || error?.status === 404) {
+				const status = error?.response?.status || error?.status;
+				if (status === 401 || status === 403 || status === 404) {
 					return false;
 				}
 				return failureCount < 2;

@@ -9,6 +9,9 @@ logging:
     org.springframework.cloud.gateway: DEBUG
     org.springframework.security: DEBUG
 
+# ==============================================================================
+# DEFAULT PROFILE: Local Development (Host Machine)
+# ==============================================================================
 spring:
   application:
     name: api-gateway
@@ -18,17 +21,17 @@ spring:
     gateway:
       routes:
         - id: core-service-route
-          uri: ${CORE_SERVICE_URL:http://localhost:8081}
+          uri: http://localhost:8081
           predicates:
-            - Path=/api/v1/urls/**
+            - Path=/api/v1/urls/**, /api/v1/campaigns/**, /api/v1/ab-tests/**
 
         - id: analytics-service-route
-          uri: ${ANALYTICS_SERVICE_URL:http://localhost:8083}
+          uri: http://localhost:8083
           predicates:
             - Path=/api/v1/analytics/**
 
         - id: redirect-service-route
-          uri: ${REDIRECT_SERVICE_URL:http://localhost:8082}
+          uri: http://localhost:8082
           predicates:
             - Path=/r/**, /s/**
   r2dbc:
@@ -48,7 +51,60 @@ spring:
       port: ${REDIS_PORT:6379}
 
 app:
-  frontend-url: ${FRONTEND_URL:http://localhost:5173}
+  frontend-url: http://localhost:5173
   jwt:
     secret: ${JWT_SECRET:defaultSecretKeyWhichIsAtLeast32BytesLongForHS256BitSecurity!}
     expiration-ms: ${JWT_EXPIRATION_MS:900000}
+
+oauth:
+  google:
+    client-id: ${OAUTH_GOOGLE_CLIENT_ID:google-client-id-fallback}
+    client-secret: ${OAUTH_GOOGLE_CLIENT_SECRET:google-client-secret-fallback}
+    redirect-uri: http://localhost:8080/api/v1/auth/oauth2/google/callback
+  github:
+    client-id: ${OAUTH_GITHUB_CLIENT_ID:github-client-id-fallback}
+    client-secret: ${OAUTH_GITHUB_CLIENT_SECRET:github-client-secret-fallback}
+    redirect-uri: http://localhost:8080/api/v1/auth/oauth2/github/callback
+
+---
+# ==============================================================================
+# DOCKER PROFILE: Production Container Network (Activated via SPRING_PROFILES_ACTIVE=docker)
+# ==============================================================================
+spring:
+  config:
+    activate:
+      on-profile: docker
+  cloud:
+    gateway:
+      routes:
+        - id: core-service-route
+          uri: http://core:8081
+          predicates:
+            - Path=/api/v1/urls/**, /api/v1/campaigns/**, /api/v1/ab-tests/**
+
+        - id: analytics-service-route
+          uri: http://analytics:8083
+          predicates:
+            - Path=/api/v1/analytics/**
+
+        - id: redirect-service-route
+          uri: http://redirect:8082
+          predicates:
+            - Path=/r/**, /s/**
+  r2dbc:
+    url: r2dbc:postgresql://postgres:${DB_PORT:5432}/${DB_NAME:url_shortener_auth}
+  flyway:
+    url: jdbc:postgresql://postgres:${DB_PORT:5432}/${DB_NAME:url_shortener_auth}
+  data:
+    redis:
+      host: redis
+      port: ${REDIS_PORT:6379}
+
+app:
+  frontend-url: http://localhost
+
+oauth:
+  google:
+    redirect-uri: http://localhost/api/v1/auth/oauth2/google/callback
+  github:
+    redirect-uri: http://localhost/api/v1/auth/oauth2/github/callback

@@ -1,8 +1,16 @@
 package com.urlshortener.analytics.entity;
 
-
-import jakarta.persistence.*;
-import lombok.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -19,9 +27,9 @@ public class ClickAnalytics {
     @Id
     @GeneratedValue(strategy = GenerationType.AUTO)
     @Column(name = "id")
-    private UUID uuid;
+    private UUID id;
 
-    @Column(name = "short_code", nullable = false, length = 10)
+    @Column(name = "short_code", nullable = false, length = 64)
     private String shortCode;
 
     @Column(name = "timestamp", nullable = false)
@@ -48,6 +56,27 @@ public class ClickAnalytics {
     @Column(name = "referrer", columnDefinition = "TEXT")
     private String referrer;
 
+    @Column(name = "variant")
+    private String variant;
+
+    @Column(name = "utm_source")
+    private String utmSource;
+
+    @Column(name = "utm_medium")
+    private String utmMedium;
+
+    @Column(name = "utm_campaign")
+    private String utmCampaign;
+
     @Column(name = "is_bot", nullable = false)
     private Boolean isBot;
+
+    @Column(name = "url_id")
+    private UUID urlId;
+
+    @Column(name = "campaign_id")
+    private UUID campaignId;
+
+    @Column(name = "ab_test_id")
+    private UUID abTestId;
 }

@@ -26,12 +26,12 @@ export function WorkspaceBreadcrumb() {
 	} else if (pathname.startsWith("/redirect-links/") && shortCode) {
 		items = [
 			{ label: "Redirect Links", href: ROUTES.REDIRECT_LINKS },
-			{ label: `/r/${shortCode}`, isCurrent: true, isCode: true },
+			{ label: shortCode, isCurrent: true, isCode: true },
 		];
 	} else if (pathname.startsWith("/analytics/") && shortCode) {
 		items = [
 			{ label: "Analytics", href: ROUTES.REDIRECT_LINKS },
-			{ label: `/r/${shortCode}`, isCurrent: true, isCode: true },
+			{ label: shortCode, isCurrent: true, isCode: true },
 		];
 	} else if (pathname === ROUTES.CAMPAIGNS || pathname === "/campaigns") {
 		items = [{ label: "Campaigns & UTM", isCurrent: true }];

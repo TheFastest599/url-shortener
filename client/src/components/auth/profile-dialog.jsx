@@ -94,7 +94,7 @@ export function ProfileDialog({ open, onOpenChange }) {
 									<IconDatabase className="size-3.5" />
 									<span>Session Memory Store</span>
 								</span>
-								<span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+								<span className="size-2 rounded-full bg-chart-2 animate-pulse" />
 							</div>
 							<p className="text-[11px] text-muted-foreground">
 								User credentials and JWT tokens are securely maintained in-memory for this session.

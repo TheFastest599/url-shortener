@@ -1,30 +1,40 @@
 package com.urlshortener.core.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.urlshortener.core.dto.CreateUrlRequest;
+import com.urlshortener.core.dto.ShortUrlResponse;
 import com.urlshortener.core.dto.UpdateUrlRequest;
 import com.urlshortener.core.entity.UrlMapping;
+import com.urlshortener.core.repository.AbTestRepository;
+import com.urlshortener.core.repository.AbVariantRepository;
+import com.urlshortener.core.repository.UrlMappingQueryRepository;
 import com.urlshortener.core.repository.UrlMappingRepository;
 import com.urlshortener.core.util.Base62;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.util.UriComponentsBuilder;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class UrlCoreService {
 
     private final UrlMappingRepository urlRepository;
+    private final UrlMappingQueryRepository urlQueryRepository;
+    private final AbTestRepository abTestRepository;
+    private final AbVariantRepository abVariantRepository;
     private final Base62 base62;
     private final StringRedisTemplate redisTemplate;
+    private final ObjectMapper objectMapper;
 
     // ==========================================
     // URL CRUD OPERATIONS
@@ -32,37 +42,37 @@ public class UrlCoreService {
 
     @Transactional
     public UrlMapping createShortUrl(CreateUrlRequest request, UUID userId) {
-        // Guard Clause: Validate custom alias availability immediately
-        if (request.customAlias() != null && !request.customAlias().isBlank()) {
-            if (urlRepository.existsByShortCode(request.customAlias())) {
-                throw new IllegalArgumentException("Custom alias already in use");
-            }
+
+        String customAlias = request.customAlias() != null ? request.customAlias().trim() : null;
+
+        // Guard Clause: Validate custom alias availability immediately (flat negative space)
+        if (customAlias != null && !customAlias.isBlank() && urlRepository.existsByShortCode(customAlias)) {
+            throw new IllegalArgumentException("Custom alias already in use: " + customAlias);
         }
 
-        String shortCode = (request.customAlias() != null && !request.customAlias().isBlank())
-                ? request.customAlias()
+        String shortCode = (customAlias != null && !customAlias.isBlank())
+                ? customAlias
                 : generateUniqueShortCode();
-
-        String finalDestinationUrl = appendUtmParams(request);
 
         UrlMapping mapping = UrlMapping.builder()
                 .shortCode(shortCode)
-                .destinationUrl(finalDestinationUrl)
-                .tenantId("default")
+                .destinationUrl(request.destinationUrl().trim())
+                .campaignId(request.campaignId())
+                .smartRules(request.smartRules())
                 .userId(userId)
                 .isActive(true)
                 .createdAt(Instant.now())
                 .updatedAt(Instant.now())
                 .build();
-
+        // Note: Redis population is handled lazily by Redirect Service on first click (Cache-Aside with Adaptive TTL)
         return urlRepository.save(mapping);
     }
 
     @Transactional
-    public UrlMapping updatedShortUrl(UUID urlId, UpdateUrlRequest request, UUID userId) {
+    public UrlMapping updateShortUrl(UUID urlId, UpdateUrlRequest request, UUID userId) {
         // Guard Clause 1: Validate entity existence
         UrlMapping mapping = urlRepository.findById(urlId)
-                .orElseThrow(() -> new IllegalArgumentException("Url mapping not found"));
+                .orElseThrow(() -> new IllegalArgumentException("URL mapping not found"));
 
         // Guard Clause 2: Validate ownership
         if (!mapping.getUserId().equals(userId)) {
@@ -71,7 +81,13 @@ public class UrlCoreService {
 
         // Happy Path: Flat updates
         if (request.destinationUrl() != null && !request.destinationUrl().isBlank()) {
-            mapping.setDestinationUrl(request.destinationUrl());
+            mapping.setDestinationUrl(request.destinationUrl().trim());
+        }
+        if (request.campaignId() != null) {
+            mapping.setCampaignId(request.campaignId());
+        }
+        if (request.smartRules() != null) {
+            mapping.setSmartRules(request.smartRules());
         }
         if (request.isActive() != null) {
             mapping.setIsActive(request.isActive());
@@ -82,6 +98,8 @@ public class UrlCoreService {
         mapping.setUpdatedAt(Instant.now());
 
         UrlMapping updated = urlRepository.save(mapping);
+
+//        Evict all keys so subsequent clicks immediately re-fetch updated mapping
         evictRedirectCache(mapping.getShortCode());
 
         return updated;
@@ -103,35 +121,52 @@ public class UrlCoreService {
         evictRedirectCache(mapping.getShortCode());
     }
 
-    public List<UrlMapping> getUserUrls(UUID userId) {
-        return urlRepository.findByUserId(userId);
+    @Transactional
+    public void deleteShortUrlByCode(String shortCode, UUID userId) {
+        UrlMapping mapping = urlRepository.findByShortCode(shortCode)
+                .orElseThrow(() -> new IllegalArgumentException("Url Mapping not found for code: " + shortCode));
+
+        if (!mapping.getUserId().equals(userId)) {
+            throw new IllegalStateException("Unauthorized to delete this url");
+        }
+
+        urlRepository.delete(mapping);
+        evictRedirectCache(mapping.getShortCode());
     }
 
-    public Page<UrlMapping> getUserUrlsPaged(
+    public List<ShortUrlResponse> getUserUrls(UUID userId) {
+        return urlQueryRepository.findUserUrlsWithDetails(userId);
+    }
+
+    public Page<ShortUrlResponse> getUserUrlsPaged(
             UUID userId,
             String search,
             Boolean isActive,
+            UUID campaignId,
             Pageable pageable) {
-        return urlRepository.findByUserIdWithFilters(userId, search, isActive, pageable);
+        return getUserUrlsPaged(userId, search, isActive, campaignId, false, pageable);
     }
 
-    public UrlMapping getUrl(UUID urlId, UUID userId) {
-        // Guard Clause 1: Validate existence
-        UrlMapping mapping = urlRepository.findById(urlId)
+    public Page<ShortUrlResponse> getUserUrlsPaged(
+            UUID userId,
+            String search,
+            Boolean isActive,
+            UUID campaignId,
+            boolean unassignedOnly,
+            Pageable pageable) {
+        String searchPattern = (search != null && !search.trim().isBlank())
+                ? "%" + search.trim().toLowerCase() + "%"
+                : null;
+        return urlQueryRepository.searchUserUrls(userId, searchPattern, isActive, campaignId, unassignedOnly, pageable);
+    }
+
+    public ShortUrlResponse getUrl(UUID urlId, UUID userId) {
+        return urlQueryRepository.findUserUrlWithDetails(urlId, userId)
                 .orElseThrow(() -> new IllegalArgumentException("URL mapping not found"));
-
-        // Guard Clause 2: Validate ownership
-        if (!mapping.getUserId().equals(userId)) {
-            throw new IllegalStateException("Unauthorized to access this URL");
-        }
-
-        // Happy path
-        return mapping;
     }
 
-    public Optional<UrlMapping> getUrlFromShortCode(String shortCode) {
-        // Public lookup by shortcode
-        return urlRepository.findByShortCode(shortCode);
+    public Optional<ShortUrlResponse> getUrlFromShortCode(String shortCode) {
+        return urlQueryRepository.findByShortCodeWithDetails(shortCode);
     }
 
     // ==========================================
@@ -146,29 +181,25 @@ public class UrlCoreService {
         return shortCode;
     }
 
-    private boolean hasUtmParams(CreateUrlRequest request) {
-        return request.utmSource() != null || request.utmCampaign() != null || request.utmMedium() != null;
-    }
-
-    private void evictRedirectCache(String shortCode) {
+    /**
+     * Cleanly evicts the consolidated routing hash for a short code across Redis.
+     * Called whenever a link is updated, deactivated, or deleted.
+     */
+    public void evictRedirectCache(String shortCode) {
         try {
-            redisTemplate.delete("url:redirect:" + shortCode);
-        } catch (Exception ignored) {}
+            redisTemplate.delete("url:" + shortCode);
+            log.info("Evicted consolidated Redis key url:{} for shortCode", shortCode);
+        } catch (Exception e) {
+            log.warn("Failed to evict Redis cache for {}: {}", shortCode, e.getMessage());
+        }
     }
 
-    private String appendUtmParams(CreateUrlRequest request) {
-        if (!hasUtmParams(request)) {
-            return request.destinationUrl();
-        }
-
-        UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(request.destinationUrl());
-
-        if (request.utmSource() != null && !request.utmSource().isBlank()) builder.queryParam("utm_source", request.utmSource());
-        if (request.utmMedium() != null && !request.utmMedium().isBlank()) builder.queryParam("utm_medium", request.utmMedium());
-        if (request.utmCampaign() != null && !request.utmCampaign().isBlank()) builder.queryParam("utm_campaign", request.utmCampaign());
-        if (request.utmTerm() != null && !request.utmTerm().isBlank()) builder.queryParam("utm_term", request.utmTerm());
-        if (request.utmContent() != null && !request.utmContent().isBlank()) builder.queryParam("utm_content", request.utmContent());
-
-        return builder.build().toUriString();
+    /**
+     * Evicts the consolidated routing cache for a short code when an A/B test changes.
+     * The next visitor triggers a fresh joint query reload.
+     */
+    public void evictAbCache(String shortCode) {
+        evictRedirectCache(shortCode);
     }
 }
+

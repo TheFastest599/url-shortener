@@ -6,7 +6,7 @@ import { IconArrowLeft, IconAlertTriangle } from "@tabler/icons-react";
 export function NotFoundPage() {
 	return (
 		<div className="flex min-h-[70vh] flex-col items-center justify-center text-center px-4 py-16">
-			<div className="flex size-14 items-center justify-center rounded-3xl bg-amber-500/10 text-amber-500 mb-4">
+			<div className="flex size-14 items-center justify-center rounded-3xl bg-chart-3/10 text-chart-3 mb-4">
 				<IconAlertTriangle className="size-8" />
 			</div>
 			<h1 className="font-heading text-4xl font-extrabold text-foreground">

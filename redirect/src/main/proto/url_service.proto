@@ -1,5 +1,4 @@
-syntax = "proto3";
-
+  syntax = "proto3";
 
 package com.urlshortener.grpc;
 
@@ -20,6 +19,11 @@ message UrlResponse {
   bool is_active = 2;
   bool is_found = 3;
   string short_code = 4;
+  string ab_rules_json = 5;      // Optional: A/B variant JSON configuration
+  string smart_rules_json = 6;   // Optional: Device and Geo targeting rules
+  string url_id = 7;
+  string campaign_id = 8;
+  string ab_test_id = 9;
 }
 
 message CreateUrlRequest {

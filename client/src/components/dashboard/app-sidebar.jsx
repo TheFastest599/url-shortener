@@ -1,10 +1,11 @@
-import * as React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { ROUTES } from "@/routes/paths";
 import {
 	IconLayoutDashboard,
 	IconLink,
 	IconAdjustments,
+	IconFlask,
+	IconChartBar,
 } from "@tabler/icons-react";
 import { Badge } from "@/components/ui/badge";
 
@@ -31,10 +32,22 @@ export function SidebarNavContent({
 			badge: totalLinksCount > 0 ? totalLinksCount : null,
 		},
 		{
+			title: "A/B Experiments",
+			url: ROUTES.AB_TESTING,
+			icon: IconFlask,
+			isActive: location.pathname === ROUTES.AB_TESTING,
+		},
+		{
 			title: "Campaigns & UTM",
 			url: ROUTES.CAMPAIGNS,
 			icon: IconAdjustments,
 			isActive: location.pathname === ROUTES.CAMPAIGNS,
+		},
+		{
+			title: "Analytics Hub",
+			url: ROUTES.ANALYTICS,
+			icon: IconChartBar,
+			isActive: location.pathname.startsWith("/analytics"),
 		},
 	];
 

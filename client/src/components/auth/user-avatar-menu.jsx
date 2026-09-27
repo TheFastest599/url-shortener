@@ -38,7 +38,7 @@ export function UserAvatarMenu({ className = "" }) {
 					>
 						<div className="relative flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold shadow-xs">
 							{initials}
-							<span className="absolute bottom-0 right-0 size-2 rounded-full bg-emerald-500 ring-2 ring-background" />
+							<span className="absolute bottom-0 right-0 size-2 rounded-full bg-chart-2 ring-2 ring-background" />
 						</div>
 						<span className="hidden sm:inline-block max-w-[90px] truncate text-xs font-medium text-foreground">
 							{user.username || "User"}
@@ -79,7 +79,7 @@ export function UserAvatarMenu({ className = "" }) {
 						onClick={() => navigate(ROUTES.DASHBOARD)}
 						className="flex items-center gap-2.5 cursor-pointer text-xs"
 					>
-						<IconLayoutDashboard className="size-4 text-cyan-500" />
+						<IconLayoutDashboard className="size-4 text-chart-2" />
 						<span>Dashboard</span>
 					</DropdownMenuItem>
 				</div>

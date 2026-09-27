@@ -8,6 +8,9 @@ logging:
     root: INFO
     com.urlshortener.redirect: DEBUG
 
+# ==============================================================================
+# DEFAULT PROFILE: Local Development (Host Machine)
+# ==============================================================================
 spring:
   application:
     name: redirect-service
@@ -26,3 +29,27 @@ grpc:
     core-service:
       address: 'static://${CORE_GRPC_HOST:localhost}:${CORE_GRPC_PORT:9090}'
       negotiation-type: plaintext
+      enable-keep-alive: true
+      keep-alive-without-calls: true
+      keep-alive-time: 30s
+      keep-alive-timeout: 10s
+
+---
+# ==============================================================================
+# DOCKER PROFILE: Production Container Network (Activated via SPRING_PROFILES_ACTIVE=docker)
+# ==============================================================================
+spring:
+  config:
+    activate:
+      on-profile: docker
+  data:
+    redis:
+      host: redis
+      port: ${REDIS_PORT:6379}
+  kafka:
+    bootstrap-servers: kafka:29092
+
+grpc:
+  client:
+    core-service:
+      address: 'static://core:${CORE_GRPC_PORT:9090}'

@@ -70,3 +70,5 @@ export function OAuthCallbackPage() {
 		</div>
 	);
 }
+
+export default OAuthCallbackPage;

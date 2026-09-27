@@ -46,10 +46,49 @@ export const getReferrers = async (shortCode, includeBots = false, limit = 10) =
 	});
 };
 
+/**
+ * Enriched analytics endpoints
+ */
+export const getCampaignAnalytics = async (
+	campaignId,
+	days = 30,
+	includeBots = false,
+	timezone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC"
+) => {
+	return apiHelpers.get(`/api/v1/analytics/campaigns/${campaignId}`, {
+		params: { days, includeBots, timezone },
+	});
+};
+
+export const getAbTestAnalytics = async (
+	identifier,
+	days = 30,
+	includeBots = false,
+	timezone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC"
+) => {
+	return apiHelpers.get(`/api/v1/analytics/ab-tests/${identifier}`, {
+		params: { days, includeBots, timezone },
+	});
+};
+
+export const getUrlAnalyticsById = async (
+	urlId,
+	days = 30,
+	includeBots = false,
+	timezone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC"
+) => {
+	return apiHelpers.get(`/api/v1/analytics/urls/${urlId}`, {
+		params: { days, includeBots, timezone },
+	});
+};
+
 export default {
 	getOverview,
 	getTimeSeries,
 	getCountries,
 	getBrowsers,
 	getReferrers,
+	getCampaignAnalytics,
+	getAbTestAnalytics,
+	getUrlAnalyticsById,
 };

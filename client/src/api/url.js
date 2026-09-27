@@ -8,6 +8,10 @@ export const getMyUrls = async (params = {}) => {
 	return apiHelpers.get("/api/v1/urls", { params });
 };
 
+export const getUrlById = async (id) => {
+	return apiHelpers.get(`/api/v1/urls/${id}`);
+};
+
 export const getUrlByShortCode = async (shortCode) => {
 	return apiHelpers.get(`/api/v1/urls/code/${shortCode}`);
 };
@@ -35,10 +39,17 @@ export const deleteUrl = async (id) => {
 	return apiHelpers.delete(`/api/v1/urls/${id}`);
 };
 
+export const deleteUrlByCode = async (shortCode) => {
+	return apiHelpers.delete(`/api/v1/urls/code/${shortCode}`);
+};
+
 export default {
 	createShortUrl,
 	getMyUrls,
 	getUrlByShortCode,
+	getUrlByCode,
+	updateUrlByCode,
 	updateUrl,
 	deleteUrl,
+	deleteUrlByCode,
 };

@@ -2,9 +2,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
 	createShortUrl,
 	deleteUrl,
+	deleteUrlByCode,
 	getMyUrls,
+	getUrlById,
 	getUrlByShortCode,
 	updateUrl,
+	updateUrlByCode,
 } from "@/api/url";
 import { queryKeys } from "./queryKeys";
 
@@ -12,19 +15,26 @@ import { queryKeys } from "./queryKeys";
 // 1. QUERY OPTIONS (URLS)
 // ==========================================
 export const urlQueryOptions = {
-	list: (params = {}, { enabled = true } = {}) => ({
-		queryKey: queryKeys.urls.list(params),
-		queryFn: async () => {
-			const response = await getMyUrls(params);
-			return response || [];
-		},
-		enabled,
-		staleTime: 1000 * 60 * 2, // 2 minutes
-	}),
+	list: (params = {}, { enabled = true } = {}) => {
+		const queryParams = {
+			page: 0,
+			size: 10,
+			...params,
+		};
+		return {
+			queryKey: queryKeys.urls.list(queryParams),
+			queryFn: async () => {
+				const response = await getMyUrls(queryParams);
+				return response || [];
+			},
+			enabled,
+			staleTime: 1000 * 60 * 2, // 2 minutes
+		};
+	},
 
 	detail: (id, { enabled = true } = {}) => ({
 		queryKey: queryKeys.urls.detail(id),
-		queryFn: async () => updateUrl(id),
+		queryFn: async () => getUrlById(id),
 		enabled: enabled && !!id,
 		staleTime: 1000 * 60 * 5,
 	}),
@@ -46,6 +56,9 @@ export const urlMutationOptions = {
 		onSuccess: async (data, variables, context) => {
 			await queryClient.invalidateQueries({
 				queryKey: queryKeys.urls.all,
+			});
+			await queryClient.invalidateQueries({
+				queryKey: queryKeys.campaigns.all,
 			});
 			onSuccess?.(data, variables, context);
 		},
@@ -93,6 +106,20 @@ export const urlMutationOptions = {
 		},
 		onError,
 	}),
+
+	deleteByCode: (queryClient, { onSuccess, onError } = {}) => ({
+		mutationFn: (shortCode) => deleteUrlByCode(shortCode),
+		onSuccess: async (data, shortCode, context) => {
+			await queryClient.invalidateQueries({
+				queryKey: queryKeys.urls.lists(),
+			});
+			queryClient.removeQueries({
+				queryKey: queryKeys.urls.byCode(shortCode),
+			});
+			onSuccess?.(data, shortCode, context);
+		},
+		onError,
+	}),
 };
 
 // ==========================================
@@ -106,6 +133,10 @@ export function useUrlByCodeQuery(shortCode, options = {}) {
 	return useQuery(urlQueryOptions.byCode(shortCode, options));
 }
 
+export function useUrlByIdQuery(id, options = {}) {
+	return useQuery(urlQueryOptions.detail(id, options));
+}
+
 export function useCreateUrlMutation(options = {}) {
 	const queryClient = useQueryClient();
 	return useMutation(urlMutationOptions.create(queryClient, options));
@@ -116,7 +147,32 @@ export function useDeleteUrlMutation(options = {}) {
 	return useMutation(urlMutationOptions.delete(queryClient, options));
 }
 
+export function useDeleteUrlByCodeMutation(options = {}) {
+	const queryClient = useQueryClient();
+	return useMutation(urlMutationOptions.deleteByCode(queryClient, options));
+}
+
 export function useUpdateUrlByCodeMutation(shortCode, options = {}) {
 	const queryClient = useQueryClient();
-	return useMutation(urlMutationOptions.updateByCode(queryClient, shortCode, options));
+	return useMutation(
+		urlMutationOptions.updateByCode(queryClient, shortCode, options),
+	);
 }
+
+export function useUpdateUrlMutation(options = {}) {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (payload) => updateUrl(payload.id, payload),
+		onSuccess: async (data, variables, context) => {
+			await queryClient.invalidateQueries({
+				queryKey: queryKeys.urls.all,
+			});
+			await queryClient.invalidateQueries({
+				queryKey: queryKeys.campaigns.all,
+			});
+			options.onSuccess?.(data, variables, context);
+		},
+		onError: options.onError,
+	});
+}
+

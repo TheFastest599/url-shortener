@@ -1,12 +1,9 @@
-import * as React from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import {
 	IconLink,
 	IconChartBar,
 	IconBolt,
 	IconShieldCheck,
-	IconArrowUpRight,
-	IconRobot,
 } from "@tabler/icons-react";
 
 export function QuickStatCards({
@@ -36,27 +33,27 @@ export function QuickStatCards({
 			value: totalClicks.toLocaleString(),
 			subtitle: `${humanClicks} human (${humanRatio}%) · ${botClicks} bots`,
 			icon: IconChartBar,
-			color: "text-emerald-500",
-			bg: "bg-emerald-500/10",
-			border: "border-emerald-500/20",
+			color: "text-chart-2",
+			bg: "bg-chart-2/10",
+			border: "border-chart-2/20",
 		},
 		{
 			title: "Redirection Latency",
 			value: "< 15 ms",
 			subtitle: "Redis Cache-Aside + WebFlux",
 			icon: IconBolt,
-			color: "text-amber-500",
-			bg: "bg-amber-500/10",
-			border: "border-amber-500/20",
+			color: "text-chart-3",
+			bg: "bg-chart-3/10",
+			border: "border-chart-3/20",
 		},
 		{
 			title: "Security & Guard",
 			value: "100%",
 			subtitle: "JWT Bearer + HttpOnly RTR",
 			icon: IconShieldCheck,
-			color: "text-blue-500",
-			bg: "bg-blue-500/10",
-			border: "border-blue-500/20",
+			color: "text-chart-1",
+			bg: "bg-chart-1/10",
+			border: "border-chart-1/20",
 		},
 	];
 

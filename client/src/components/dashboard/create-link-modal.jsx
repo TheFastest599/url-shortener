@@ -9,60 +9,115 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useCreateUrlMutation } from "@/queries";
+import {
+	Field,
+	FieldLabel,
+	FieldDescription,
+	FieldError,
+} from "@/components/ui/field";
+import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useCreateUrlMutation, useCampaignsQuery } from "@/queries";
 import {
 	IconLink,
 	IconSparkles,
-	IconAdjustments,
 	IconCheck,
 	IconCopy,
-	IconArrowRight,
 	IconQrcode,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
+import { UtmEditor } from "@/components/links/UtmEditor";
+import { getShortUrl, getShortDomainPrefix } from "@/config/constants";
+import {
+	validateUrl,
+	validateCustomAlias,
+	parseApiError,
+	showErrorToast,
+} from "@/lib/errorHandler";
 
 export function CreateLinkModal({
 	open,
 	onOpenChange,
 	onOpenQrModal,
 	initialDestinationUrl = "",
+	initialCampaignId = "",
 }) {
-	const [destinationUrl, setDestinationUrl] = React.useState(initialDestinationUrl);
-	const [customAlias, setCustomAlias] = React.useState("");
-	const [showUtm, setShowUtm] = React.useState(false);
-	const [utmSource, setUtmSource] = React.useState("");
-	const [utmMedium, setUtmMedium] = React.useState("");
-	const [utmCampaign, setUtmCampaign] = React.useState("");
-	const [utmTerm, setUtmTerm] = React.useState("");
-	const [utmContent, setUtmContent] = React.useState("");
+	const [campaignSearch, setCampaignSearch] = React.useState("");
+	const [debouncedCampaignSearch, setDebouncedCampaignSearch] =
+		React.useState("");
 
 	React.useEffect(() => {
-		if (initialDestinationUrl && open) {
-			setDestinationUrl(initialDestinationUrl);
+		const timer = setTimeout(() => {
+			setDebouncedCampaignSearch(campaignSearch);
+		}, 250);
+		return () => clearTimeout(timer);
+	}, [campaignSearch]);
+
+	const { data: campaignsData, isLoading: isCampaignsLoading } =
+		useCampaignsQuery(
+			{
+				page: 0,
+				size: 20,
+				search: debouncedCampaignSearch.trim() || undefined,
+				sortBy: "name",
+				direction: "ASC",
+			},
+			{ enabled: !!open },
+		);
+
+	const campaigns = Array.isArray(campaignsData)
+		? campaignsData
+		: campaignsData?.content || [];
+
+	const [destinationUrl, setDestinationUrl] = React.useState(
+		initialDestinationUrl,
+	);
+	const [prevInitialUrl, setPrevInitialUrl] = React.useState(
+		initialDestinationUrl,
+	);
+
+	if (initialDestinationUrl !== prevInitialUrl) {
+		setPrevInitialUrl(initialDestinationUrl);
+		setDestinationUrl(initialDestinationUrl);
+	}
+
+	const [customAlias, setCustomAlias] = React.useState(
+		initialCampaignId ? "" : "",
+	);
+	const [selectedCampaignId, setSelectedCampaignId] = React.useState(
+		initialCampaignId || "",
+	);
+
+	React.useEffect(() => {
+		if (open && initialCampaignId) {
+			setSelectedCampaignId(initialCampaignId);
 		}
-	}, [initialDestinationUrl, open]);
+	}, [open, initialCampaignId]);
 
 	const [createdResult, setCreatedResult] = React.useState(null);
 	const [copied, setCopied] = React.useState(false);
+	const [clientErrors, setClientErrors] = React.useState({});
 
 	const createUrlMutation = useCreateUrlMutation({
 		onSuccess: (data) => {
 			setCreatedResult(data);
+			setClientErrors({});
 			toast.success("Short URL created successfully!");
 		},
 	});
 
+	const { fieldErrors: serverFieldErrors } = parseApiError(
+		createUrlMutation.error,
+	);
+
 	const handleReset = () => {
 		setDestinationUrl("");
 		setCustomAlias("");
-		setShowUtm(false);
-		setUtmSource("");
-		setUtmMedium("");
-		setUtmCampaign("");
-		setUtmTerm("");
-		setUtmContent("");
+		setSelectedCampaignId(initialCampaignId || "");
+		setCampaignSearch("");
+		setDebouncedCampaignSearch("");
 		setCreatedResult(null);
 		setCopied(false);
+		setClientErrors({});
 	};
 
 	const handleDialogClose = (newOpen) => {
@@ -74,34 +129,37 @@ export function CreateLinkModal({
 
 	const handleSubmit = (e) => {
 		e.preventDefault();
-		if (!destinationUrl.trim()) {
-			toast.error("Destination URL is required");
+
+		const urlValidation = validateUrl(destinationUrl);
+		const aliasValidation = validateCustomAlias(customAlias);
+
+		const newErrors = {};
+		if (!urlValidation.isValid) {
+			newErrors.destinationUrl = urlValidation.error;
+		}
+		if (!aliasValidation.isValid) {
+			newErrors.customAlias = aliasValidation.error;
+		}
+
+		if (Object.keys(newErrors).length > 0) {
+			setClientErrors(newErrors);
+			const firstError = Object.values(newErrors)[0];
+			toast.error("Validation Error", { description: firstError });
 			return;
 		}
-
-		let formattedUrl = destinationUrl.trim();
-		if (
-			!formattedUrl.startsWith("http://") &&
-			!formattedUrl.startsWith("https://")
-		) {
-			formattedUrl = "https://" + formattedUrl;
-		}
+		setClientErrors({});
 
 		const payload = {
-			destinationUrl: formattedUrl,
+			destinationUrl: urlValidation.formattedUrl,
 			customAlias: customAlias.trim() || undefined,
-			utmSource: utmSource.trim() || undefined,
-			utmMedium: utmMedium.trim() || undefined,
-			utmCampaign: utmCampaign.trim() || undefined,
-			utmTerm: utmTerm.trim() || undefined,
-			utmContent: utmContent.trim() || undefined,
+			campaignId: selectedCampaignId || undefined,
 		};
 
 		createUrlMutation.mutate(payload);
 	};
 
 	const shortUrlHref = createdResult
-		? `http://localhost:8080/r/${createdResult.shortCode}`
+		? getShortUrl(createdResult.shortCode)
 		: "";
 
 	const handleCopy = () => {
@@ -139,13 +197,13 @@ export function CreateLinkModal({
 				{createdResult ? (
 					/* Success View */
 					<div className="space-y-4 py-2">
-						<div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 space-y-3">
+						<div className="rounded-xl border border-chart-2/30 bg-chart-2/10 p-4 space-y-3">
 							<div className="flex items-center justify-between">
-								<span className="text-xs font-semibold text-emerald-500 uppercase tracking-wider">
+								<span className="text-xs font-semibold text-chart-2 uppercase tracking-wider">
 									Active Short URL
 								</span>
-								<span className="inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-mono font-medium">
-									<span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+								<span className="inline-flex items-center gap-1.5 text-xs text-chart-2 font-mono font-medium">
+									<span className="size-2 rounded-full bg-chart-2 animate-pulse" />
 									Live on Gateway
 								</span>
 							</div>
@@ -161,7 +219,7 @@ export function CreateLinkModal({
 									className="h-8 gap-1.5 text-xs cursor-pointer shrink-0"
 								>
 									{copied ? (
-										<IconCheck className="size-3.5 text-emerald-500" />
+										<IconCheck className="size-3.5 text-chart-2" />
 									) : (
 										<IconCopy className="size-3.5" />
 									)}
@@ -204,130 +262,123 @@ export function CreateLinkModal({
 					/* Creation Form */
 					<form onSubmit={handleSubmit} className="space-y-4 py-2">
 						{/* Destination URL */}
-						<div className="space-y-1.5">
-							<label className="text-xs font-medium text-foreground">
+						<Field>
+							<FieldLabel>
 								Destination URL{" "}
 								<span className="text-destructive">*</span>
-							</label>
+							</FieldLabel>
 							<Input
 								type="text"
 								value={destinationUrl}
-								onChange={(e) =>
-									setDestinationUrl(e.target.value)
-								}
+								onChange={(e) => {
+									setDestinationUrl(e.target.value);
+									if (clientErrors.destinationUrl) {
+										setClientErrors((prev) => ({
+											...prev,
+											destinationUrl: null,
+										}));
+									}
+								}}
 								placeholder="https://example.com/long-landing-page"
 								required
+								aria-invalid={Boolean(
+									clientErrors.destinationUrl ||
+										serverFieldErrors.destinationUrl,
+								)}
 								className="h-9.5 text-xs sm:text-sm bg-muted/30"
 							/>
-						</div>
+							<FieldError>
+								{clientErrors.destinationUrl ||
+									serverFieldErrors.destinationUrl}
+							</FieldError>
+						</Field>
 
 						{/* Custom Alias */}
-						<div className="space-y-1.5">
+						<Field>
 							<div className="flex items-center justify-between text-xs">
-								<label className="font-medium text-foreground">
+								<FieldLabel>
 									Custom Alias (Optional)
-								</label>
-								<span className="text-[11px] text-muted-foreground">
+								</FieldLabel>
+								<FieldDescription>
 									Leave blank for auto Base62
-								</span>
+								</FieldDescription>
 							</div>
-							<div className="flex items-center rounded-lg border border-border bg-muted/30 px-3 h-9.5 focus-within:ring-2 focus-within:ring-ring">
+							<div
+								className={`flex items-center rounded-lg border bg-muted/30 px-3 h-9.5 focus-within:ring-2 focus-within:ring-ring ${
+									Boolean(
+										clientErrors.customAlias ||
+											serverFieldErrors.customAlias,
+									)
+										? "border-destructive ring-2 ring-destructive/20"
+										: "border-border"
+								}`}
+							>
 								<span className="text-xs font-mono text-muted-foreground shrink-0 select-none">
-									/r/
+									{getShortDomainPrefix()}
 								</span>
 								<input
 									type="text"
 									value={customAlias}
-									onChange={(e) =>
+									maxLength={64}
+									onChange={(e) => {
 										setCustomAlias(
 											e.target.value
 												.toLowerCase()
 												.replace(/[^a-z0-9_-]/g, ""),
-										)
-									}
-									placeholder="my-campaign-slug"
+										);
+										if (clientErrors.customAlias) {
+											setClientErrors((prev) => ({
+												...prev,
+												customAlias: null,
+											}));
+										}
+									}}
+									placeholder="my-slug"
 									className="w-full bg-transparent pl-1 text-xs sm:text-sm font-mono text-foreground outline-none"
 								/>
 							</div>
+							<FieldError>
+								{clientErrors.customAlias ||
+									serverFieldErrors.customAlias}
+							</FieldError>
+						</Field>
+
+						{/* Optional Campaign Assignment */}
+						<div className="space-y-1.5">
+							<label className="text-xs font-medium text-foreground">
+								Assign to Campaign (Optional)
+							</label>
+							<SearchCombobox
+								items={[
+									{
+										value: "",
+										label: "No Campaign (Standalone URL)",
+										description: "Leave unattached",
+									},
+									...campaigns.map((c) => ({
+										value: c.id,
+										label: c.name,
+										description: c.description || "",
+										badge: "Campaign",
+									})),
+								]}
+								value={selectedCampaignId}
+								onValueChange={(val) =>
+									setSelectedCampaignId(val || "")
+								}
+								placeholder="Search campaigns..."
+								emptyMessage="No campaigns found."
+								onSearchChange={setCampaignSearch}
+								isLoading={isCampaignsLoading}
+								remote={true}
+							/>
 						</div>
 
-						{/* Collapsible UTM Builder */}
-						<div className="rounded-xl border border-border/60 bg-muted/20 p-3 space-y-3">
-							<button
-								type="button"
-								onClick={() => setShowUtm(!showUtm)}
-								className="flex w-full items-center justify-between text-xs font-medium text-foreground hover:text-primary transition-colors cursor-pointer"
-							>
-								<span className="flex items-center gap-1.5">
-									<IconAdjustments className="size-3.5" />
-									<span>UTM Campaign Parameters</span>
-								</span>
-								<span className="text-[11px] text-muted-foreground">
-									{showUtm ? "Hide" : "Add Tags"}
-								</span>
-							</button>
-
-							{showUtm && (
-								<div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
-									<div className="space-y-1">
-										<label className="text-[11px] text-muted-foreground">
-											UTM Source
-										</label>
-										<Input
-											type="text"
-											value={utmSource}
-											onChange={(e) =>
-												setUtmSource(e.target.value)
-											}
-											placeholder="e.g. twitter, newsletter"
-											className="h-8 text-xs bg-background"
-										/>
-									</div>
-									<div className="space-y-1">
-										<label className="text-[11px] text-muted-foreground">
-											UTM Medium
-										</label>
-										<Input
-											type="text"
-											value={utmMedium}
-											onChange={(e) =>
-												setUtmMedium(e.target.value)
-											}
-											placeholder="e.g. cpc, email, social"
-											className="h-8 text-xs bg-background"
-										/>
-									</div>
-									<div className="space-y-1">
-										<label className="text-[11px] text-muted-foreground">
-											UTM Campaign
-										</label>
-										<Input
-											type="text"
-											value={utmCampaign}
-											onChange={(e) =>
-												setUtmCampaign(e.target.value)
-											}
-											placeholder="e.g. spring_launch"
-											className="h-8 text-xs bg-background"
-										/>
-									</div>
-									<div className="space-y-1">
-										<label className="text-[11px] text-muted-foreground">
-											UTM Content / Term
-										</label>
-										<Input
-											type="text"
-											value={utmContent}
-											onChange={(e) =>
-												setUtmContent(e.target.value)
-											}
-											placeholder="e.g. banner_top"
-											className="h-8 text-xs bg-background"
-										/>
-									</div>
-								</div>
-							)}
-						</div>
+						{/* Unified Live UTM Editor */}
+						<UtmEditor
+							url={destinationUrl}
+							onChange={setDestinationUrl}
+						/>
 
 						<DialogFooter className="pt-2">
 							<Button

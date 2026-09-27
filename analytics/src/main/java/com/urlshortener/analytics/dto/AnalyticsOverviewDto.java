@@ -14,6 +14,8 @@ public record AnalyticsOverviewDto(
         List<StatMetricDto> topBrowsers,
         List<StatMetricDto> topOperatingSystems,
         List<StatMetricDto> topDevices,
-        List<StatMetricDto> topReferrers
-) {
-}
+        List<StatMetricDto> topReferrers,
+        List<StatMetricDto> variantBreakdown,
+        List<StatMetricDto> topUtmSources,
+        List<StatMetricDto> topUtmCampaigns
+) {}

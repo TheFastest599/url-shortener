@@ -72,14 +72,14 @@ export function ThemeToggle({ variant = "outline", size = "icon-sm", className =
 								<IconDeviceDesktop className="size-4" />
 								<span
 									className={`absolute -bottom-0.5 -right-0.5 size-1.5 rounded-full ring-1 ring-background ${
-										isDarkActive ? "bg-primary" : "bg-amber-400"
+										isDarkActive ? "bg-primary" : "bg-chart-3"
 									}`}
 								/>
 							</div>
 						) : isDarkActive ? (
 							<IconMoon className="size-4 text-primary" />
 						) : (
-							<IconSun className="size-4 text-amber-500" />
+							<IconSun className="size-4 text-chart-3" />
 						)}
 					</Button>
 				}
@@ -91,7 +91,7 @@ export function ThemeToggle({ variant = "outline", size = "icon-sm", className =
 					className="flex items-center justify-between cursor-pointer text-xs"
 				>
 					<span className="flex items-center gap-2">
-						<IconSun className="size-3.5 text-amber-500" />
+						<IconSun className="size-3.5 text-chart-3" />
 						<span>Light</span>
 					</span>
 					{theme === "light" && <IconCheck className="size-3.5 text-primary" />}

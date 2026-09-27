@@ -94,7 +94,7 @@ export function ProfilePage() {
 					<div className="flex flex-col sm:flex-row sm:items-center gap-5 sm:gap-6">
 						<div className="relative flex size-20 sm:size-22 shrink-0 items-center justify-center rounded-3xl bg-primary text-primary-foreground text-2xl sm:text-3xl font-bold shadow-md">
 							{initials}
-							<span className="absolute bottom-1 right-1 size-3.5 rounded-full bg-emerald-500 ring-4 ring-card" />
+							<span className="absolute bottom-1 right-1 size-3.5 rounded-full bg-chart-2 ring-4 ring-card" />
 						</div>
 
 						<div className="space-y-1.5 flex-1 min-w-0">
@@ -108,8 +108,8 @@ export function ProfilePage() {
 							</div>
 							<p className="text-sm text-muted-foreground truncate">{user.email}</p>
 							<div className="flex items-center gap-2 pt-1">
-								<span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-									<span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+								<span className="inline-flex items-center gap-1.5 rounded-full bg-chart-2/10 px-2.5 py-0.5 text-[11px] font-medium text-chart-2">
+									<span className="size-1.5 rounded-full bg-chart-2 animate-pulse" />
 									Active Session
 								</span>
 							</div>
@@ -203,7 +203,7 @@ export function ProfilePage() {
 									<IconClock className="size-4 text-primary" />
 									<span className="font-medium">Token Refresh</span>
 								</div>
-								<span className="font-semibold text-emerald-600 dark:text-emerald-400 font-mono text-[11px]">
+								<span className="font-semibold text-chart-2 font-mono text-[11px]">
 									HttpOnly Cookie (7d)
 								</span>
 							</div>

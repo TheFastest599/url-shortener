@@ -1,48 +1,161 @@
 import * as React from "react";
-import { Link, useOutletContext } from "react-router-dom";
-import { useUrlsQuery } from "@/queries";
-import { ROUTES } from "@/routes/paths";
-import { Button } from "@/components/ui/button";
+import { useOutletContext, useSearchParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+	useUrlsQuery,
+	useCampaignsQuery,
+	useCreateCampaignMutation,
+	useUpdateCampaignMutation,
+	useDeleteCampaignMutation,
+	useCampaignUrlsQuery,
+} from "@/queries";
+import { queryKeys } from "@/queries/queryKeys";
+import { updateUrl } from "@/api/url";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
-import {
-	IconAdjustments,
-	IconPlus,
-	IconCopy,
-	IconCheck,
-	IconExternalLink,
-	IconChartBar,
-	IconTag,
-	IconBrandTwitter,
-	IconShare,
-	IconSearch,
-} from "@tabler/icons-react";
+import { IconSearch } from "@tabler/icons-react";
 import { toast } from "sonner";
+import { showErrorToast } from "@/lib/errorHandler";
+
+import {
+	CampaignHeader,
+	CampaignStatsCards,
+	CampaignsTable,
+	CampaignUtmTable,
+	CreateCampaignModal,
+	EditCampaignModal,
+	CampaignLinksModal,
+	CampaignAnalyticsModal,
+	UtmBuilderModal,
+	DeleteCampaignDialog,
+} from "@/components/campaigns";
+
+/* Hallmark · page: Campaigns & Attribution Workbench · decomposed into components */
 
 export function CampaignsPage() {
+	const queryClient = useQueryClient();
 	const { onOpenCreateModal } = useOutletContext() || {};
-	const { data: serverUrls = [] } = useUrlsQuery();
-	const urls = Array.isArray(serverUrls) ? serverUrls : serverUrls?.content || [];
-	const [searchQuery, setSearchQuery] = React.useState("");
-	const [copiedId, setCopiedId] = React.useState(null);
+	const [activeTab, setActiveTab] = React.useState("campaigns"); // "campaigns" | "utm_links"
+	
+	// Server-side search & pagination for CampaignsTable
+	const [campaignPage, setCampaignPage] = React.useState(1);
+	const [campaignSearch, setCampaignSearch] = React.useState("");
+	const [debouncedCampaignSearch, setDebouncedCampaignSearch] = React.useState("");
+	const campaignPageSize = 20;
+
+	React.useEffect(() => {
+		const timer = setTimeout(() => {
+			setDebouncedCampaignSearch(campaignSearch.trim());
+			setCampaignPage(1);
+		}, 300);
+		return () => clearTimeout(timer);
+	}, [campaignSearch]);
+
+	// Modals state
+	const [isNewCampaignOpen, setIsNewCampaignOpen] = React.useState(false);
 	const [isUtmBuilderOpen, setIsUtmBuilderOpen] = React.useState(false);
+	const [utmSearchQuery, setUtmSearchQuery] = React.useState("");
+	const [searchParams] = useSearchParams();
+	const [selectedCampaignId, setSelectedCampaignId] = React.useState(
+		() => searchParams.get("id") || null
+	);
+	const [selectedCampaignForAnalytics, setSelectedCampaignForAnalytics] = React.useState(null);
+	const [campaignToEdit, setCampaignToEdit] = React.useState(null);
+	const [campaignToDelete, setCampaignToDelete] = React.useState(null);
 
-	// UTM Builder state
-	const [targetUrl, setTargetUrl] = React.useState("https://mysite.com/product");
-	const [utmSource, setUtmSource] = React.useState("twitter");
-	const [utmMedium, setUtmMedium] = React.useState("social");
-	const [utmCampaign, setUtmCampaign] = React.useState("summer_launch");
+	// Backend Queries
+	const {
+		data: campaignsData,
+		isLoading: campaignsLoading,
+		isFetching: campaignsFetching,
+		refetch: refetchCampaigns,
+	} = useCampaignsQuery({
+		page: campaignPage - 1,
+		size: campaignPageSize,
+		search: debouncedCampaignSearch || undefined,
+		sortBy: "createdAt",
+		direction: "DESC",
+	});
 
-	// Parse UTM parameters from destination URLs
+	const campaigns = React.useMemo(() => {
+		return Array.isArray(campaignsData) ? campaignsData : campaignsData?.content || [];
+	}, [campaignsData]);
+
+	const totalCampaigns = campaignsData?.totalElements ?? campaigns.length;
+	const totalCampaignPages = Math.max(1, campaignsData?.totalPages || 1);
+
+	const { data: serverUrls = [] } = useUrlsQuery(
+		{ page: 0, size: 100 },
+		{ enabled: activeTab === "utm_links" || isUtmBuilderOpen || !!selectedCampaignId }
+	);
+	const urls = React.useMemo(() => {
+		return Array.isArray(serverUrls) ? serverUrls : serverUrls?.content || [];
+	}, [serverUrls]);
+
+	const selectedCampaignForUrls = React.useMemo(() => {
+		if (!selectedCampaignId) return null;
+		return campaigns.find((c) => c.id === selectedCampaignId) || null;
+	}, [campaigns, selectedCampaignId]);
+
+	// Campaign URL drill-down
+	const { data: campaignUrls = [], isLoading: campaignUrlsLoading } = useCampaignUrlsQuery(
+		selectedCampaignForUrls?.id,
+		{ enabled: !!selectedCampaignForUrls?.id }
+	);
+
+
+	// URLs available to be attached
+	// All URLs are shown, but URLs already assigned to a campaign (either this one or another)
+	// are clearly presented as disabled and unselectable.
+	const unassignedUrlItems = React.useMemo(() => {
+		const targetCampaignId = selectedCampaignForUrls?.id;
+
+		const items = urls.map((u) => {
+			const isInThisCampaign =
+				Boolean(targetCampaignId && u.campaignId === targetCampaignId) ||
+				campaignUrls.some((cu) => cu.id === u.id || cu.shortCode === u.shortCode);
+			const isInOtherCampaign =
+				Boolean(u.campaignId && targetCampaignId && u.campaignId !== targetCampaignId) ||
+				Boolean(u.campaignId && !targetCampaignId);
+
+			if (isInThisCampaign) {
+				return {
+					value: u.id,
+					label: u.shortCode,
+					sub: u.destinationUrl,
+					badge: "In this campaign",
+					disabled: true,
+					disabledReason: "Already in this campaign",
+				};
+			}
+
+			if (isInOtherCampaign) {
+				return {
+					value: u.id,
+					label: u.shortCode,
+					sub: u.destinationUrl,
+					badge: `In "${u.campaignName || "Other Campaign"}"`,
+					disabled: true,
+					disabledReason: `In "${u.campaignName || "Other Campaign"}"`,
+				};
+			}
+
+			return {
+				value: u.id,
+				label: u.shortCode,
+				sub: u.destinationUrl,
+				badge: u.isAbTest ? "A/B Test" : "Available",
+				disabled: false,
+			};
+		});
+
+		// Sort so unassigned/available links appear first, followed by disabled ones
+		return items.sort((a, b) => {
+			if (a.disabled === b.disabled) return 0;
+			return a.disabled ? 1 : -1;
+		});
+	}, [urls, campaignUrls, selectedCampaignForUrls]);
+
+	// Parse UTM links
 	const campaignLinks = React.useMemo(() => {
 		return urls
 			.map((url) => {
@@ -72,10 +185,10 @@ export function CampaignsPage() {
 			.filter((l) => l.hasUtm);
 	}, [urls]);
 
-	// Filter by search
-	const filteredCampaigns = React.useMemo(() => {
-		if (!searchQuery.trim()) return campaignLinks;
-		const q = searchQuery.toLowerCase().trim();
+	// Filter UTM links
+	const filteredUtmLinks = React.useMemo(() => {
+		if (!utmSearchQuery.trim()) return campaignLinks;
+		const q = utmSearchQuery.toLowerCase().trim();
 		return campaignLinks.filter(
 			(c) =>
 				c.utmCampaign.toLowerCase().includes(q) ||
@@ -83,316 +196,193 @@ export function CampaignsPage() {
 				c.utmMedium.toLowerCase().includes(q) ||
 				c.shortCode.toLowerCase().includes(q)
 		);
-	}, [campaignLinks, searchQuery]);
+	}, [campaignLinks, utmSearchQuery]);
 
-	// Unique campaign names count
-	const uniqueCampaigns = new Set(campaignLinks.map((c) => c.utmCampaign)).size;
+	// Mutations
+	const createMutation = useCreateCampaignMutation({
+		onSuccess: async () => {
+			setIsNewCampaignOpen(false);
+			await queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.all });
+			refetchCampaigns();
+		},
+	});
 
-	const handleCopy = (text, id) => {
-		navigator.clipboard.writeText(text);
-		setCopiedId(id);
-		toast.success("Copied to clipboard");
-		setTimeout(() => setCopiedId(null), 2000);
+	const updateMutation = useUpdateCampaignMutation({
+		onSuccess: async () => {
+			setCampaignToEdit(null);
+			await queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.all });
+			refetchCampaigns();
+		},
+	});
+
+	const deleteMutation = useDeleteCampaignMutation({
+		onSuccess: async () => {
+			if (selectedCampaignId === campaignToDelete?.id) {
+				setSelectedCampaignId(null);
+			}
+			setCampaignToDelete(null);
+			await queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.all });
+			refetchCampaigns();
+		},
+	});
+
+	// Attach link handler
+	const handleAssignLinkToCampaign = async (linkId) => {
+		if (!linkId || !selectedCampaignForUrls?.id) return;
+		try {
+			const targetUrl = urls.find((u) => u.id === linkId || u.shortCode === linkId);
+			if (!targetUrl) return;
+			await updateUrl(targetUrl.id, {
+				destinationUrl: targetUrl.destinationUrl,
+				campaignId: selectedCampaignForUrls.id,
+			});
+			toast.success("Short link assigned to campaign!");
+			queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.urls(selectedCampaignForUrls.id) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.all });
+			queryClient.invalidateQueries({ queryKey: queryKeys.urls.all });
+		} catch (err) {
+			toast.error(err?.response?.data?.message || "Failed to assign link to campaign");
+		}
 	};
 
-	const generatedUtmUrl = React.useMemo(() => {
+	// Unlink link handler
+	const handleUnlinkFromCampaign = async (url) => {
 		try {
-			const base = targetUrl.trim().split("?")[0] || "https://example.com";
-			const params = new URLSearchParams();
-			if (utmSource.trim()) params.set("utm_source", utmSource.trim());
-			if (utmMedium.trim()) params.set("utm_medium", utmMedium.trim());
-			if (utmCampaign.trim()) params.set("utm_campaign", utmCampaign.trim());
-			const qs = params.toString();
-			return qs ? `${base}?${qs}` : base;
-		} catch {
-			return targetUrl;
+			await updateUrl(url.id, {
+				destinationUrl: url.destinationUrl,
+				campaignId: null,
+			});
+			toast.success("Link removed from campaign");
+			queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.urls(selectedCampaignForUrls.id) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.campaigns.all });
+			queryClient.invalidateQueries({ queryKey: queryKeys.urls.all });
+		} catch (err) {
+			toast.error(err?.response?.data?.message || "Failed to unlink from campaign");
 		}
-	}, [targetUrl, utmSource, utmMedium, utmCampaign]);
+	};
+
+	const totalTaggedClicks = campaignLinks.reduce((acc, curr) => acc + (curr.clickCount || 0), 0);
 
 	return (
-		<div className="space-y-6 max-w-7xl mx-auto">
-			{/* Page Header */}
-			<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/50 pb-6">
-				<div>
-					<h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-foreground flex items-center gap-2.5">
-						<IconAdjustments className="size-7 text-primary" />
-						<span>Campaigns & UTM Tracking</span>
-					</h1>
-					<p className="text-xs sm:text-sm text-muted-foreground mt-1">
-						Attribute inbound traffic channels, monitor campaign performance, and build UTM tags.
-					</p>
-				</div>
+		<div className="space-y-6 sm:space-y-8 max-w-7xl mx-auto">
+			{/* 1. Header Banner */}
+			<CampaignHeader
+				onOpenNewCampaign={() => setIsNewCampaignOpen(true)}
+				onOpenUtmBuilder={() => setIsUtmBuilderOpen(true)}
+			/>
 
-				<div className="flex items-center gap-2.5 shrink-0">
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => setIsUtmBuilderOpen(true)}
-						className="gap-1.5 text-xs h-9 font-medium cursor-pointer shadow-2xs"
+			{/* 2. Overview KPI Cards */}
+			<CampaignStatsCards
+				totalCampaigns={totalCampaigns}
+				totalUtmLinks={campaignLinks.length}
+				totalUrls={urls.length}
+				totalTaggedClicks={totalTaggedClicks}
+			/>
+
+			{/* 3. Tab Switcher */}
+			<div className="space-y-4">
+				<div className="flex items-center gap-2 border-b border-border/50 pb-2">
+					<button
+						onClick={() => setActiveTab("campaigns")}
+						className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+							activeTab === "campaigns"
+								? "bg-primary text-primary-foreground shadow-2xs"
+								: "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+						}`}
 					>
-						<IconTag className="size-4" />
-						<span>UTM Builder</span>
-					</Button>
-					<Button
-						size="sm"
-						onClick={() => onOpenCreateModal?.()}
-						className="gap-1.5 text-xs h-9 font-semibold cursor-pointer shadow-xs"
+						Campaigns List ({totalCampaigns})
+					</button>
+					<button
+						onClick={() => setActiveTab("utm_links")}
+						className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+							activeTab === "utm_links"
+								? "bg-primary text-primary-foreground shadow-2xs"
+								: "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+						}`}
 					>
-						<IconPlus className="size-4" />
-						<span>Create Short Link</span>
-					</Button>
-				</div>
-			</div>
-
-			{/* Overview KPI Cards (2 per row on mobile) */}
-			<div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-4">
-				<Card className="border-border/70 bg-card shadow-xs">
-					<CardContent className="p-3 sm:p-4 lg:p-5 flex items-start sm:items-center justify-between gap-2">
-						<div className="min-w-0">
-							<div className="text-[11px] sm:text-xs font-medium text-muted-foreground truncate">Active Campaigns</div>
-							<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-foreground mt-0.5 sm:mt-1">
-								{uniqueCampaigns}
-							</div>
-							<div className="text-[10px] sm:text-[11px] text-muted-foreground mt-0.5 truncate">
-								Distinct campaign tags
-							</div>
-						</div>
-						<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-primary/10 text-primary border border-primary/20">
-							<IconTag className="size-3.5 sm:size-4.5 lg:size-5" />
-						</div>
-					</CardContent>
-				</Card>
-
-				<Card className="border-border/70 bg-card shadow-xs">
-					<CardContent className="p-3 sm:p-4 lg:p-5 flex items-start sm:items-center justify-between gap-2">
-						<div className="min-w-0">
-							<div className="text-[11px] sm:text-xs font-medium text-muted-foreground truncate">Campaign Links</div>
-							<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-emerald-500 mt-0.5 sm:mt-1">
-								{campaignLinks.length}
-							</div>
-							<div className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 font-medium truncate">
-								{urls.length > 0 ? Math.round((campaignLinks.length / urls.length) * 100) : 0}% of all URLs
-							</div>
-						</div>
-						<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
-							<IconAdjustments className="size-3.5 sm:size-4.5 lg:size-5" />
-						</div>
-					</CardContent>
-				</Card>
-
-				<Card className="border-border/70 bg-card shadow-xs col-span-2 sm:col-span-1">
-					<CardContent className="p-3 sm:p-4 lg:p-5 flex items-start sm:items-center justify-between gap-2">
-						<div className="min-w-0">
-							<div className="text-[11px] sm:text-xs font-medium text-muted-foreground truncate">Total Campaign Clicks</div>
-							<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-blue-500 mt-0.5 sm:mt-1">
-								{campaignLinks.reduce((acc, curr) => acc + (curr.clickCount || 0), 0)}
-							</div>
-							<div className="text-[10px] sm:text-[11px] text-muted-foreground mt-0.5 truncate">
-								Tagged channels
-							</div>
-						</div>
-						<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-blue-500/10 text-blue-500 border border-blue-500/20">
-							<IconShare className="size-3.5 sm:size-4.5 lg:size-5" />
-						</div>
-					</CardContent>
-				</Card>
-			</div>
-
-			{/* Search & Campaign Links Table */}
-			<div className="space-y-3">
-				<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-					<div className="relative flex-1 min-w-0 sm:max-w-md">
-						<IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-						<Input
-							value={searchQuery}
-							onChange={(e) => setSearchQuery(e.target.value)}
-							placeholder="Search by campaign name, source, or slug..."
-							className="pl-9 h-9 text-xs bg-card"
-						/>
-					</div>
+						UTM Tagged Links ({campaignLinks.length})
+					</button>
 				</div>
 
-				<Card className="border-border/70 bg-card overflow-hidden shadow-xs">
-					<div className="overflow-x-auto">
-						<table className="w-full text-left text-xs border-collapse">
-							<thead>
-								<tr className="border-b border-border/70 bg-muted/40 text-muted-foreground font-medium">
-									<th className="py-3 px-4">Campaign Name</th>
-									<th className="py-3 px-4">Source / Medium</th>
-									<th className="py-3 px-4">Shortcode</th>
-									<th className="py-3 px-4 text-center">Clicks</th>
-									<th className="py-3 px-4 text-right">Actions</th>
-								</tr>
-							</thead>
-							<tbody className="divide-y divide-border/50">
-								{filteredCampaigns.length > 0 ? (
-									filteredCampaigns.map((link) => {
-										const id = link.id || link.shortCode;
-										return (
-											<tr key={id} className="hover:bg-muted/30 transition-colors">
-												<td className="py-3.5 px-4 font-semibold text-foreground">
-													<div className="flex items-center gap-1.5">
-														<IconTag className="size-3.5 text-primary" />
-														<span>{link.utmCampaign}</span>
-													</div>
-												</td>
-												<td className="py-3.5 px-4">
-													<div className="flex items-center gap-1.5">
-														<Badge variant="outline" className="text-[10px] font-mono">
-															{link.utmSource}
-														</Badge>
-														<span className="text-muted-foreground">/</span>
-														<Badge variant="secondary" className="text-[10px] font-mono">
-															{link.utmMedium}
-														</Badge>
-													</div>
-												</td>
-												<td className="py-3.5 px-4 font-mono">
-													<Link
-														to={`/redirect-links/${link.shortCode}`}
-														className="font-semibold text-primary hover:underline transition-colors"
-														title="Configure link"
-													>
-														/r/{link.shortCode}
-													</Link>
-												</td>
-												<td className="py-3.5 px-4 text-center font-mono">
-													<Badge variant="secondary">{link.clickCount ?? 0}</Badge>
-												</td>
-												<td className="py-3.5 px-4 text-right">
-													<div className="flex items-center justify-end gap-1.5">
-														<Link
-															to={`/redirect-links/${link.shortCode}`}
-															className="inline-flex size-7 items-center justify-center rounded-md border border-border bg-card text-muted-foreground hover:text-primary transition-colors"
-															title="Configure link"
-														>
-															<IconAdjustments className="size-3.5" />
-														</Link>
-														<Link
-															to={`/analytics/${link.shortCode}`}
-															className="inline-flex size-7 items-center justify-center rounded-md border border-border bg-card text-muted-foreground hover:text-primary transition-colors"
-															title="View telemetry"
-														>
-															<IconChartBar className="size-3.5" />
-														</Link>
-														<button
-															onClick={() => handleCopy(`http://localhost:8080/r/${link.shortCode}`, id)}
-															className="inline-flex size-7 items-center justify-center rounded-md border border-border bg-card text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-															title="Copy short link"
-														>
-															{copiedId === id ? (
-																<IconCheck className="size-3.5 text-emerald-500" />
-															) : (
-																<IconCopy className="size-3.5" />
-															)}
-														</button>
-													</div>
-												</td>
-											</tr>
-										);
-									})
-								) : (
-									<tr>
-										<td colSpan={5} className="py-12 text-center text-muted-foreground">
-											<IconTag className="size-8 mx-auto text-muted-foreground/50 mb-2" />
-											<p className="font-semibold text-foreground">No UTM Campaigns Detected</p>
-											<p className="text-xs max-w-sm mx-auto mt-1">
-												Add <code className="font-mono text-primary">?utm_source=...</code> parameters to your destination URLs to monitor campaign channels.
-											</p>
-										</td>
-									</tr>
-								)}
-							</tbody>
-						</table>
-					</div>
-				</Card>
-			</div>
-
-			{/* UTM URL Builder Modal */}
-			<Dialog open={isUtmBuilderOpen} onOpenChange={setIsUtmBuilderOpen}>
-				<DialogContent className="sm:max-w-lg">
-					<DialogHeader>
-						<DialogTitle className="flex items-center gap-2">
-							<IconTag className="size-5 text-primary" />
-							<span>UTM Campaign URL Builder</span>
-						</DialogTitle>
-						<DialogDescription className="text-xs">
-							Build campaign-tagged URLs to attribute clicks to specific channels in your analytics.
-						</DialogDescription>
-					</DialogHeader>
-
-					<div className="space-y-3.5 py-2">
-						<div className="space-y-1">
-							<label className="text-xs font-semibold text-foreground">Destination Target URL</label>
+				{/* 4. Tab Content: Reusable CampaignsTable or UTM table */}
+				{activeTab === "campaigns" ? (
+					<CampaignsTable
+						campaigns={campaigns}
+						isLoading={campaignsLoading}
+						isFetching={campaignsFetching}
+						totalCampaigns={totalCampaigns}
+						totalPages={totalCampaignPages}
+						currentPage={campaignPage}
+						onPageChange={setCampaignPage}
+						searchQuery={campaignSearch}
+						onSearchChange={setCampaignSearch}
+					/>
+				) : (
+					<div className="space-y-3">
+						<div className="relative w-full sm:w-72">
+							<IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
 							<Input
-								value={targetUrl}
-								onChange={(e) => setTargetUrl(e.target.value)}
-								placeholder="https://mysite.com/product"
-								className="text-xs"
+								value={utmSearchQuery}
+								onChange={(e) => setUtmSearchQuery(e.target.value)}
+								placeholder="Search UTM tags or links..."
+								className="pl-9 h-9 text-xs bg-card"
 							/>
 						</div>
-
-						<div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-							<div className="space-y-1">
-								<label className="text-xs font-semibold text-foreground">utm_source</label>
-								<Input
-									value={utmSource}
-									onChange={(e) => setUtmSource(e.target.value)}
-									placeholder="twitter, google"
-									className="text-xs"
-								/>
-							</div>
-							<div className="space-y-1">
-								<label className="text-xs font-semibold text-foreground">utm_medium</label>
-								<Input
-									value={utmMedium}
-									onChange={(e) => setUtmMedium(e.target.value)}
-									placeholder="social, email"
-									className="text-xs"
-								/>
-							</div>
-							<div className="space-y-1">
-								<label className="text-xs font-semibold text-foreground">utm_campaign</label>
-								<Input
-									value={utmCampaign}
-									onChange={(e) => setUtmCampaign(e.target.value)}
-									placeholder="summer_sale"
-									className="text-xs"
-								/>
-							</div>
-						</div>
-
-						<div className="rounded-xl border border-border/80 bg-muted/30 p-3 space-y-1.5">
-							<div className="text-[11px] font-semibold text-muted-foreground">Generated Target URL:</div>
-							<div className="font-mono text-xs text-foreground break-all bg-card p-2 rounded-md border border-border">
-								{generatedUtmUrl}
-							</div>
-						</div>
+						<CampaignUtmTable links={filteredUtmLinks} />
 					</div>
+				)}
+			</div>
 
-					<DialogFooter className="gap-2 sm:gap-0">
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => handleCopy(generatedUtmUrl, "modal")}
-							className="text-xs gap-1.5"
-						>
-							<IconCopy className="size-3.5" />
-							<span>Copy Target URL</span>
-						</Button>
-						<Button
-							size="sm"
-							onClick={() => {
-								setIsUtmBuilderOpen(false);
-								onOpenCreateModal?.(generatedUtmUrl);
-							}}
-							className="text-xs font-semibold"
-						>
-							Shorten This URL
-						</Button>
-					</DialogFooter>
-				</DialogContent>
-			</Dialog>
+			{/* 5. Modals & Dialogs */}
+			<CreateCampaignModal
+				open={isNewCampaignOpen}
+				onOpenChange={setIsNewCampaignOpen}
+				onSubmit={(payload) => createMutation.mutate(payload)}
+				isSubmitting={createMutation.isPending}
+				error={createMutation.error}
+			/>
+
+			<EditCampaignModal
+				key={campaignToEdit?.id}
+				campaign={campaignToEdit}
+				open={!!campaignToEdit}
+				onOpenChange={(open) => !open && setCampaignToEdit(null)}
+				onSubmit={(data) => updateMutation.mutate(data)}
+				isSubmitting={updateMutation.isPending}
+				error={updateMutation.error}
+			/>
+
+			<CampaignLinksModal
+				campaign={selectedCampaignForUrls}
+				open={!!selectedCampaignForUrls}
+				onOpenChange={(open) => !open && setSelectedCampaignId(null)}
+				campaignUrls={campaignUrls}
+				isLoading={campaignUrlsLoading}
+				unassignedUrlItems={unassignedUrlItems}
+				onAssignLink={handleAssignLinkToCampaign}
+				onUnlinkLink={handleUnlinkFromCampaign}
+				onCreateNewLink={() => onOpenCreateModal?.()}
+			/>
+
+			<CampaignAnalyticsModal
+				campaign={selectedCampaignForAnalytics}
+				open={!!selectedCampaignForAnalytics}
+				onOpenChange={(open) => !open && setSelectedCampaignForAnalytics(null)}
+			/>
+
+			<UtmBuilderModal
+				open={isUtmBuilderOpen}
+				onOpenChange={setIsUtmBuilderOpen}
+				onShortenUrl={(url) => onOpenCreateModal?.(url)}
+			/>
+
+			<DeleteCampaignDialog
+				campaign={campaignToDelete}
+				open={!!campaignToDelete}
+				onOpenChange={(open) => !open && setCampaignToDelete(null)}
+				onConfirm={(id) => deleteMutation.mutate(id)}
+				isDeleting={deleteMutation.isPending}
+			/>
 		</div>
 	);
 }

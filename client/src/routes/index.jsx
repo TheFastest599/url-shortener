@@ -1,19 +1,39 @@
+import { lazy, Suspense } from "react";
 import { Routes, Route } from "react-router-dom";
 import { ROUTES } from "./paths";
 import { ProtectedRoute, PublicOnlyRoute } from "./guards";
 import { RootLayout } from "@/components/layout/RootLayout";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { HomePage } from "@/pages/Home";
-import { LoginPage } from "@/pages/Login";
-import { SignupPage } from "@/pages/Signup";
-import { OAuthCallbackPage } from "@/pages/OAuthCallback";
-import { DashboardPage } from "@/pages/Dashboard";
-import { RedirectLinksPage } from "@/pages/RedirectLinks";
-import { LinkDetailPage } from "@/pages/LinkDetail";
-import { AnalyticsDetailPage } from "@/pages/AnalyticsDetail";
-import { CampaignsPage } from "@/pages/Campaigns";
-import { ProfilePage } from "@/pages/Profile";
 import { NotFoundPage } from "@/pages/NotFound";
+
+function FullPageLoadingFallback() {
+	return (
+		<div className="flex min-h-screen items-center justify-center bg-background">
+			<div className="flex flex-col items-center gap-3">
+				<div className="size-7 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+				<span className="text-xs text-muted-foreground font-mono">Loading...</span>
+			</div>
+		</div>
+	);
+}
+
+// Lazy-loaded Auth Pages
+const LoginPage = lazy(() => import("@/pages/Login"));
+const SignupPage = lazy(() => import("@/pages/Signup"));
+const OAuthCallbackPage = lazy(() => import("@/pages/OAuthCallback"));
+
+// Lazy-loaded Workspace Pages (on-demand code-splitting)
+const DashboardPage = lazy(() => import("@/pages/Dashboard"));
+const RedirectLinksPage = lazy(() => import("@/pages/RedirectLinks"));
+const LinkDetailPage = lazy(() => import("@/pages/LinkDetail"));
+const AnalyticsPage = lazy(() => import("@/pages/Analytics"));
+const AnalyticsDetailPage = lazy(() => import("@/pages/AnalyticsDetail"));
+const CampaignsPage = lazy(() => import("@/pages/Campaigns"));
+const CampaignDetailPage = lazy(() => import("@/pages/CampaignDetail"));
+const AbTestingPage = lazy(() => import("@/pages/AbTesting"));
+const AbTestDetailPage = lazy(() => import("@/pages/AbTestDetail"));
+const ProfilePage = lazy(() => import("@/pages/Profile"));
 
 /**
  * Centralized Application Routes configuration
@@ -26,7 +46,9 @@ export function AppRoutes() {
 				path={ROUTES.LOGIN}
 				element={
 					<PublicOnlyRoute>
-						<LoginPage />
+						<Suspense fallback={<FullPageLoadingFallback />}>
+							<LoginPage />
+						</Suspense>
 					</PublicOnlyRoute>
 				}
 			/>
@@ -34,13 +56,22 @@ export function AppRoutes() {
 				path={ROUTES.SIGNUP}
 				element={
 					<PublicOnlyRoute>
-						<SignupPage />
+						<Suspense fallback={<FullPageLoadingFallback />}>
+							<SignupPage />
+						</Suspense>
 					</PublicOnlyRoute>
 				}
 			/>
 
 			{/* OAuth2 Callback Handler */}
-			<Route path={ROUTES.OAUTH_CALLBACK} element={<OAuthCallbackPage />} />
+			<Route
+				path={ROUTES.OAUTH_CALLBACK}
+				element={
+					<Suspense fallback={<FullPageLoadingFallback />}>
+						<OAuthCallbackPage />
+					</Suspense>
+				}
+			/>
 
 			{/* Protected Workspace Layout (Shared Top Navbar + Responsive Sidebar + Realtime Modals) */}
 			<Route
@@ -52,9 +83,15 @@ export function AppRoutes() {
 			>
 				<Route path={ROUTES.DASHBOARD} element={<DashboardPage />} />
 				<Route path={ROUTES.REDIRECT_LINKS} element={<RedirectLinksPage />} />
+				<Route path="/redirect-links/:id" element={<LinkDetailPage />} />
 				<Route path="/redirect-links/:shortCode" element={<LinkDetailPage />} />
+				<Route path={ROUTES.ANALYTICS} element={<AnalyticsPage />} />
+				<Route path="/analytics/:id" element={<AnalyticsDetailPage />} />
 				<Route path={ROUTES.ANALYTICS_DETAIL} element={<AnalyticsDetailPage />} />
 				<Route path={ROUTES.CAMPAIGNS} element={<CampaignsPage />} />
+				<Route path={ROUTES.CAMPAIGN_DETAIL} element={<CampaignDetailPage />} />
+				<Route path={ROUTES.AB_TESTING} element={<AbTestingPage />} />
+				<Route path={ROUTES.AB_TEST_DETAIL} element={<AbTestDetailPage />} />
 				<Route path={ROUTES.PROFILE} element={<ProfilePage />} />
 			</Route>
 

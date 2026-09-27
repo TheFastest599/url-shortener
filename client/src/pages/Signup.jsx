@@ -16,6 +16,8 @@ import {
 	IconUserPlus,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
+import { Field, FieldLabel, FieldError } from "@/components/ui/field";
+import { validateEmail, validatePassword, parseApiError, showErrorToast } from "@/lib/errorHandler";
 
 export function SignupPage() {
 	const [username, setUsername] = useState("");
@@ -24,30 +26,53 @@ export function SignupPage() {
 	const [confirmPassword, setConfirmPassword] = useState("");
 	const [showPassword, setShowPassword] = useState(false);
 	const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+	const [clientErrors, setClientErrors] = useState({});
 
 	// Encapsulated TanStack mutations from queries/authQueries.js
-	const signupMutation = useSignupMutation({ redirectTo: ROUTES.DASHBOARD });
+	const signupMutation = useSignupMutation({
+		redirectTo: ROUTES.DASHBOARD,
+	});
 	const oauthMutation = useOAuthMutation();
+	const { fieldErrors: serverErrors } = parseApiError(signupMutation.error);
 
 	const handleSubmit = (e) => {
 		e.preventDefault();
-		if (!username.trim() || !email.trim() || !password.trim()) {
-			toast.error("Please fill in all required fields");
-			return;
+
+		const newErrors = {};
+
+		const trimmedUser = username.trim();
+		if (!trimmedUser) {
+			newErrors.username = "Username is required.";
+		} else if (trimmedUser.length < 3) {
+			newErrors.username = "Username must be at least 3 characters long.";
+		} else if (!/^[a-zA-Z0-9_]+$/.test(trimmedUser)) {
+			newErrors.username = "Username can only contain letters, numbers, and underscores.";
 		}
 
-		if (password.length < 6) {
-			toast.error("Password must be at least 6 characters long");
-			return;
+		const emailVal = validateEmail(email);
+		if (!emailVal.isValid) {
+			newErrors.email = emailVal.error;
+		}
+
+		const passVal = validatePassword(password, 6);
+		if (!passVal.isValid) {
+			newErrors.password = passVal.error;
 		}
 
 		if (password !== confirmPassword) {
-			toast.error("Passwords do not match");
-			return;
+			newErrors.confirmPassword = "Passwords do not match.";
 		}
 
+		if (Object.keys(newErrors).length > 0) {
+			setClientErrors(newErrors);
+			const firstError = Object.values(newErrors)[0];
+			toast.error("Validation Error", { description: firstError });
+			return;
+		}
+		setClientErrors({});
+
 		signupMutation.mutate({
-			username: username.trim(),
+			username: trimmedUser,
 			email: email.trim(),
 			password,
 		});
@@ -105,53 +130,75 @@ export function SignupPage() {
 
 					<form onSubmit={handleSubmit} className="mt-6 space-y-3.5">
 						{/* Username Field */}
-						<div className="space-y-1">
-							<label className="text-xs font-medium text-foreground">
+						<Field className="gap-1.5">
+							<FieldLabel className="text-xs font-medium text-foreground">
 								Username
-							</label>
+							</FieldLabel>
 							<Input
 								type="text"
 								value={username}
-								onChange={(e) => setUsername(e.target.value)}
+								onChange={(e) => {
+									setUsername(e.target.value);
+									if (clientErrors.username) {
+										setClientErrors((prev) => ({ ...prev, username: null }));
+									}
+								}}
 								placeholder="alex_dev"
 								required
 								autoComplete="username"
+								aria-invalid={Boolean(clientErrors.username || serverErrors.username)}
 								className="h-9 text-sm bg-muted/30 border-border"
 							/>
-						</div>
+							<FieldError>
+								{clientErrors.username || serverErrors.username}
+							</FieldError>
+						</Field>
 
 						{/* Email Field */}
-						<div className="space-y-1">
-							<label className="text-xs font-medium text-foreground">
+						<Field className="gap-1.5">
+							<FieldLabel className="text-xs font-medium text-foreground">
 								Email Address
-							</label>
+							</FieldLabel>
 							<Input
 								type="email"
 								value={email}
-								onChange={(e) => setEmail(e.target.value)}
+								onChange={(e) => {
+									setEmail(e.target.value);
+									if (clientErrors.email) {
+										setClientErrors((prev) => ({ ...prev, email: null }));
+									}
+								}}
 								placeholder="alex@company.com"
 								required
 								autoComplete="email"
+								aria-invalid={Boolean(clientErrors.email || serverErrors.email)}
 								className="h-9 text-sm bg-muted/30 border-border"
 							/>
-						</div>
+							<FieldError>
+								{clientErrors.email || serverErrors.email}
+							</FieldError>
+						</Field>
 
 						{/* Password Field */}
-						<div className="space-y-1">
-							<label className="text-xs font-medium text-foreground">
+						<Field className="gap-1.5">
+							<FieldLabel className="text-xs font-medium text-foreground">
 								Password (min. 6 characters)
-							</label>
+							</FieldLabel>
 							<div className="relative">
 								<Input
 									type={showPassword ? "text" : "password"}
 									value={password}
-									onChange={(e) =>
-										setPassword(e.target.value)
-									}
+									onChange={(e) => {
+										setPassword(e.target.value);
+										if (clientErrors.password) {
+											setClientErrors((prev) => ({ ...prev, password: null }));
+										}
+									}}
 									placeholder="••••••••"
 									required
 									minLength={6}
 									autoComplete="new-password"
+									aria-invalid={Boolean(clientErrors.password || serverErrors.password)}
 									className="h-9 pr-10 text-sm bg-muted/30 border-border"
 								/>
 								<button
@@ -173,13 +220,16 @@ export function SignupPage() {
 									)}
 								</button>
 							</div>
-						</div>
+							<FieldError>
+								{clientErrors.password || serverErrors.password}
+							</FieldError>
+						</Field>
 
 						{/* Confirm Password Field with Eye toggle */}
-						<div className="space-y-1">
-							<label className="text-xs font-medium text-foreground">
+						<Field className="gap-1.5">
+							<FieldLabel className="text-xs font-medium text-foreground">
 								Confirm Password
-							</label>
+							</FieldLabel>
 							<div className="relative">
 								<Input
 									type={
@@ -188,13 +238,17 @@ export function SignupPage() {
 											: "password"
 									}
 									value={confirmPassword}
-									onChange={(e) =>
-										setConfirmPassword(e.target.value)
-									}
+									onChange={(e) => {
+										setConfirmPassword(e.target.value);
+										if (clientErrors.confirmPassword) {
+											setClientErrors((prev) => ({ ...prev, confirmPassword: null }));
+										}
+									}}
 									placeholder="••••••••"
 									required
 									minLength={6}
 									autoComplete="new-password"
+									aria-invalid={Boolean(clientErrors.confirmPassword)}
 									className="h-9 pr-10 text-sm bg-muted/30 border-border"
 								/>
 								<button
@@ -218,7 +272,10 @@ export function SignupPage() {
 									)}
 								</button>
 							</div>
-						</div>
+							<FieldError>
+								{clientErrors.confirmPassword}
+							</FieldError>
+						</Field>
 
 						{/* Error Banner */}
 						{signupMutation.isError && (
@@ -283,7 +340,7 @@ export function SignupPage() {
 								className="h-9 gap-2 cursor-pointer text-xs justify-center"
 								onClick={() => handleOAuth("google")}
 							>
-								<IconBrandGoogle className="size-4 text-rose-500" />
+								<IconBrandGoogle className="size-4 text-destructive" />
 								<span>
 									{oauthMutation.isPending &&
 									oauthMutation.variables === "google"
@@ -314,3 +371,5 @@ export function SignupPage() {
 		</div>
 	);
 }
+
+export default SignupPage;

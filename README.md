@@ -1,157 +1,171 @@
 # HiClickMe — Enterprise Multi-Tenant URL Shortener Platform 🚀
 
-A high-throughput, event-driven URL shortening and analytics platform built with **Java 17, Spring Boot 3, Spring Cloud Gateway, Reactive WebFlux, gRPC, PostgreSQL, Redis, Apache Kafka (KRaft), Nginx, and React 19 (Vite)**.
+A high-throughput, event-driven URL shortening and analytics platform built with **Java 17, Spring Boot 3, Spring Cloud Gateway, Reactive WebFlux, gRPC, jOOQ, PostgreSQL, Redis, Apache Kafka (KRaft), Nginx, and React 19 (Vite)**.
 
 ---
 
-## 🏛️ System Architecture & Port Matrix
+## 🏛️ System Architecture & Ingress Matrix
 
 ```text
-[ Browser / Laptop: http://localhost (80) & https://localhost (443) ]
-                               │
-                               ▼
-                [ Nginx Ingress Reverse Proxy ]
-               (Listens on Port 80 & Port 443 SSL)
-                               │
-               ┌───────────────┴───────────────┐
-               │                               │
-       (location /)                  (location /api/ & /r/)
-               ▼                               ▼
-     [ React Frontend ]             [ Spring API Gateway ]
-   (Internal Port 3000)                   (Port 8080)
-                                               │
-               ┌───────────────────────────────┼───────────────────────────────┐
-               │                               │                               │
-               ▼                               ▼                               ▼
-      [ url-core-service ]           [ url-redirect-service ]        [ url-analytics-service ]
-         (REST: 8081)                      (REST: 8082)                    (REST: 8083)
-         (gRPC: 9090)                      (Reactive)                      (Kafka Consumer)
-               │                               │                               │
-               ▼                               ▼                               ▼
-     [ PostgreSQL: Core ]               [ Redis Cache ]            [ PostgreSQL: Analytics ]
-                                               │                               ▲
-                                               └────────► [ Kafka Topic ] ─────┘
-                                                         ("url-clicks")
+[ Browser / Client: http://localhost (Port 80) ]
+                       │
+                       ▼
+       ┌───────────────────────────────┐
+       │     nginx-ingress (Port 80)   │
+       │   (Reverse Proxy + React SPA) │
+       └───────────────┬───────────────┘
+                       │ (Internal Docker Network: url-shortener-net)
+       ┌───────────────┴───────────────────────────────┐
+       │                                               │
+       ▼ (Route: '/r/**', '/s/**')                     ▼ (Route: '/api/**')
+┌───────────────┐                             ┌────────────────┐
+│ redirect:8082 │                             │ apigateway:8080│
+│ (Fast Engine) │                             │ (Cloud Gateway)│
+└───────┬───────┘                             └───┬────────┬───┘
+        │                                         │        │
+        ├──────────────────────────┐              │        │
+        │                          │              ▼        ▼
+        ▼ (gRPC:9090)              ▼        ┌──────────┐ ┌───────────────┐
+┌───────────────┐            ┌───────────┐  │ core:8081│ │ analytics:8083│
+│   core:9090   │            │   redis   │  └────┬─────┘ └───────┬───────┘
+└───────┬───────┘            └───────────┘       │               │
+        │                          ▲             │               │
+        └──────────────────────────┼─────────────┘               │
+                                   │                             ▼
+                                   │                     ┌───────────────┐
+                                   └──────► [ Kafka ] ──►│ postgres:5432 │
+                                            ("url-clicks")│ (analytics)   │
+                                                         └───────────────┘
 ```
 
-| Service | Port(s) | Technology | Primary Responsibility |
+### 🔒 Host Port Exposure & Isolation Matrix
+
+Only **Nginx Ingress** publishes a port (`80`) to the host machine. All databases, message brokers, and internal microservices run isolated inside the private Docker bridge network (`url-shortener-net`):
+
+| Service | Internal Port | Host Port Exposed | Role & Routing |
 | :--- | :--- | :--- | :--- |
-| **Nginx Ingress** | `80` (HTTP), `443` (HTTPS) | Nginx Alpine | SSL Termination, Reverse Proxy, Static Caching |
-| **React Client** | `5173` (Dev) / `3000` (Docker) | React 19 + Vite | Interactive Analytics Dashboard & URL Shortening UI |
-| **`apigateway`** | `8080` | Spring Cloud Gateway, R2DBC | JWT Authentication, Tenant Routing, Downstream Header Injection |
-| **`core`** | `8081` (REST), `9090` (gRPC) | Spring Boot, JPA, Hibernate | URL & UTM CRUD, Admin Ownership Validation, Redis Eviction |
-| **`redirect`** | `8082` | Spring WebFlux, Reactive Redis | Sub-5ms 302 Redirection, Adaptive TTL, Kafka Click Tracking |
-| **`analytics`** | `8083` (REST), `9091` (gRPC) | Kafka Consumer, MaxMind GeoIP2 | Stream Ingestion, Bot Detection, Time-Series Graph Aggregation |
-| **PostgreSQL** | `5432` | PostgreSQL 16 Alpine | 3 Logical DBs (`auth`, `core`, `analytics`) |
-| **Redis** | `6379` | Redis 7.2 Alpine | In-Memory URL Cache & Sliding Window Rate Limiting |
-| **Kafka** | `9092` | Confluent Kafka 7.6 (KRaft) | Event-Driven Asynchronous Click Tracking (`url-clicks`) |
+| **Nginx Ingress** | `80` | **`80:80`** | Single public entrypoint. Serves React SPA at `/` and proxies `/r/`, `/s/`, and `/api/`. |
+| **React Client** | `80` | *Built into Nginx* | Single Page Application bundled directly into the Nginx image. |
+| **`redirect`** | `8082` | *Internal only* | Sub-5ms reactive redirect engine (302 redirects, Redis cache, Kafka producer). |
+| **`apigateway`** | `8080` | *Internal only* | Spring Cloud Gateway (JWT authentication, role authorization, routing). |
+| **`core`** | `8081` (REST), `9090` (gRPC) | *Internal only* | URL & UTM management, campaigns, A/B testing, gRPC resolution engine. |
+| **`analytics`** | `8083` (REST), `9091` (gRPC) | *Internal only* | Kafka batch consumer, MaxMind GeoIP resolution, time-series aggregations. |
+| **PostgreSQL** | `5432` | *Internal only* | Multi-database instance (`url_shortener_auth`, `url_shortener_core`, `url_shortener_analytics`). |
+| **Redis** | `6379` | *Internal only* | In-memory cache for fast link lookup & distributed rate limiting. |
+| **Kafka (KRaft)**| `29092` | *Internal only* | High-throughput event stream for click tracking (`url-clicks` topic). |
 
 ---
 
-## 🛠️ Prerequisites
+## 🐳 Running with Docker Compose (Production End-to-End)
 
-* **Java 17 JDK** (`JAVA_HOME` configured)
-* **Maven 3.9+**
-* **Node.js 20+** & **npm**
-* **Docker & Docker Compose**
-* MaxMind GeoIP Database: `analytics/src/main/resources/geoip/GeoLite2-City.mmdb`
+The entire platform—including in-Docker Maven compilation for all 4 Spring Boot microservices, Node.js compilation for the React frontend, database initialization, and Nginx reverse proxying—builds and boots with a single command.
 
----
-
-## 💻 Setup Mode 1: Local Hybrid Development (Recommended during Coding)
-
-In this mode, Docker runs only the databases, cache, and Kafka broker, while you run Spring Boot in IntelliJ/CLI and React in Vite dev server with instant Hot Module Replacement (HMR).
-
-### Step 1: Start Shared Infrastructure
-```powershell
-docker compose up redis kafka postgres -d
-```
-
-### Step 2: Run Microservices (In separate terminals or IntelliJ)
-
-* **API Gateway (`port 8080`):**
-  ```powershell
-  cd apigateway
-  mvn spring-boot:run
-  ```
-
-* **Core Service (`REST 8081` / `gRPC 9090`):**
-  ```powershell
-  cd core
-  mvn spring-boot:run
-  ```
-
-* **Redirect Service (`port 8082`):**
-  ```powershell
-  cd redirect
-  mvn spring-boot:run
-  ```
-
-* **Analytics Service (`port 8083`):**
-  ```powershell
-  cd analytics
-  mvn spring-boot:run
-  ```
-
-### Step 3: Run React Client (Vite Dev Server)
-```powershell
-cd client
-npm install
-npm run dev
-```
-Open **`http://localhost:5173`** in your browser.
-
----
-
-## 🐳 Setup Mode 2: Full Docker Production Mode (1-Command Build & Run)
-
-In this mode, Docker automatically compiles the React frontend, builds all Spring Boot JRE 17 images, initializes the 3 PostgreSQL databases, and launches Nginx on ports **80** and **443**.
-
-### Step 1: Generate Local SSL Certificates (Optional for HTTPS)
-```powershell
-New-Item -ItemType Directory -Force -Path "nginx\certs"
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout nginx/certs/nginx.key -out nginx/certs/nginx.crt -subj "/CN=localhost"
-```
-
-### Step 2: Build & Start the Complete Stack
-```powershell
+### 1. Build and Start All Services
+```bash
 docker compose up --build -d
 ```
 
-### Step 3: Access the Application
-* **Frontend Web Application:** `http://localhost/` or `https://localhost/`
-* **Short Link Redirection:** `http://localhost/r/{shortCode}`
-* **Gateway Health:** `http://localhost/api/v1/health`
+### 2. Verify Container Health & Status
+```bash
+docker compose ps
+```
+All containers will start in deterministic dependency order:
+1. `postgres`, `redis`, and `kafka` boot and pass health checks (`service_healthy`).
+2. `core` and `analytics` initialize their database schemas and gRPC listeners.
+3. `redirect` and `apigateway` connect to cache, brokers, and upstream services.
+4. `nginx` serves the unified frontend and routing.
 
-### Step 4: Stop / Reset the Stack
-```powershell
-# Stop all containers
+### 3. Stream Container Logs
+```bash
+# View live logs across all services
+docker compose logs -f
+
+# View logs for a specific service
+docker compose logs -f apigateway
+docker compose logs -f redirect
+docker compose logs -f core
+docker compose logs -f analytics
+docker compose logs -f nginx
+```
+
+### 4. Access the Platform
+* **Web UI (React SPA):** [http://localhost](http://localhost)
+* **Short Link Redirection:** `http://localhost/r/{shortCode}` or `http://localhost/s/{shortCode}`
+* **API Gateway Health Check:** `http://localhost/api/v1/health`
+* **Public Auth Endpoints:** `http://localhost/api/v1/auth/login`, `http://localhost/api/v1/auth/register`
+
+### 5. Rebuilding a Specific Service After Code Edits
+```bash
+# Rebuild and restart only the core service
+docker compose build core
+docker compose up -d core
+
+# Rebuild and restart Nginx & Frontend
+docker compose build nginx
+docker compose up -d nginx
+```
+
+### 6. Stopping & Resetting
+```bash
+# Stop all running containers
 docker compose down
 
-# Stop and wipe all database volumes for a clean slate
+# Stop all containers and wipe persistent volumes (Postgres DBs, Redis cache, Kafka data)
 docker compose down -v
 ```
 
 ---
 
-## 🐘 Connecting External pgAdmin / DBeaver
+## 💻 Local Hybrid Development (Optional for Hot-Reloading)
 
-| Parameter | Value |
-| :--- | :--- |
-| **Host** | `localhost` |
-| **Port** | `5432` |
-| **User** | `postgres` |
-| **Password** | `postgres_password` |
-| **Databases** | `url_shortener_auth`, `url_shortener_core`, `url_shortener_analytics` |
+If you are developing locally and prefer hot-reloading in your IDE and Vite dev server:
+
+### Step 1: Start Shared Infrastructure
+```bash
+docker compose up postgres redis kafka -d
+```
+
+### Step 2: Run Microservices (Separate Terminals)
+```bash
+# Terminal 1: API Gateway (Port 8080)
+cd apigateway && mvn spring-boot:run
+
+# Terminal 2: Core Service (REST 8081 / gRPC 9090)
+cd core && mvn spring-boot:run
+
+# Terminal 3: Redirect Service (Port 8082)
+cd redirect && mvn spring-boot:run
+
+# Terminal 4: Analytics Service (Port 8083)
+cd analytics && mvn spring-boot:run
+```
+
+### Step 3: Run React Client (Vite Dev Server)
+```bash
+cd client
+npm install
+npm run dev
+```
+Access the dev server at `http://localhost:5173`.
 
 ---
 
-## 📚 Deep-Dive Architecture & Component Documentation
+## 🗄️ Database Initialization
 
-* **[API Endpoints Reference & Service Catalog](docs/api_endpoints_reference.md)** — Complete catalog of all HTTP REST endpoints, gRPC methods, Kafka events, and cURL cheat sheet across all 4 services.
-* **[Master Architecture & Design Doc](docs/url_shortener_design_doc.md)** — Complete 13-section technical architecture blueprint.
-* **[Nginx & Docker Orchestration Guide](docs/nginx_and_docker_orchestration_guide.md)** — Ingress routing, SSL setup, and Docker Compose configs.
-* **[API Gateway & Security Guide](docs/api_gateway_security_guide.md)** — JWT security filter chain, BCrypt, and R2DBC.
-* **[Core Service Guide](docs/core_service_guide.md)** — Base62 encoding, UTM builder, and gRPC server.
-* **[Redirect Service Guide](docs/redirect_service_guide.md)** — Sub-5ms reactive redirects, Redis Adaptive TTL, and Kafka producer.
-* **[Analytics Service Guide](docs/analytics_service_guide.md)** — MaxMind GeoIP resolution, Bot filtering, and SQL time-series projections.
+The PostgreSQL container automatically runs [scripts/init.sql](scripts/init.sql) on its first boot to create the isolated databases:
+* `url_shortener_auth` — Managed by `apigateway` (Flyway migrations for users, roles, tokens)
+* `url_shortener_core` — Managed by `core` (Flyway migrations for URL mappings, campaigns, A/B tests)
+* `url_shortener_analytics` — Managed by `analytics` (Flyway migrations for click events, geo-data)
+
+---
+
+## 📚 Deep-Dive Architecture & Component Guides
+
+* **[Docker Orchestration Guide](docs/docker.md)** — In-depth breakdown of multi-stage Maven builds, Spring profiles (`default` vs `docker`), dependency ordering, and volumes.
+* **[Nginx Ingress & Reverse Proxy Guide](docs/nginx.md)** — Complete reference for reverse proxy routing, React SPA compilation, caching, and security headers.
+* **[API Endpoints Reference & Service Catalog](docs/api_endpoints_reference.md)** — Complete catalog of all HTTP REST endpoints, gRPC methods, Kafka events, and cURL cheat sheets.
+* **[Master Architecture & Design Doc](docs/url_shortener_design_doc.md)** — High-level distributed systems design, data models, and caching strategies.
+* **[API Gateway & Security Guide](docs/api_gateway_security_guide.md)** — JWT authentication filter chain, BCrypt, reactive security, and rate limiting.
+* **[Core Service Guide](docs/core_service_guide.md)** — Base62 generation, smart routing, UTM templates, campaigns, and gRPC server.
+* **[Redirect Service Guide](docs/redirect_service_guide.md)** — Sub-5ms reactive redirects, adaptive TTL caching, and asynchronous Kafka click tracking.
+* **[Analytics Service Guide](docs/analytics_service_guide.md)** — Kafka stream ingestion, MaxMind GeoIP resolution, bot detection, and SQL time-series projections.

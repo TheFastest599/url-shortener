@@ -5,6 +5,9 @@ import {
 	getCountries,
 	getBrowsers,
 	getReferrers,
+	getCampaignAnalytics,
+	getAbTestAnalytics,
+	getUrlAnalyticsById,
 } from "@/api/analytics";
 import { queryKeys } from "./queryKeys";
 
@@ -12,12 +15,12 @@ import { queryKeys } from "./queryKeys";
 // 1. QUERY OPTIONS (ANALYTICS)
 // ==========================================
 export const analyticsQueryOptions = {
-	overview: (shortCode, { days = 30, interval = null, includeBots = false, enabled = true } = {}) => ({
+	overview: (shortCode, { days = 30, interval = null, includeBots = false, enabled = true, refetchInterval = false } = {}) => ({
 		queryKey: queryKeys.analytics.overview(shortCode, days, includeBots, interval),
 		queryFn: async () => getOverview(shortCode, days, includeBots, interval),
 		enabled: enabled && !!shortCode,
-		staleTime: 1000 * 30, // 30 seconds for analytics
-		refetchInterval: 1000 * 60, // Auto-poll every 60 seconds when dashboard is open
+		staleTime: 1000 * 60 * 2,
+		refetchInterval,
 	}),
 
 	timeSeries: (shortCode, { interval = "DAY", days = 30, enabled = true } = {}) => ({
@@ -47,6 +50,27 @@ export const analyticsQueryOptions = {
 		enabled: enabled && !!shortCode,
 		staleTime: 1000 * 60,
 	}),
+
+	campaign: (campaignId, { days = 30, includeBots = false, enabled = true } = {}) => ({
+		queryKey: queryKeys.campaigns.analytics(campaignId, days, includeBots),
+		queryFn: async () => getCampaignAnalytics(campaignId, days, includeBots),
+		enabled: enabled && !!campaignId,
+		staleTime: 1000 * 30,
+	}),
+
+	abTest: (identifier, { days = 30, includeBots = false, enabled = true } = {}) => ({
+		queryKey: queryKeys.abTesting.analytics(identifier, days, includeBots),
+		queryFn: async () => getAbTestAnalytics(identifier, days, includeBots),
+		enabled: enabled && !!identifier,
+		staleTime: 1000 * 30,
+	}),
+
+	urlById: (urlId, { days = 30, includeBots = false, enabled = true } = {}) => ({
+		queryKey: queryKeys.urls.analyticsById(urlId, days, includeBots),
+		queryFn: async () => getUrlAnalyticsById(urlId, days, includeBots),
+		enabled: enabled && !!urlId,
+		staleTime: 1000 * 30,
+	}),
 };
 
 // ==========================================
@@ -70,4 +94,16 @@ export function useAnalyticsBrowsers(shortCode, options = {}) {
 
 export function useAnalyticsReferrers(shortCode, options = {}) {
 	return useQuery(analyticsQueryOptions.referrers(shortCode, options));
+}
+
+export function useCampaignAnalytics(campaignId, options = {}) {
+	return useQuery(analyticsQueryOptions.campaign(campaignId, options));
+}
+
+export function useAbTestAnalytics(identifier, options = {}) {
+	return useQuery(analyticsQueryOptions.abTest(identifier, options));
+}
+
+export function useUrlAnalyticsById(urlId, options = {}) {
+	return useQuery(analyticsQueryOptions.urlById(urlId, options));
 }
