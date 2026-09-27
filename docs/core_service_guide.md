@@ -21,20 +21,26 @@ The Core service manages URL persistence, Base62 shortcode generation, marketing
 ## Table of Contents
 1. [Architecture Overview & Port Mapping](#architecture-overview--port-mapping)
 2. [Flyway Database Migrations (PostgreSQL)](#flyway-database-migrations-postgresql)
+   - [Migration 1: Base URL Schema](#migration-1-base-url-schema)
+   - [Migration 2: Drop Legacy UTM Profiles](#migration-2-drop-legacy-utm-profiles)
+   - [Migration 3: Campaigns, A/B Testing & Smart Rules](#migration-3-campaigns-ab-testing--smart-rules)
+   - [Migration 4: Branded Custom Vanity Alias Expansion](#migration-4-branded-custom-vanity-alias-expansion)
 3. [JPA Entities & Relationships](#jpa-entities--relationships)
 4. [Spring Data Repositories](#spring-data-repositories)
-5. [Strategy 1 Redis Cache Eviction & Synchronization](#strategy-1-redis-cache-eviction--synchronization)
-6. [gRPC Server Implementation (`:9090`) & Protobuf](#grpc-server-implementation-9090--protobuf)
-7. [DTO Records](#dto-records)
-8. [Service Layer Implementations](#service-layer-implementations)
-   - [UrlCoreService](#urlcoreservice)
-   - [CampaignService](#campaignservice)
-   - [AbTestService](#abtestservice)
-9. [REST Controllers](#rest-controllers)
-   - [UrlCoreController (`/api/v1/urls`)](#urlcorecontroller)
-   - [CampaignController (`/api/v1/campaigns`)](#campaigncontroller)
-   - [AbTestController (`/api/v1/urls/{shortCode}/ab-test`)](#abtestcontroller)
-10. [Step-by-Step Verification & Testing Guide](#step-by-step-verification--testing-guide)
+5. [jOOQ Dynamic Query & Multi-Table Resolution Layer](#jooq-dynamic-query--multi-table-resolution-layer)
+6. [Strategy 1 Redis Cache Eviction & Synchronization](#strategy-1-redis-cache-eviction--synchronization)
+7. [gRPC Server Implementation (`:9090`), Keepalive & Protobuf](#grpc-server-implementation-9090-keepalive--protobuf)
+8. [DTO Records & JSR-380 Bean Validation](#dto-records--jsr-380-bean-validation)
+9. [Centralized Global Exception Handling & RFC-7807 Errors](#centralized-global-exception-handling--rfc-7807-errors)
+10. [Service Layer Implementations](#service-layer-implementations)
+    - [UrlCoreService](#urlcoreservice)
+    - [CampaignService](#campaignservice)
+    - [AbTestService](#abtestservice)
+11. [REST Controllers](#rest-controllers)
+    - [UrlCoreController (`/api/v1/urls`)](#urlcorecontroller)
+    - [CampaignController (`/api/v1/campaigns`)](#campaigncontroller)
+    - [AbTestController (`/api/v1/ab-tests`)](#abtestcontroller)
+12. [Step-by-Step Verification & Testing Guide](#step-by-step-verification--testing-guide)
 
 ---
 
@@ -149,6 +155,13 @@ CREATE TABLE IF NOT EXISTS ab_variants (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ab_variants_test_id ON ab_variants(ab_test_id);
+```
+
+### Migration 4: Branded Custom Vanity Alias Expansion
+File: `V4__increase_short_code_length.sql`
+```sql
+-- Increase short_code column length to 64 characters to support branded vanity custom aliases
+ALTER TABLE url_mappings ALTER COLUMN short_code TYPE VARCHAR(64);
 ```
 
 ---
@@ -529,7 +542,126 @@ public interface AbVariantRepository extends JpaRepository<AbVariant, UUID> {
 
 ---
 
-## Strategy 1 Redis Cache Eviction & Synchronization
+## 5. jOOQ Dynamic Query & Multi-Table Resolution Layer
+
+While Spring Data JPA handles simple CRUD, the platform uses **jOOQ** for complex dynamic filtering and high-performance multi-table joins. This eliminates N+1 query latency and provides compile-time type safety.
+
+### 5.1 `UrlResolutionRecord.java`
+File: `core/src/main/java/com/urlshortener/core/repository/UrlResolutionRecord.java`
+
+```java
+package com.urlshortener.core.repository;
+
+import java.util.UUID;
+
+public record UrlResolutionRecord(
+        String shortCode,
+        String destinationUrl,
+        Boolean isActive,
+        Boolean isAbTest,
+        String smartRules,
+        UUID urlId,
+        UUID campaignId,
+        UUID testId,
+        String testStatus,
+        String winningVariant,
+        Integer cookieTtlSeconds,
+        String variantKey,
+        String variantUrl,
+        Integer variantWeight,
+        Boolean variantIsControl
+) implements UrlResolutionProjection {
+    @Override public String getShortCode() { return shortCode; }
+    @Override public String getDestinationUrl() { return destinationUrl; }
+    @Override public Boolean getIsActive() { return isActive; }
+    @Override public Boolean getIsAbTest() { return isAbTest; }
+    @Override public String getSmartRules() { return smartRules; }
+    @Override public UUID getUrlId() { return urlId; }
+    @Override public UUID getCampaignId() { return campaignId; }
+    @Override public UUID getTestId() { return testId; }
+    @Override public String getTestStatus() { return testStatus; }
+    @Override public String getWinningVariant() { return winningVariant; }
+    @Override public Integer getCookieTtlSeconds() { return cookieTtlSeconds; }
+    @Override public String getVariantKey() { return variantKey; }
+    @Override public String getVariantUrl() { return variantUrl; }
+    @Override public Integer getVariantWeight() { return variantWeight; }
+    @Override public Boolean getVariantIsControl() { return variantIsControl; }
+}
+```
+
+### 5.2 `UrlMappingQueryRepository.java`
+File: `core/src/main/java/com/urlshortener/core/repository/UrlMappingQueryRepository.java`
+
+Key responsibilities:
+1. **Dynamic URL Searching**: Constructing dynamic SQL predicates for user links, search terms, active state, and campaign filters.
+2. **Single-Query Multi-Table gRPC Resolution**: Joining `url_mappings` LEFT JOIN `ab_tests` LEFT JOIN `ab_variants` in one round-trip to resolve the target destination, active test rules, and variant weights in sub-3ms.
+
+```java
+@Repository
+@RequiredArgsConstructor
+public class UrlMappingQueryRepository {
+
+    private final DSLContext dsl;
+
+    public Page<ShortUrlResponse> searchUserUrls(
+            UUID userId,
+            String searchPattern,
+            Boolean isActive,
+            UUID campaignId,
+            boolean unassignedOnly,
+            Pageable pageable
+    ) {
+        Condition condition = URL_MAPPINGS.USER_ID.eq(userId);
+
+        if (searchPattern != null && !searchPattern.isBlank()) {
+            condition = condition.and(
+                    URL_MAPPINGS.SHORT_CODE.likeIgnoreCase(searchPattern)
+                            .or(URL_MAPPINGS.DESTINATION_URL.likeIgnoreCase(searchPattern))
+            );
+        }
+
+        if (isActive != null) {
+            condition = condition.and(URL_MAPPINGS.IS_ACTIVE.eq(isActive));
+        }
+
+        if (unassignedOnly) {
+            condition = condition.and(URL_MAPPINGS.CAMPAIGN_ID.isNull());
+        } else if (campaignId != null) {
+            condition = condition.and(URL_MAPPINGS.CAMPAIGN_ID.eq(campaignId));
+        }
+
+        Long totalCount = dsl.selectCount()
+                .from(URL_MAPPINGS)
+                .where(condition)
+                .fetchOne(0, Long.class);
+
+        long total = totalCount != null ? totalCount : 0L;
+        if (total == 0) return new PageImpl<>(List.of(), pageable, 0);
+
+        List<ShortUrlResponse> results = dsl.select(
+                URL_MAPPINGS.ID,
+                URL_MAPPINGS.SHORT_CODE,
+                URL_MAPPINGS.DESTINATION_URL,
+                URL_MAPPINGS.IS_ACTIVE,
+                URL_MAPPINGS.CAMPAIGN_ID,
+                URL_MAPPINGS.CREATED_AT,
+                URL_MAPPINGS.EXPIRES_AT
+        )
+        .from(URL_MAPPINGS)
+        .where(condition)
+        .orderBy(URL_MAPPINGS.CREATED_AT.desc())
+        .offset(pageable.getOffset())
+        .limit(pageable.getPageSize())
+        .fetchInto(ShortUrlResponse.class);
+
+        return new PageImpl<>(results, pageable, total);
+    }
+}
+```
+
+---
+
+## 6. Strategy 1 Redis Cache Eviction & Synchronization
 
 In our architecture, **Redis Population is Lazy**, while **Redis Eviction is Immediate**:
 
@@ -626,11 +758,22 @@ public void evictAbCache(String shortCode) {
 
 ---
 
-## gRPC Server Implementation (:9090) & Protobuf
+## 7. gRPC Server Implementation (`:9090`), Keepalive & Protobuf
 
 When the Redirect service encounters a Redis cache miss, it executes a single unary gRPC RPC to Core on port **9090**.
 
-### 1. Protobuf Definition
+### 7.1 Keepalive & Channel Health Configuration
+File: `core/src/main/resources/application.yml`
+```yaml
+grpc:
+  server:
+    port: 9090
+    permit-keep-alive-time: 10s
+    permit-keep-alive-without-calls: true
+```
+This configuration permits client keepalive pings without active RPC calls, ensuring that HTTP redirects never block or freeze if a microservice restarts or an idle socket times out.
+
+### 7.2 Protobuf Definition
 File: `core/src/main/proto/url_service.proto` (and identical in `redirect/src/main/proto/url_service.proto`):
 
 ```protobuf
@@ -832,40 +975,55 @@ public class UrlGrpcService extends UrlServiceGrpc.UrlServiceImplBase {
 
 ---
 
-## DTO Records
+## 8. DTO Records & JSR-380 Bean Validation
 
-Create these clean Java records under `core/src/main/java/com/urlshortener/core/dto/`:
+Every external client payload is validated strictly at the controller boundary using Bean Validation (`jakarta.validation.constraints.*`).
 
-### 1. URL DTOs
-File: `CreateUrlRequest.java`
+### 8.1 URL DTOs
+File: `core/src/main/java/com/urlshortener/core/dto/CreateUrlRequest.java`
 ```java
 package com.urlshortener.core.dto;
 
 import jakarta.validation.constraints.NotBlank;
-import org.hibernate.validator.constraints.URL;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import java.util.UUID;
 
 public record CreateUrlRequest(
         @NotBlank(message = "Destination URL is required")
-        @URL(message = "Must be a valid URL")
+        @Size(max = 2048, message = "Destination URL cannot exceed 2048 characters")
+        @Pattern(regexp = "^(https?://).+", message = "Destination URL must start with http:// or https://")
         String destinationUrl,
+
+        @Pattern(regexp = "^$|^[a-zA-Z0-9_-]{3,64}$", message = "Custom alias must be 3 to 64 characters and contain only letters, numbers, hyphens, and underscores")
         String customAlias,
+
         UUID campaignId,
+
+        @Size(max = 4096, message = "Smart rules cannot exceed 4096 characters")
         String smartRules
 ) {}
 ```
 
-File: `UpdateUrlRequest.java`
+File: `core/src/main/java/com/urlshortener/core/dto/UpdateUrlRequest.java`
 ```java
 package com.urlshortener.core.dto;
 
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.util.UUID;
 
 public record UpdateUrlRequest(
+        @Pattern(regexp = "^$|^(https?://).+", message = "Destination URL must start with http:// or https://")
+        @Size(max = 2048, message = "Destination URL cannot exceed 2048 characters")
         String destinationUrl,
+
         UUID campaignId,
+
+        @Size(max = 4096, message = "Smart rules cannot exceed 4096 characters")
         String smartRules,
+
         Boolean isActive,
         Instant expiresAt
 ) {}
@@ -942,32 +1100,56 @@ public record CampaignResponse(
 }
 ```
 
-### 3. A/B Testing DTOs
-File: `CreateAbTestRequest.java`
+### 8.3 A/B Testing DTOs
+File: `core/src/main/java/com/urlshortener/core/dto/CreateAbTestRequest.java`
 ```java
 package com.urlshortener.core.dto;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import java.util.List;
 
 public record CreateAbTestRequest(
+        @Size(max = 64, message = "Short code cannot exceed 64 characters")
+        String shortCode,
+
         @NotBlank(message = "A/B test name is required")
+        @Size(min = 2, max = 100, message = "A/B test name must be between 2 and 100 characters")
         String name,
+
+        @Min(value = 60, message = "Cookie stickiness TTL must be at least 60 seconds")
+        @Max(value = 31536000, message = "Cookie stickiness TTL cannot exceed 365 days")
         Integer cookieTtlSeconds,
+
         @NotEmpty(message = "At least two variants are required")
-        List<VariantRequest> variants
+        @Size(min = 2, max = 10, message = "An A/B test must have between 2 and 10 variants")
+        List<@Valid VariantRequest> variants
 ) {
     public record VariantRequest(
-            @NotBlank String key,
-            @NotBlank String destinationUrl,
+            @NotBlank(message = "Variant key is required")
+            @Size(max = 10, message = "Variant key cannot exceed 10 characters")
+            String key,
+
+            @NotBlank(message = "Variant destination URL is required")
+            @Size(max = 2048, message = "Variant destination URL cannot exceed 2048 characters")
+            @Pattern(regexp = "^(https?://).+", message = "Variant destination URL must start with http:// or https://")
+            String destinationUrl,
+
+            @Min(value = 0, message = "Variant weight cannot be negative")
+            @Max(value = 100, message = "Variant weight cannot exceed 100")
             int weight,
+
             boolean isControl
     ) {}
 }
 ```
 
-File: `AbTestResponse.java`
+File: `core/src/main/java/com/urlshortener/core/dto/AbTestResponse.java`
 ```java
 package com.urlshortener.core.dto;
 
@@ -1016,22 +1198,85 @@ public record AbTestResponse(
 }
 ```
 
-File: `UpdateAbTestStatusRequest.java`
+File: `core/src/main/java/com/urlshortener/core/dto/UpdateAbTestStatusRequest.java`
 ```java
 package com.urlshortener.core.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 
 public record UpdateAbTestStatusRequest(
-        @NotBlank(message = "Status is required (ACTIVE, PAUSED, CONCLUDED)")
+        @NotBlank(message = "Status is required")
+        @Pattern(regexp = "^(ACTIVE|PAUSED|CONCLUDED)$", message = "Status must be ACTIVE, PAUSED, or CONCLUDED")
         String status,
+
         String winningVariant
 ) {}
 ```
 
 ---
 
-## Service Layer Implementations
+## 9. Centralized Global Exception Handling & RFC-7807 Errors
+
+File: `core/src/main/java/com/urlshortener/core/exception/GlobalExceptionHandler.java`
+
+Handles validation errors uniformly and returns a structured map of field errors directly consumed by the React UI:
+
+```java
+package com.urlshortener.core.exception;
+
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
+
+@Slf4j
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    public record ErrorResponse(int status, String error, String message, Instant timestamp) {}
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
+        Map<String, String> fieldErrors = new HashMap<>();
+        for (FieldError error : ex.getBindingResult().getFieldErrors()) {
+            fieldErrors.put(error.getField(), error.getDefaultMessage());
+        }
+
+        String firstErrorMessage = ex.getBindingResult().getFieldErrors().stream()
+                .map(FieldError::getDefaultMessage)
+                .findFirst()
+                .orElse("Request validation failed");
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("status", HttpStatus.BAD_REQUEST.value());
+        body.put("error", "Validation Failed");
+        body.put("message", firstErrorMessage);
+        body.put("fieldErrors", fieldErrors);
+        body.put("timestamp", Instant.now());
+
+        return ResponseEntity.badRequest().body(body);
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException ex) {
+        String msg = ex.getMessage() != null ? ex.getMessage() : "Invalid argument";
+        HttpStatus status = msg.toLowerCase().contains("not found") ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
+        return ResponseEntity.status(status).body(new ErrorResponse(status.value(), status.getReasonPhrase(), msg, Instant.now()));
+    }
+}
+```
+
+---
+
+## 10. Service Layer Implementations
 
 ### 1. `UrlCoreService.java`
 File: `core/src/main/java/com/urlshortener/core/service/UrlCoreService.java`
@@ -1483,7 +1728,7 @@ public class AbTestService {
 
 ---
 
-## REST Controllers
+## 11. REST Controllers
 
 ### 1. `UrlCoreController.java`
 File: `core/src/main/java/com/urlshortener/core/controller/UrlCoreController.java`
@@ -1704,7 +1949,7 @@ public class AbTestController {
 
 ---
 
-## Step-by-Step Verification & Testing Guide
+## 12. Step-by-Step Verification & Testing Guide
 
 ### 1. Build and Compile the Core Module
 Run in your terminal from the `core` directory:

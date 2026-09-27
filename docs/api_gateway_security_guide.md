@@ -489,12 +489,23 @@ package com.urlshortener.apigateway.dto;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
-public record RegisterRequest(
-    @NotBlank String username,
-    @NotBlank @Email String email,
-    @NotBlank @Size(min = 6) String password
+public record RegisterRequest (
+    @NotBlank(message = "Username is required")
+    @Size(min = 3, max = 50, message = "Username must be between 3 and 50 characters")
+    @Pattern(regexp = "^[a-zA-Z0-9_]+$", message = "Username can only contain letters, numbers, and underscores")
+    String username,
+
+    @NotBlank(message = "Email address is required")
+    @Email(message = "Please provide a valid email address")
+    @Size(max = 255, message = "Email cannot exceed 255 characters")
+    String email,
+
+    @NotBlank(message = "Password is required")
+    @Size(min = 6, max = 100, message = "Password must be at least 6 characters long")
+    String password
 ) {}
 ```
 
@@ -505,10 +516,16 @@ package com.urlshortener.apigateway.dto;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 public record LoginRequest(
-    @NotBlank @Email String email,
-    @NotBlank String password
+        @NotBlank(message = "Email address is required")
+        @Email(message = "Please provide a valid email address")
+        @Size(max = 255, message = "Email cannot exceed 255 characters")
+        String email,
+
+        @NotBlank(message = "Password is required")
+        String password
 ) {}
 ```
 
@@ -518,9 +535,12 @@ public record LoginRequest(
 package com.urlshortener.apigateway.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 public record RefreshTokenRequest(
-    @NotBlank String refreshToken
+    @NotBlank(message = "Refresh token is required")
+    @Size(max = 255, message = "Refresh token string too long")
+    String refreshToken
 ) {}
 ```
 
@@ -885,44 +905,57 @@ public class AuthController {
 
 File: `apigateway/src/main/java/com/urlshortener/apigateway/exception/GlobalExceptionHandler.java`
 
-Intercepts validation and business logic exceptions (`IllegalArgumentException`), mapping them to clean **HTTP 400 Bad Request** JSON responses instead of default HTTP 500 errors.
+Intercepts validation (`WebExchangeBindException`) and business logic exceptions (`IllegalArgumentException`), mapping them to clean **HTTP 400 Bad Request** JSON responses with field-level error mapping consumed by the frontend authentication forms:
 
 ```java
 package com.urlshortener.apigateway.exception;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.FieldError;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.bind.support.WebExchangeBindException;
 import reactor.core.publisher.Mono;
 
+import java.time.Instant;
+import java.util.HashMap;
 import java.util.Map;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(IllegalArgumentException.class)
-    public Mono<ResponseEntity<Map<String, String>>> handleIllegalArgument(IllegalArgumentException ex) {
-        return Mono.just(ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .body(Map.of(
-                        "error", "Bad Request",
-                        "message", ex.getMessage()
-                )));
+    public Mono<ResponseEntity<Map<String, Object>>> handleIllegalArgument(IllegalArgumentException ex) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("status", HttpStatus.BAD_REQUEST.value());
+        body.put("error", "Bad Request");
+        body.put("message", ex.getMessage() != null ? ex.getMessage() : "Invalid argument");
+        body.put("timestamp", Instant.now().toString());
+
+        return Mono.just(ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body));
     }
 
     @ExceptionHandler(WebExchangeBindException.class)
-    public Mono<ResponseEntity<Map<String, String>>> handleValidation(WebExchangeBindException ex) {
-        String message = ex.getBindingResult().getFieldErrors().stream()
-                .map(err -> err.getField() + " " + err.getDefaultMessage())
-                .findFirst()
-                .orElse("Validation error");
+    public Mono<ResponseEntity<Map<String, Object>>> handleValidation(WebExchangeBindException ex) {
+        Map<String, String> fieldErrors = new HashMap<>();
+        for (FieldError error : ex.getBindingResult().getFieldErrors()) {
+            fieldErrors.put(error.getField(), error.getDefaultMessage());
+        }
 
-        return Mono.just(ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .body(Map.of(
-                        "error", "Validation Error",
-                        "message", message
-                )));
+        String firstErrorMessage = ex.getBindingResult().getFieldErrors().stream()
+                .map(FieldError::getDefaultMessage)
+                .findFirst()
+                .orElse("Validation failed");
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("status", HttpStatus.BAD_REQUEST.value());
+        body.put("error", "Validation Failed");
+        body.put("message", firstErrorMessage);
+        body.put("errors", fieldErrors);
+        body.put("timestamp", Instant.now().toString());
+
+        return Mono.just(ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body));
     }
 }
 ```

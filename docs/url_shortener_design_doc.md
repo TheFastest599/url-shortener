@@ -83,10 +83,10 @@ graph TD
 | Service / Component | Public Port | gRPC Port | Technology | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
 | **API Gateway** | `8080` | N/A | Spring Cloud Gateway, Reactive Security | Central entrypoint, routing, rate limiting, OAuth2 Client, token rotation, and REST proxying. |
-| **Core Admin Service** | `8081` | `9090` | Spring Boot, gRPC Server, JPA / Hibernate | Manages URL mappings, marketing campaigns, A/B/n tests, Base62 encoding, Redis Strategy 1 cache warming/eviction, and gRPC resolution. |
-| **Redirect Service** | `8082` | N/A | Spring WebFlux, Redis Reactive, gRPC Client | Resolves short URLs via Strategy 1 Redis (or gRPC Core fallback), executes in-memory A/B splits, and publishes click events to Apache Kafka. |
-| **Analytics Service** | `8083` | `9091` | Spring Boot, Spring Kafka, MaxMind GeoIP | Consumes Kafka click streams, resolves geographic locations, detects bots, bulk-writes logs, and serves telemetry reports. |
-| **Frontend Client** | `5173` | N/A | React, Vite, Tailwind CSS, TanStack Query | Single Page Application dashboard with UTM builder, Campaign management, A/B testing controls, and telemetry charts. |
+| **Core Admin Service** | `8081` | `9090` | Spring Boot, gRPC Server, JPA / Hibernate, jOOQ DSL | Manages URL mappings, marketing campaigns, A/B/n tests, Base62 encoding, Redis Strategy 1 cache warming/eviction, and gRPC resolution. |
+| **Redirect Service** | `8082` | N/A | Spring WebFlux, Redis Reactive, gRPC Client | Resolves short URLs via Strategy 1 Redis (or gRPC Core fallback with 5s deadline and keepalive), executes in-memory A/B splits, and publishes click events to Apache Kafka. |
+| **Analytics Service** | `8083` | `9091` | Spring Boot, Spring Kafka, MaxMind GeoIP, jOOQ DSL, JdbcTemplate Batch | Consumes Kafka click streams in batches, resolves geographic locations, detects bots, multi-row bulk-writes logs, and serves telemetry reports. |
+| **Frontend Client** | `5173` | N/A | React 19, Vite, Tailwind CSS v4, shadcn UI, TanStack Query | Single Page Application dashboard with UTM builder, Campaign management, A/B testing controls, and telemetry charts. |
 | **PostgreSQL Shared Instance** | `5432` | N/A | PostgreSQL 16 | Single database container hosting 3 logically isolated databases: `url_shortener_auth`, `url_shortener_core`, and `url_shortener_analytics`. |
 | **Redis Cache & Rate Store**| `6379` | N/A | Redis 7.2 | Shares rate limit statistics, Strategy 1 dual-key redirect caches (`url:redirect`, `url:ab`, `url:rules`), and hit counters. |
 | **Apache Kafka Broker** | `9092` | N/A | Confluent Kafka / KRaft Mode | High-throughput streaming buffer decoupling redirection handling from analytics logging. |
@@ -169,7 +169,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_campaigns_user_name ON campaigns(user_id, 
 -- 2. URL Mappings Table
 CREATE TABLE IF NOT EXISTS url_mappings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    short_code VARCHAR(10) UNIQUE NOT NULL,
+    short_code VARCHAR(64) UNIQUE NOT NULL,           -- Expanded in V4 for branded vanity slugs
     destination_url TEXT NOT NULL,
     campaign_id UUID REFERENCES campaigns(id) ON DELETE SET NULL,
     is_ab_test BOOLEAN DEFAULT FALSE NOT NULL,
@@ -217,11 +217,14 @@ Stores raw event click tracking data managed strictly by `url-analytics-service`
 ```sql
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- 1. Click Analytics Table
+-- 1. Click Analytics Table (Includes V3 UUID keys and V4 64-char short_code)
 CREATE TABLE IF NOT EXISTS click_analytics (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    short_code VARCHAR(10) NOT NULL,
+    short_code VARCHAR(64) NOT NULL,
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    url_id UUID DEFAULT NULL,
+    campaign_id UUID DEFAULT NULL,
+    ab_test_id UUID DEFAULT NULL,
     variant VARCHAR(50),                              -- 'A', 'B' (null for normal links)
     utm_source VARCHAR(100),
     utm_medium VARCHAR(100),
@@ -243,6 +246,9 @@ CREATE TABLE IF NOT EXISTS click_analytics (
 
 CREATE INDEX IF NOT EXISTS idx_click_analytics_short_code ON click_analytics(short_code);
 CREATE INDEX IF NOT EXISTS idx_click_analytics_timestamp ON click_analytics(timestamp);
+CREATE INDEX IF NOT EXISTS idx_click_analytics_url_id ON click_analytics(url_id);
+CREATE INDEX IF NOT EXISTS idx_click_analytics_campaign_id ON click_analytics(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_click_analytics_ab_test_id ON click_analytics(ab_test_id);
 CREATE INDEX IF NOT EXISTS idx_click_analytics_short_code_variant ON click_analytics(short_code, variant);
 CREATE INDEX IF NOT EXISTS idx_click_analytics_utm_campaign ON click_analytics(short_code, utm_campaign);
 CREATE INDEX IF NOT EXISTS idx_click_analytics_utm_source ON click_analytics(short_code, utm_source);
@@ -1131,14 +1137,17 @@ Consumes click events asynchronously from Kafka topic `url-clicks`, parses devic
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | **`GET`** | `/api/v1/analytics/{shortCode}` | Complete dashboard overview (total, human/bot ratio, graph time-series, top countries, devices, browsers, referrers). |
-| **`GET`** | `/api/v1/analytics/{shortCode}/timeseries` | Dedicated time-series graph points (supports `interval=HOUR|DAY` and `days=N`). |
+| **`GET`** | `/api/v1/analytics/urls/{urlId}` | Complete dashboard overview queried directly by URL UUID. |
+| **`GET`** | `/api/v1/analytics/campaigns/{campaignId}` | Dedicated Campaign-level rollup analytics (aggregates all links under the campaign via jOOQ). |
+| **`GET`** | `/api/v1/analytics/ab-tests/{identifier}` | Dedicated A/B test variant conversion & click performance breakdown (supports UUID or shortCode). |
+| **`GET`** | `/api/v1/analytics/{shortCode}/timeseries` | Dedicated time-series graph points (supports `interval=HOUR|DAY|WEEK|MONTH` and `days=N`). |
 | **`GET`** | `/api/v1/analytics/{shortCode}/countries` | Top countries ranking for interactive world map. |
 | **`GET`** | `/api/v1/analytics/{shortCode}/browsers` | Top browsers (Chrome, Safari, Firefox, Edge, Opera). |
 | **`GET`** | `/api/v1/analytics/{shortCode}/referrers` | Traffic sources (Twitter, LinkedIn, Direct, etc.). |
-| **`GET`** | `/api/v1/analytics/{shortCode}/ab-test` | A/B test variant conversion & click performance breakdown. |
-| **`GET`** | `/api/v1/analytics/{shortCode}/utm-sources` | Breakdown of clicks grouped by UTM campaign, source, and medium. |
 
-#### 2. Kafka Event Consumer (`ClickEventConsumer.java`)
+#### 2. Kafka Batch Consumer & True Bulk Insert (`ClickEventConsumer.java`)
+
+Consumes batches of up to 5,000 events with manual acknowledgment, parsing User-Agent and GeoIP asynchronously before performing a single multi-row `INSERT` via `ClickAnalyticsBatchRepository`:
 
 ```java
 @Slf4j
@@ -1146,56 +1155,88 @@ Consumes click events asynchronously from Kafka topic `url-clicks`, parses devic
 @RequiredArgsConstructor
 public class ClickEventConsumer {
 
-    private final ClickAnalyticsRepository repository;
-    private final GeoLocationService geoLocationService; // Lazy MaxMind GeoLite2 reader
+    private final ClickAnalyticsBatchRepository batchRepository;
+    private final GeoLocationService geoLocationService;
 
-    @KafkaListener(topics = "url-clicks", groupId = "analytics-group")
-    public void consumeClickEvent(ClickEvent event) {
-        if (event == null || event.shortCode() == null) return;
+    @KafkaListener(
+        topics = "url-clicks",
+        groupId = "${spring.kafka.consumer.group-id}",
+        containerFactory = "kafkaListenerContainerFactory"
+    )
+    public void consumeBatch(List<ClickEvent> events, Acknowledgment ack) {
+        if (events == null || events.isEmpty()) {
+            if (ack != null) ack.acknowledge();
+            return;
+        }
 
-        String ua = event.userAgent() != null ? event.userAgent() : "";
-        String uaLower = ua.toLowerCase();
+        List<ClickAnalytics> records = new ArrayList<>(events.size());
+        for (ClickEvent event : events) {
+            String ua = event.userAgent() != null ? event.userAgent() : "";
+            String uaLower = ua.toLowerCase();
 
-        // 1. Device Type Detection
-        String device = (uaLower.contains("mobi") || uaLower.contains("android") || uaLower.contains("iphone")) ? "Mobile"
-                      : (uaLower.contains("tablet") || uaLower.contains("ipad")) ? "Tablet" : "Desktop";
+            String device = (uaLower.contains("mobi") || uaLower.contains("android") || uaLower.contains("iphone")) ? "Mobile"
+                          : (uaLower.contains("tablet") || uaLower.contains("ipad")) ? "Tablet" : "Desktop";
+            String browser = uaLower.contains("edg") ? "Edge" : uaLower.contains("chrome") ? "Chrome"
+                           : (uaLower.contains("safari") && !uaLower.contains("chrome")) ? "Safari"
+                           : uaLower.contains("firefox") ? "Firefox" : "Other";
+            String os = uaLower.contains("windows") ? "Windows" : (uaLower.contains("mac os") || uaLower.contains("macintosh")) ? "macOS"
+                      : uaLower.contains("android") ? "Android" : (uaLower.contains("iphone") || uaLower.contains("ios")) ? "iOS" : "Linux";
+            boolean isBot = uaLower.contains("bot") || uaLower.contains("crawler") || uaLower.contains("spider");
+            String country = geoLocationService.resolveCountry(event.ipAddress());
 
-        // 2. Browser Detection
-        String browser = uaLower.contains("edg") ? "Edge" : uaLower.contains("chrome") ? "Chrome"
-                       : (uaLower.contains("safari") && !uaLower.contains("chrome")) ? "Safari"
-                       : uaLower.contains("firefox") ? "Firefox" : "Other";
+            records.add(ClickAnalytics.builder()
+                    .shortCode(event.shortCode())
+                    .timestamp(event.timestamp() != null ? event.timestamp() : Instant.now())
+                    .urlId(event.urlId())
+                    .campaignId(event.campaignId())
+                    .abTestId(event.abTestId())
+                    .variant(event.variant())
+                    .utmSource(event.utmSource())
+                    .utmMedium(event.utmMedium())
+                    .utmCampaign(event.utmCampaign())
+                    .userAgent(ua)
+                    .deviceType(device)
+                    .browser(browser)
+                    .operatingSystem(os)
+                    .geoCountry(country != null ? country : "Unknown")
+                    .referrer(event.referrer() != null && !event.referrer().isBlank() ? event.referrer() : "Direct / None")
+                    .isBot(isBot)
+                    .build());
+        }
 
-        // 3. Operating System Detection
-        String os = uaLower.contains("windows") ? "Windows" : (uaLower.contains("mac os") || uaLower.contains("macintosh")) ? "macOS"
-                  : uaLower.contains("android") ? "Android" : (uaLower.contains("iphone") || uaLower.contains("ios")) ? "iOS" : "Linux";
+        // True single-query bulk insert using JdbcTemplate + reWriteBatchedInserts=true
+        batchRepository.bulkInsert(records);
 
-        // 4. Bot Detection
-        boolean isBot = uaLower.contains("bot") || uaLower.contains("crawler") || uaLower.contains("spider");
-
-        // 5. Geo Location Resolution (Lazy GeoLite2-Country lookup by IP)
-        String country = geoLocationService.resolveCountry(event.ipAddress());
-
-        ClickAnalytics analytics = ClickAnalytics.builder()
-                .shortCode(event.shortCode())
-                .timestamp(event.timestamp() != null ? event.timestamp() : Instant.now())
-                .variant(event.variant())
-                .utmSource(event.utmSource())
-                .utmMedium(event.utmMedium())
-                .utmCampaign(event.utmCampaign())
-                .userAgent(ua)
-                .deviceType(device)
-                .browser(browser)
-                .operatingSystem(os)
-                .geoCountry(country != null ? country : "Unknown")
-                .geoCity(event.geoCity())
-                .referrer(event.referrer() != null && !event.referrer().isBlank() ? event.referrer() : "Direct / None")
-                .isBot(isBot)
-                .build();
-
-        repository.save(analytics);
+        // Commit offsets only after database write succeeds
+        if (ack != null) {
+            ack.acknowledge();
+        }
     }
 }
 ```
+
+#### 3. Query Engine Acceleration: jOOQ Layer
+`ClickAnalyticsQueryRepository` provides type-safe SQL projections (`StatRecord`, `CityStatRecord`, `TimeSeriesRecord`) using native PostgreSQL `date_trunc`, dynamic intervals, and timezone offsets.
+
+---
+
+### 6.5 Frontend Client Architecture (`client`)
+
+The web client is a single-page application built with React 19, Vite, and Tailwind CSS v4, following the Hallmark human-centric growth studio aesthetic.
+
+#### 1. Design System & Theme Tokenization
+* **Zero Hardcoded Colors**: Every UI surface, badge, card, and text element is strictly bound to shadcn semantic CSS tokens:
+  - Base tokens: `primary`, `secondary`, `destructive`, `muted`, `accent`, `border`, `card`, `background`, `foreground`.
+  - Chart tokens: `var(--chart-1)` through `var(--chart-5)` with matching Tailwind utilities (`text-chart-1`, `bg-chart-2`, `border-chart-3`).
+* **Dark / Light Mode**: Dynamic switching via `next-themes` / custom theme store with CSS class mutation on `<html>`.
+
+#### 2. Dual-Layer Form Validation
+* **Immediate Client Feedback (`clientErrors`)**: Evaluates required names, valid URL protocols via `validateUrl()`, and cross-variant weight sums (`totalWeight === 100`) directly in React state before dispatching network requests.
+* **Server Error Reflection (`serverFieldErrors`)**: Centralized global exception handler responses (RFC-7807 problem details) automatically populate inline `<FieldError>` components on corresponding inputs.
+
+#### 3. State Management & Data Fetching
+* **TanStack Query (React Query v5)**: Manages server cache, automatic background refetching, and optimistic updates across URL links, campaigns, and A/B test experiments.
+* **Zustand**: Lightweight global client state for auth sessions, active modal dialogs, and theme preferences.
 
 ---
 

@@ -35,7 +35,7 @@ export function Footer() {
 							Links
 						</Link>
 						<a
-							href="https://github.com"
+							href="https://github.com/TheFastest599/url-shortener"
 							target="_blank"
 							rel="noreferrer"
 							className="hover:text-foreground transition-colors flex items-center gap-1.5"

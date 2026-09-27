@@ -7,35 +7,41 @@ A high-throughput, event-driven URL shortening and analytics platform built with
 ## 🏛️ System Architecture & Ingress Matrix
 
 ```text
-[ Browser / Client: http://localhost (Port 80) ]
-                       │
-                       ▼
-       ┌───────────────────────────────┐
-       │     nginx-ingress (Port 80)   │
-       │   (Reverse Proxy + React SPA) │
-       └───────────────┬───────────────┘
-                       │ (Internal Docker Network: url-shortener-net)
-       ┌───────────────┴───────────────────────────────┐
-       │                                               │
-       ▼ (Route: '/r/**', '/s/**')                     ▼ (Route: '/api/**')
-┌───────────────┐                             ┌────────────────┐
-│ redirect:8082 │                             │ apigateway:8080│
-│ (Fast Engine) │                             │ (Cloud Gateway)│
-└───────┬───────┘                             └───┬────────┬───┘
-        │                                         │        │
-        ├──────────────────────────┐              │        │
-        │                          │              ▼        ▼
-        ▼ (gRPC:9090)              ▼        ┌──────────┐ ┌───────────────┐
-┌───────────────┐            ┌───────────┐  │ core:8081│ │ analytics:8083│
-│   core:9090   │            │   redis   │  └────┬─────┘ └───────┬───────┘
-└───────┬───────┘            └───────────┘       │               │
-        │                          ▲             │               │
-        └──────────────────────────┼─────────────┘               │
-                                   │                             ▼
-                                   │                     ┌───────────────┐
-                                   └──────► [ Kafka ] ──►│ postgres:5432 │
-                                            ("url-clicks")│ (analytics)   │
-                                                         └───────────────┘
+                      [ Browser / Client ]
+                                │
+        ┌───────────────────────┴───────────────────────┐
+        ▼ (http://localhost)                            ▼ (http://r.localhost)
+ ┌──────────────┐                                ┌──────────────┐
+ │ React SPA &  │                                │ Clean Links  │
+ │ /api/**      │                                │ /*           │
+ └──────┬───────┘                                └──────┬───────┘
+        │                                               │
+        └───────────────────────┬───────────────────────┘
+                                ▼
+                 ┌─────────────────────────────┐
+                 │   nginx-ingress (Port 80)   │
+                 └──────────────┬──────────────┘
+                                │ (url-shortener-net)
+        ┌───────────────────────┴───────────────────────┐
+        ▼ (Subdomain Proxy: /*)                         ▼ (Path Proxy: /api/**)
+ ┌───────────────┐                             ┌────────────────┐
+ │ redirect:8082 │                             │ apigateway:8080│
+ │ (Fast Engine) │                             │ (Cloud Gateway)│
+ └───────┬───────┘                             └───┬────────┬───┘
+         │                                         │        │
+         ├──────────────────────────┐              │        │
+         │                          │              ▼        ▼
+         ▼ (gRPC:9090)              ▼        ┌──────────┐ ┌───────────────┐
+ ┌───────────────┐            ┌───────────┐  │ core:8081│ │ analytics:8083│
+ │   core:9090   │            │   redis   │  └────┬─────┘ └───────┬───────┘
+ └───────┬───────┘            └───────────┘       │               │
+         │                          ▲             │               │
+         └──────────────────────────┼─────────────┘               │
+                                    │                             ▼
+                                    │                     ┌───────────────┐
+                                    └──────► [ Kafka ] ──►│ postgres:5432 │
+                                             ("url-clicks")│ (analytics)   │
+                                                          └───────────────┘
 ```
 
 ### 🔒 Host Port Exposure & Isolation Matrix
@@ -44,7 +50,7 @@ Only **Nginx Ingress** publishes a port (`80`) to the host machine. All database
 
 | Service | Internal Port | Host Port Exposed | Role & Routing |
 | :--- | :--- | :--- | :--- |
-| **Nginx Ingress** | `80` | **`80:80`** | Single public entrypoint. Serves React SPA at `/` and proxies `/r/`, `/s/`, and `/api/`. |
+| **Nginx Ingress** | `80` | **`80:80`** | Single public entrypoint. Serves React SPA & API Gateway on `localhost`, and handles clean short link redirection on `r.localhost` (or `r.<domain>`). |
 | **React Client** | `80` | *Built into Nginx* | Single Page Application bundled directly into the Nginx image. |
 | **`redirect`** | `8082` | *Internal only* | Sub-5ms reactive redirect engine (302 redirects, Redis cache, Kafka producer). |
 | **`apigateway`** | `8080` | *Internal only* | Spring Cloud Gateway (JWT authentication, role authorization, routing). |
@@ -90,7 +96,16 @@ docker compose logs -f nginx
 
 ### 4. Access the Platform
 * **Web UI (React SPA):** [http://localhost](http://localhost)
-* **Short Link Redirection:** `http://localhost/r/{shortCode}` or `http://localhost/s/{shortCode}`
+* **Clean Short Link Redirection:** `http://r.localhost/{shortCode}` (e.g., `http://r.localhost/spring-launch` or `http://r.localhost/xyz789`)
+  > **💡 How `r.localhost` Redirection Works:**
+  > - **Zero Path Prefix:** Ingress matches the `r.*` subdomain regex (`~^r\.(?<main_domain>.+)$`) and proxies `/{shortCode}` directly to `redirect:8082/r/{shortCode}` without requiring ugly `/r/` or `/s/` path prefixes.
+  > - **Root Fallback:** Visiting root `http://r.localhost/` bounces back to the parent web app `http://localhost/` via HTTP 302.
+  > - **Local Resolution:** Modern web browsers (Chrome, Edge, Firefox) automatically resolve `*.localhost` subdomains to `127.0.0.1` per [RFC 6761](https://datatracker.ietf.org/doc/html/rfc6761).
+  > - **Testing with cURL:** Specify the virtual host header:
+  >   ```bash
+  >   curl -i -H "Host: r.localhost" http://localhost/spring-launch
+  >   ```
+  >   *(Optionally, add `127.0.0.1 r.localhost` to your local `hosts` file: `C:\Windows\System32\drivers\etc\hosts` on Windows or `/etc/hosts` on Linux/macOS).*
 * **API Gateway Health Check:** `http://localhost/api/v1/health`
 * **Public Auth Endpoints:** `http://localhost/api/v1/auth/login`, `http://localhost/api/v1/auth/register`
 
@@ -165,7 +180,8 @@ The PostgreSQL container automatically runs [scripts/init.sql](scripts/init.sql)
 * **[Nginx Ingress & Reverse Proxy Guide](docs/nginx.md)** — Complete reference for reverse proxy routing, React SPA compilation, caching, and security headers.
 * **[API Endpoints Reference & Service Catalog](docs/api_endpoints_reference.md)** — Complete catalog of all HTTP REST endpoints, gRPC methods, Kafka events, and cURL cheat sheets.
 * **[Master Architecture & Design Doc](docs/url_shortener_design_doc.md)** — High-level distributed systems design, data models, and caching strategies.
+* **[Smart Routing, Campaigns & A/B Testing Master Guide](docs/smart_routing_campaigns_and_ab_testing_master_guide.md)** — Comprehensive architecture, ER models, deterministic hashing, and rollout engine for smart link routing.
 * **[API Gateway & Security Guide](docs/api_gateway_security_guide.md)** — JWT authentication filter chain, BCrypt, reactive security, and rate limiting.
-* **[Core Service Guide](docs/core_service_guide.md)** — Base62 generation, smart routing, UTM templates, campaigns, and gRPC server.
+* **[Core Service Guide](docs/core_service_guide.md)** — Base62 generation, smart routing, UTM templates, campaigns, jOOQ query acceleration, and gRPC server.
 * **[Redirect Service Guide](docs/redirect_service_guide.md)** — Sub-5ms reactive redirects, adaptive TTL caching, and asynchronous Kafka click tracking.
-* **[Analytics Service Guide](docs/analytics_service_guide.md)** — Kafka stream ingestion, MaxMind GeoIP resolution, bot detection, and SQL time-series projections.
+* **[Analytics Service Guide](docs/analytics_service_guide.md)** — Kafka batch ingestion, MaxMind GeoIP resolution, bot detection, and jOOQ time-series projections.

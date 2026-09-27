@@ -124,6 +124,9 @@ erDiagram
         uuid id PK
         string short_code
         timestamptz timestamp
+        uuid url_id FK
+        uuid campaign_id FK
+        uuid ab_test_id FK
         string variant
         string utm_source
         string utm_medium
@@ -137,6 +140,11 @@ erDiagram
         boolean is_bot
     }
 ```
+
+> [!NOTE]
+> **Flyway Migrations**:
+> * `core`: `V1__init_core_schema.sql`, `V2__drop_utm_profiles.sql`, `V3__create_campaigns_and_ab_testing.sql`, `V4__increase_short_code_length.sql` (expands `short_code` to `VARCHAR(64)` for branded vanity slugs).
+> * `analytics`: `V1__init_analytics_schema.sql`, `V2__add_variant_and_utm.sql`, `V3__add_ids_to_click_analytics.sql` (adds `url_id`, `campaign_id`, `ab_test_id` indices), `V4__increase_short_code_length.sql` (`VARCHAR(64)`).
 
 ---
 
@@ -508,13 +516,19 @@ public record ClickEvent(
 
 ### Analytical REST Endpoints (`AnalyticsController`)
 
-#### 1. A/B Test Results (`GET /api/v1/analytics/{shortCode}/ab-test`)
-Returns the real-time click volume and percentage distribution for each variant:
+Powered by **jOOQ** for dynamic predicates, group-by rollups, and zero-overhead join queries:
+
+#### 1. Dedicated A/B Test Results (`GET /api/v1/analytics/ab-tests/{identifier}`)
+Supports querying by either experiment UUID or link shortcode:
 ```json
 {
+  "testId": "a1b2c3d4-...",
   "shortCode": "hero-split",
-  "totalClicks": 12450,
+  "name": "Homepage CTA Split",
   "status": "ACTIVE",
+  "totalClicks": 12450,
+  "humanClicks": 11800,
+  "botClicks": 650,
   "variants": [
     { "variant": "A", "clicks": 6240, "percentage": 50.12, "destinationUrl": "https://site.com/v1", "isControl": true },
     { "variant": "B", "clicks": 3105, "percentage": 24.94, "destinationUrl": "https://site.com/v2", "isControl": false },
@@ -523,14 +537,31 @@ Returns the real-time click volume and percentage distribution for each variant:
 }
 ```
 
-#### 2. UTM Attribution (`GET /api/v1/analytics/{shortCode}/utm-sources`)
-Returns the distribution of clicks by traffic source:
+#### 2. Dedicated Campaign Rollup (`GET /api/v1/analytics/campaigns/{campaignId}`)
+Aggregates total volume, human/bot ratio, top-performing short links, and conversion traffic across all URLs grouped within the campaign:
+```json
+{
+  "campaignId": "4f938fae-...",
+  "campaignName": "Summer Launch 2026",
+  "totalLinks": 8,
+  "totalClicks": 84200,
+  "humanClicks": 79500,
+  "botClicks": 4700,
+  "topLinks": [
+    { "shortCode": "summer-promo", "clicks": 35200 },
+    { "shortCode": "summer-social", "clicks": 28100 }
+  ]
+}
+```
+
+#### 3. UTM Attribution (`GET /api/v1/analytics/{shortCode}/referrers` & `utm-sources`)
+Returns the distribution of clicks by traffic channel:
 ```json
 [
-  { "source": "twitter", "clicks": 5420, "percentage": 43.5 },
-  { "source": "linkedin", "clicks": 3810, "percentage": 30.6 },
-  { "source": "newsletter", "clicks": 2100, "percentage": 16.9 },
-  { "source": "direct", "clicks": 1120, "percentage": 9.0 }
+  { "name": "twitter", "count": 5420, "percentage": 43.5 },
+  { "name": "linkedin", "count": 3810, "percentage": 30.6 },
+  { "name": "newsletter", "count": 2100, "percentage": 16.9 },
+  { "name": "direct", "count": 1120, "percentage": 9.0 }
 ]
 ```
 
@@ -550,8 +581,8 @@ Returns the distribution of clicks by traffic source:
 6. `analytics` logs both events tagged with `variant="A"`.
 
 ### Scenario 2: Concluding an A/B Test
-1. After 50,000 visitors, the analytics report shows Variant B had a 12% higher conversion rate.
-2. The user clicks **"Declare Winner: Variant B"** in the dashboard.
+1. After 50,000 visitors, the analytics report shows Variant B had a higher conversion rate.
+2. The user clicks **"Promote Winner: Variant B"** in the dashboard ([PromoteWinnerDialog.jsx](../client/src/components/ab-testing/PromoteWinnerDialog.jsx)).
 3. `core` updates `ab_tests.status = 'CONCLUDED'` and `ab_tests.winning_variant = 'B'`.
 4. `core` updates Redis key `url:ab:launch` to mark `status: CONCLUDED` and `winningVariant: B`.
 5. All subsequent visitors (regardless of cookies or rolls) are routed directly to Variant B (`page-b`) in < 1ms.
@@ -561,38 +592,35 @@ Returns the distribution of clicks by traffic source:
 ## 9. Developer Step-by-Step Implementation Checklist
 
 ### Phase 1: Database Migrations
-- [ ] Run `V3__create_campaigns_and_ab_testing.sql` in `core` service.
-- [ ] Run `V2__add_variant_and_utm.sql` in `analytics` service.
+- [x] Run `V1` - `V4` Flyway migrations in `core` service (including 64-character vanity alias expansion).
+- [x] Run `V1` - `V4` Flyway migrations in `analytics` service (`url_id`, `campaign_id`, `ab_test_id`).
 
 ### Phase 2: `core` Service Updates
-- [ ] Create JPA Entities: `Campaign.java`, `AbTest.java`, `AbVariant.java`.
-- [ ] Add Repositories: `CampaignRepository.java`, `AbTestRepository.java`.
-- [ ] In `UrlCoreService.java`, add methods:
-  - `createCampaign(CreateCampaignRequest request)`
-  - `createAbTest(String shortCode, CreateAbTestRequest request)`
-  - `concludeAbTest(String shortCode, String winningVariant)`
-- [ ] In `UrlCoreController.java`, expose `/api/v1/campaigns` and `/api/v1/urls/{shortCode}/ab-test` endpoints.
-- [ ] Push JSON payload to Redis upon A/B test creation or status change.
+- [x] JPA Entities: `Campaign.java`, `AbTest.java`, `AbVariant.java`, `UrlMapping.java`.
+- [x] Repositories: Spring Data JPA + jOOQ `UrlMappingQueryRepository` for single-round-trip joins.
+- [x] DTOs with JSR-380 validation: `CreateUrlRequest`, `CreateCampaignRequest`, `CreateAbTestRequest`.
+- [x] Controller Endpoints: Full CRUD for `/api/v1/campaigns` and `/api/v1/ab-tests`.
+- [x] Push JSON payload to Redis upon A/B test creation or status change.
 
 ### Phase 3: `redirect` Service Updates
-- [ ] Update `ClickEvent.java` record with `variant`, `utmSource`, `utmMedium`, `utmCampaign`.
-- [ ] In `RedirectService.java`:
+- [x] Update `ClickEvent.java` record with `variant`, `utmSource`, `utmMedium`, `utmCampaign`.
+- [x] In `RedirectService.java`:
   - Check for `url:ab:{shortCode}` key in Redis.
   - Implement cookie check (`ab_{shortCode}`) and cumulative weighted random selector.
   - Set `Set-Cookie` header on HTTP 302 response for first-time visitors.
   - Pass the selected variant and inbound UTM parameters to `ClickEvent`.
+- [x] Configure gRPC keepalive and 5-second deadline fallback in `CoreGrpcClient.java`.
 
 ### Phase 4: `analytics` Service Updates
-- [ ] Update `ClickEvent.java` record to match `redirect` service.
-- [ ] Update `ClickAnalytics.java` entity with `variant`, `utmSource`, `utmMedium`, `utmCampaign`.
-- [ ] In `ClickEventConsumer.java`, map these fields from the event to the entity.
-- [ ] In `AnalyticsRepository.java` and `AnalyticsService.java`, add queries:
-  - `findVariantStats(shortCode)`
-  - `findUtmSourceStats(shortCode)`
-- [ ] In `AnalyticsController.java`, expose `GET /{shortCode}/ab-test` and `GET /{shortCode}/utm-sources`.
+- [x] Consume Kafka batches (`ClickEventConsumer.java`) with manual acknowledgment.
+- [x] True single-query bulk insert engine with `ClickAnalyticsBatchRepository` (`JdbcTemplate.batchUpdate` + `reWriteBatchedInserts=true`).
+- [x] Query acceleration with jOOQ `ClickAnalyticsQueryRepository`.
+- [x] Expose dedicated `/api/v1/analytics/campaigns/{campaignId}` and `/api/v1/analytics/ab-tests/{identifier}` endpoints.
 
 ### Phase 5: Frontend (`client`) Updates
-- [ ] In `client/src/api/url.js` and `client/src/api/analytics.js`, add corresponding API client functions.
-- [ ] In [Campaigns.jsx](../client/src/pages/Campaigns.jsx), wire real campaign creation and link grouping.
-- [ ] In [create-link-modal.jsx](../client/src/components/dashboard/create-link-modal.jsx), add the "A/B Testing" toggle with dynamic variant rows and weight sliders.
-- [ ] In [analytics-overview.jsx](../client/src/components/dashboard/analytics-overview.jsx), add the A/B Split Distribution card.
+- [x] Wire TanStack Query hooks for campaigns and A/B tests ([abTestingQueries.js](../client/src/queries/abTestingQueries.js)).
+- [x] Build dedicated management pages: [Campaigns.jsx](../client/src/pages/Campaigns.jsx), [CampaignDetail.jsx](../client/src/pages/CampaignDetail.jsx), [AbTesting.jsx](../client/src/pages/AbTesting.jsx), [AbTestDetail.jsx](../client/src/pages/AbTestDetail.jsx).
+- [x] Dynamic modal editing: [EditAbTestModal.jsx](../client/src/components/ab-testing/EditAbTestModal.jsx) and [PromoteWinnerDialog.jsx](../client/src/components/ab-testing/PromoteWinnerDialog.jsx).
+- [x] Live UTM Builder view with parameter presets: [utm-builder-view.jsx](../client/src/components/dashboard/utm-builder-view.jsx).
+- [x] Recharts telemetry styled exclusively with shadcn design system tokens.
+
