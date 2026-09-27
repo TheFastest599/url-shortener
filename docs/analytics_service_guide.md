@@ -87,6 +87,29 @@ CREATE INDEX IF NOT EXISTS idx_click_analytics_utm_campaign ON click_analytics(s
 CREATE INDEX IF NOT EXISTS idx_click_analytics_utm_source ON click_analytics(short_code, utm_source);
 ```
 
+#### Migration V3: Adding Decoupled Entity UUID Foreign References
+Create Flyway migration at `analytics/src/main/resources/db/migration/V3__add_ids_to_click_analytics.sql`:
+
+```sql
+-- V3__add_ids_to_click_analytics.sql: Add url_id, campaign_id, and ab_test_id
+ALTER TABLE click_analytics
+    ADD COLUMN IF NOT EXISTS url_id UUID DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS campaign_id UUID DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS ab_test_id UUID DEFAULT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_click_analytics_url_id ON click_analytics(url_id);
+CREATE INDEX IF NOT EXISTS idx_click_analytics_campaign_id ON click_analytics(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_click_analytics_ab_test_id ON click_analytics(ab_test_id);
+```
+
+#### Migration V4: Branded Custom Vanity Alias Expansion
+Create Flyway migration at `analytics/src/main/resources/db/migration/V4__increase_short_code_length.sql`:
+
+```sql
+-- V4__increase_short_code_length.sql: Increase short_code column length to 64 characters
+ALTER TABLE click_analytics ALTER COLUMN short_code TYPE VARCHAR(64);
+```
+
 ---
 
 ### 2. Configuration (`application.yaml`)
@@ -214,6 +237,7 @@ public class ClickAnalytics {
     private String referrer;
 
     @Column(name = "variant")
+    @Column(name = "variant")
     private String variant;
 
     @Column(name = "utm_source")
@@ -227,177 +251,182 @@ public class ClickAnalytics {
 
     @Column(name = "is_bot", nullable = false)
     private Boolean isBot;
+
+    @Column(name = "url_id")
+    private UUID urlId;
+
+    @Column(name = "campaign_id")
+    private UUID campaignId;
+
+    @Column(name = "ab_test_id")
+    private UUID abTestId;
 }
 ```
 
 ---
 
-### 2. Spring Data Projections for Complex SQL Aggregations
+### 2. Projections & Record Implementations
 
-File: `analytics/src/main/java/com/urlshortener/analytics/repository/projection/TimeSeriesProjection.java`
+File: `analytics/src/main/java/com/urlshortener/analytics/repository/projection/TimeSeriesRecord.java`
 ```java
 package com.urlshortener.analytics.repository.projection;
 
-public interface TimeSeriesProjection {
-    String getLabel();
-    long getCount();
+public record TimeSeriesRecord(String label, long count) implements TimeSeriesProjection {
+    @Override public String getLabel() { return label; }
+    @Override public long getCount() { return count; }
 }
 ```
 
-File: `analytics/src/main/java/com/urlshortener/analytics/repository/projection/StatProjection.java`
+File: `analytics/src/main/java/com/urlshortener/analytics/repository/projection/StatRecord.java`
 ```java
 package com.urlshortener.analytics.repository.projection;
 
-public interface StatProjection {
-    String getName();
-    long getCount();
+public record StatRecord(String name, long count) implements StatProjection {
+    @Override public String getName() { return name; }
+    @Override public long getCount() { return count; }
 }
 ```
 
-File: `analytics/src/main/java/com/urlshortener/analytics/repository/projection/CityStatProjection.java`
+File: `analytics/src/main/java/com/urlshortener/analytics/repository/projection/CityStatRecord.java`
 ```java
 package com.urlshortener.analytics.repository.projection;
 
-public interface CityStatProjection {
-    String getCity();
-    String getCountry();
-    long getCount();
+public record CityStatRecord(String city, String country, long count) implements CityStatProjection {
+    @Override public String getCity() { return city; }
+    @Override public String getCountry() { return country; }
+    @Override public long getCount() { return count; }
 }
 ```
 
 ---
 
-### 3. `ClickAnalyticsRepository.java` (High-Performance Aggregations)
+### 3. `ClickAnalyticsQueryRepository.java` (jOOQ Type-Safe Aggregations)
+File: `analytics/src/main/java/com/urlshortener/analytics/repository/ClickAnalyticsQueryRepository.java`
+
+Instead of static JPA `@Query` strings, the Analytics service uses **jOOQ** for dynamic predicates, database-native `date_trunc`, dynamic bot filtering, and multi-tenant campaign / A/B test aggregations:
+
+```java
+package com.urlshortener.analytics.repository;
+
+import com.urlshortener.analytics.repository.projection.*;
+import lombok.RequiredArgsConstructor;
+import org.jooq.Condition;
+import org.jooq.DSLContext;
+import org.jooq.Field;
+import org.jooq.impl.DSL;
+import org.springframework.stereotype.Repository;
+
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.UUID;
+
+import static com.urlshortener.analytics.jooq.tables.ClickAnalytics.CLICK_ANALYTICS;
+
+@Repository
+@RequiredArgsConstructor
+public class ClickAnalyticsQueryRepository {
+
+    private final DSLContext dsl;
+
+    // --- Basic Counts by Shortcode, Campaign, and A/B Test ---
+    public long countByShortCode(String shortCode) {
+        return countWhere(CLICK_ANALYTICS.SHORT_CODE.eq(shortCode));
+    }
+
+    public long countHumanClicksByShortCode(String shortCode) {
+        return countWhere(CLICK_ANALYTICS.SHORT_CODE.eq(shortCode).and(CLICK_ANALYTICS.IS_BOT.isFalse()));
+    }
+
+    public long countBotClicksByShortCode(String shortCode) {
+        return countWhere(CLICK_ANALYTICS.SHORT_CODE.eq(shortCode).and(CLICK_ANALYTICS.IS_BOT.isTrue()));
+    }
+
+    public long countByCampaignId(UUID campaignId) {
+        return countWhere(CLICK_ANALYTICS.CAMPAIGN_ID.eq(campaignId));
+    }
+
+    public long countByAbTestId(UUID abTestId) {
+        return countWhere(CLICK_ANALYTICS.AB_TEST_ID.eq(abTestId));
+    }
+
+    // --- Dynamic Time-Series with date_trunc ---
+    public List<TimeSeriesProjection> getTimeSeriesByShortCode(String shortCode, Instant since, String interval, String timezone) {
+        String truncUnit = "HOUR".equalsIgnoreCase(interval) ? "hour" : "day";
+        Field<OffsetDateTime> dateTrunc = DSL.field(
+                "date_trunc({0}, timezone({1}, {2}))",
+                OffsetDateTime.class,
+                DSL.inline(truncUnit),
+                DSL.inline(timezone),
+                CLICK_ANALYTICS.TIMESTAMP
+        );
+
+        return dsl.select(
+                DSL.field("to_char({0}, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')", String.class, dateTrunc).as("label"),
+                DSL.count().cast(Long.class).as("count")
+        )
+        .from(CLICK_ANALYTICS)
+        .where(CLICK_ANALYTICS.SHORT_CODE.eq(shortCode)
+                .and(CLICK_ANALYTICS.TIMESTAMP.ge(OffsetDateTime.ofInstant(since, ZoneOffset.UTC))))
+        .groupBy(dateTrunc)
+        .orderBy(dateTrunc.asc())
+        .fetch(r -> new TimeSeriesRecord(r.get("label", String.class), r.get("count", Long.class)));
+    }
+
+    // --- Categorical Leaderboard Aggregations ---
+    public List<StatProjection> getTopCountriesByShortCode(String shortCode, boolean includeBots, int limit) {
+        Condition condition = CLICK_ANALYTICS.SHORT_CODE.eq(shortCode);
+        if (!includeBots) condition = condition.and(CLICK_ANALYTICS.IS_BOT.isFalse());
+
+        return dsl.select(
+                DSL.coalesce(CLICK_ANALYTICS.GEO_COUNTRY, "Unknown").as("name"),
+                DSL.count().cast(Long.class).as("count")
+        )
+        .from(CLICK_ANALYTICS)
+        .where(condition)
+        .groupBy(CLICK_ANALYTICS.GEO_COUNTRY)
+        .orderBy(DSL.count().desc())
+        .limit(limit)
+        .fetch(r -> new StatRecord(r.get("name", String.class), r.get("count", Long.class)));
+    }
+
+    public List<StatProjection> getVariantSplitAnalyticsByShortCode(String shortCode) {
+        return dsl.select(
+                CLICK_ANALYTICS.VARIANT.as("name"),
+                DSL.count().cast(Long.class).as("count")
+        )
+        .from(CLICK_ANALYTICS)
+        .where(CLICK_ANALYTICS.SHORT_CODE.eq(shortCode).and(CLICK_ANALYTICS.VARIANT.isNotNull()))
+        .groupBy(CLICK_ANALYTICS.VARIANT)
+        .orderBy(DSL.count().desc())
+        .fetch(r -> new StatRecord(r.get("name", String.class), r.get("count", Long.class)));
+    }
+
+    private long countWhere(Condition condition) {
+        Long c = dsl.selectCount().from(CLICK_ANALYTICS).where(condition).fetchOne(0, Long.class);
+        return c != null ? c : 0L;
+    }
+}
+```
+
+---
+
+### 4. `ClickAnalyticsRepository.java` (JPA Entity Operations)
 File: `analytics/src/main/java/com/urlshortener/analytics/repository/ClickAnalyticsRepository.java`
 
 ```java
 package com.urlshortener.analytics.repository;
 
 import com.urlshortener.analytics.entity.ClickAnalytics;
-import com.urlshortener.analytics.repository.projection.CityStatProjection;
-import com.urlshortener.analytics.repository.projection.StatProjection;
-import com.urlshortener.analytics.repository.projection.TimeSeriesProjection;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
 @Repository
 public interface ClickAnalyticsRepository extends JpaRepository<ClickAnalytics, UUID> {
-
-    long countByShortCode(String shortCode);
-
-    @Query("SELECT COUNT(c) FROM ClickAnalytics c WHERE c.shortCode = :shortCode AND c.isBot = false")
-    long countHumanClicksByShortCode(@Param("shortCode") String shortCode);
-
-    @Query("SELECT COUNT(c) FROM ClickAnalytics c WHERE c.shortCode = :shortCode AND c.isBot = true")
-    long countBotClicksByShortCode(@Param("shortCode") String shortCode);
-
-    // --- TIME-SERIES GRAPH DATA ---
-
-    @Query(value = """
-        SELECT to_char(date_trunc('hour', timezone('UTC', timestamp)), 'YYYY-MM-DD"T"HH24:00:00"Z"') AS label,
-               COUNT(*) AS count
-        FROM click_analytics
-        WHERE short_code = :shortCode AND timestamp >= :since
-        GROUP BY date_trunc('hour', timezone('UTC', timestamp))
-        ORDER BY date_trunc('hour', timezone('UTC', timestamp)) ASC
-        """, nativeQuery = true)
-    List<TimeSeriesProjection> findHourlyTimeSeries(@Param("shortCode") String shortCode, @Param("since") Instant since);
-
-    @Query(value = """
-        SELECT to_char(date_trunc('day', timezone('UTC', timestamp)), 'YYYY-MM-DD"T"00:00:00"Z"') AS label,
-               COUNT(*) AS count
-        FROM click_analytics
-        WHERE short_code = :shortCode AND timestamp >= :since
-        GROUP BY date_trunc('day', timezone('UTC', timestamp))
-        ORDER BY date_trunc('day', timezone('UTC', timestamp)) ASC
-        """, nativeQuery = true)
-    List<TimeSeriesProjection> findDailyTimeSeries(@Param("shortCode") String shortCode, @Param("since") Instant since);
-
-    // --- CATEGORICAL METRICS ---
-
-    @Query(value = """
-        SELECT COALESCE(geo_country, 'Unknown') AS name, COUNT(*) AS count
-        FROM click_analytics
-        WHERE short_code = :shortCode AND (:includeBots = true OR is_bot = false)
-        GROUP BY geo_country
-        ORDER BY count DESC
-        LIMIT :limit
-        """, nativeQuery = true)
-    List<StatProjection> findTopCountries(@Param("shortCode") String shortCode, @Param("includeBots") boolean includeBots, @Param("limit") int limit);
-
-    @Query(value = """
-        SELECT COALESCE(geo_city, 'Unknown') AS city, COALESCE(geo_country, 'Unknown') AS country, COUNT(*) AS count
-        FROM click_analytics
-        WHERE short_code = :shortCode AND geo_city IS NOT NULL AND (:includeBots = true OR is_bot = false)
-        GROUP BY geo_city, geo_country
-        ORDER BY count DESC
-        LIMIT :limit
-        """, nativeQuery = true)
-    List<CityStatProjection> findTopCities(@Param("shortCode") String shortCode, @Param("includeBots") boolean includeBots, @Param("limit") int limit);
-
-    @Query(value = """
-        SELECT COALESCE(browser, 'Other') AS name, COUNT(*) AS count
-        FROM click_analytics
-        WHERE short_code = :shortCode AND (:includeBots = true OR is_bot = false)
-        GROUP BY browser
-        ORDER BY count DESC
-        LIMIT :limit
-        """, nativeQuery = true)
-    List<StatProjection> findTopBrowsers(@Param("shortCode") String shortCode, @Param("includeBots") boolean includeBots, @Param("limit") int limit);
-
-    @Query(value = """
-        SELECT COALESCE(operating_system, 'Other') AS name, COUNT(*) AS count
-        FROM click_analytics
-        WHERE short_code = :shortCode AND (:includeBots = true OR is_bot = false)
-        GROUP BY operating_system
-        ORDER BY count DESC
-        LIMIT :limit
-        """, nativeQuery = true)
-    List<StatProjection> findTopOperatingSystems(@Param("shortCode") String shortCode, @Param("includeBots") boolean includeBots, @Param("limit") int limit);
-
-    @Query(value = """
-        SELECT COALESCE(device_type, 'Desktop') AS name, COUNT(*) AS count
-        FROM click_analytics
-        WHERE short_code = :shortCode AND (:includeBots = true OR is_bot = false)
-        GROUP BY device_type
-        ORDER BY count DESC
-        """, nativeQuery = true)
-    List<StatProjection> findTopDeviceTypes(@Param("shortCode") String shortCode, @Param("includeBots") boolean includeBots, @Param("limit") int limit);
-
-    @Query(value = """
-        SELECT COALESCE(referrer, 'Direct / None') AS name, COUNT(*) AS count
-        FROM click_analytics
-        WHERE short_code = :shortCode AND (:includeBots = true OR is_bot = false)
-        GROUP BY referrer
-        ORDER BY count DESC
-        LIMIT :limit
-        """, nativeQuery = true)
-    List<StatProjection> findTopReferrers(@Param("shortCode") String shortCode, @Param("includeBots") boolean includeBots, @Param("limit") int limit);
-
-    @Query(value = """
-        SELECT COALESCE(variant, 'Control') AS name, COUNT(*) AS count
-        FROM click_analytics
-        WHERE short_code = :shortCode AND variant IS NOT NULL
-        GROUP BY variant
-        ORDER BY count DESC
-        """, nativeQuery = true)
-    List<StatProjection> findVariantBreakdown(@Param("shortCode") String shortCode);
-
-    @Query(value = """
-        SELECT COALESCE(utm_source, 'Direct') AS name, COUNT(*) AS count
-        FROM click_analytics
-        WHERE short_code = :shortCode AND utm_source IS NOT NULL
-        GROUP BY utm_source
-        ORDER BY count DESC
-        LIMIT :limit
-        """, nativeQuery = true)
-    List<StatProjection> findTopUtmSources(@Param("shortCode") String shortCode, @Param("limit") int limit);
+    // Minimal standard Spring Data repository for entity lookup; complex queries handled by ClickAnalyticsQueryRepository
 }
 ```
 
@@ -1081,33 +1110,81 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/v1/analytics")
 @RequiredArgsConstructor
+@Validated
 public class AnalyticsController {
 
     private final AnalyticsService analyticsService;
 
     /**
-     * Complete Dashboard Overview (Total clicks, human/bot ratio, time-series graph, top countries, devices, browsers, referrers)
+     * Complete Dashboard Overview by Short Code
      */
     @GetMapping("/{shortCode}")
     public ResponseEntity<AnalyticsOverviewDto> getOverview(
-            @PathVariable String shortCode,
-            @RequestParam(defaultValue = "30") int days,
-            @RequestParam(required = false) String interval,
-            @RequestParam(defaultValue = "UTC") String timezone,
+            @PathVariable @NotBlank @Size(max = 64, message = "Short code cannot exceed 64 characters") String shortCode,
+            @RequestParam(defaultValue = "30") @Min(value = 1, message = "Days must be at least 1") @Max(value = 365, message = "Days cannot exceed 365") int days,
+            @RequestParam(required = false) @Pattern(regexp = "^$|^(?i)(HOUR|DAY|WEEK|MONTH)$", message = "Interval must be HOUR, DAY, WEEK, or MONTH") String interval,
+            @RequestParam(defaultValue = "UTC") @Size(max = 50, message = "Timezone string too long") String timezone,
             @RequestParam(defaultValue = "false") boolean includeBots
     ) {
         return ResponseEntity.ok(analyticsService.getOverview(shortCode, days, interval, timezone, includeBots));
     }
 
     /**
-     * Dedicated Time-Series Graph Data for Chart.js / Recharts / ApexCharts
+     * Complete Dashboard Overview by URL UUID
+     */
+    @GetMapping("/urls/{urlId}")
+    public ResponseEntity<AnalyticsOverviewDto> getUrlOverviewById(
+            @PathVariable UUID urlId,
+            @RequestParam(defaultValue = "30") @Min(value = 1, message = "Days must be at least 1") @Max(value = 365, message = "Days cannot exceed 365") int days,
+            @RequestParam(required = false) @Pattern(regexp = "^$|^(?i)(HOUR|DAY|WEEK|MONTH)$", message = "Interval must be HOUR, DAY, WEEK, or MONTH") String interval,
+            @RequestParam(defaultValue = "UTC") @Size(max = 50, message = "Timezone string too long") String timezone,
+            @RequestParam(defaultValue = "false") boolean includeBots
+    ) {
+        return ResponseEntity.ok(analyticsService.getUrlAnalyticsById(urlId, days, interval, timezone, includeBots));
+    }
+
+    /**
+     * Dedicated Campaign-Level Aggregated Analytics by Campaign UUID
+     */
+    @GetMapping("/campaigns/{campaignId}")
+    public ResponseEntity<CampaignAnalyticsDto> getCampaignAnalytics(
+            @PathVariable UUID campaignId,
+            @RequestParam(defaultValue = "30") @Min(value = 1, message = "Days must be at least 1") @Max(value = 365, message = "Days cannot exceed 365") int days,
+            @RequestParam(required = false) @Pattern(regexp = "^$|^(?i)(HOUR|DAY|WEEK|MONTH)$", message = "Interval must be HOUR, DAY, WEEK, or MONTH") String interval,
+            @RequestParam(defaultValue = "UTC") @Size(max = 50, message = "Timezone string too long") String timezone,
+            @RequestParam(defaultValue = "false") boolean includeBots
+    ) {
+        return ResponseEntity.ok(analyticsService.getCampaignAnalytics(campaignId, days, interval, timezone, includeBots));
+    }
+
+    /**
+     * Dedicated A/B Test Analytics (Supports either test UUID or shortCode)
+     */
+    @GetMapping("/ab-tests/{identifier}")
+    public ResponseEntity<AbTestAnalyticsDto> getAbTestAnalytics(
+            @PathVariable @NotBlank @Size(min = 1, max = 64, message = "Identifier must be between 1 and 64 characters") String identifier,
+            @RequestParam(defaultValue = "30") @Min(value = 1, message = "Days must be at least 1") @Max(value = 365, message = "Days cannot exceed 365") int days,
+            @RequestParam(required = false) @Pattern(regexp = "^$|^(?i)(HOUR|DAY|WEEK|MONTH)$", message = "Interval must be HOUR, DAY, WEEK, or MONTH") String interval,
+            @RequestParam(defaultValue = "UTC") @Size(max = 50, message = "Timezone string too long") String timezone,
+            @RequestParam(defaultValue = "false") boolean includeBots
+    ) {
+        try {
+            UUID testUuid = UUID.fromString(identifier);
+            return ResponseEntity.ok(analyticsService.getAbTestAnalytics(testUuid, days, interval, timezone, includeBots));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.ok(analyticsService.getAbTestAnalyticsByCode(identifier, days, interval, timezone, includeBots));
+        }
+    }
+
+    /**
+     * Dedicated Time-Series Graph Data for Chart.js / Recharts
      */
     @GetMapping("/{shortCode}/timeseries")
     public ResponseEntity<List<TimeSeriesPoint>> getTimeSeries(
-            @PathVariable String shortCode,
-            @RequestParam(defaultValue = "DAY") String interval,
-            @RequestParam(defaultValue = "30") int days,
-            @RequestParam(defaultValue = "UTC") String timezone
+            @PathVariable @NotBlank @Size(max = 64, message = "Short code cannot exceed 64 characters") String shortCode,
+            @RequestParam(defaultValue = "DAY") @Pattern(regexp = "^(?i)(HOUR|DAY|WEEK|MONTH)$", message = "Interval must be HOUR, DAY, WEEK, or MONTH") String interval,
+            @RequestParam(defaultValue = "30") @Min(value = 1, message = "Days must be at least 1") @Max(value = 365, message = "Days cannot exceed 365") int days,
+            @RequestParam(defaultValue = "UTC") @Size(max = 50, message = "Timezone string too long") String timezone
     ) {
         return ResponseEntity.ok(analyticsService.getTimeSeries(shortCode, interval, days, timezone));
     }
@@ -1117,9 +1194,9 @@ public class AnalyticsController {
      */
     @GetMapping("/{shortCode}/countries")
     public ResponseEntity<List<StatMetricDto>> getCountries(
-            @PathVariable String shortCode,
+            @PathVariable @NotBlank @Size(max = 64, message = "Short code cannot exceed 64 characters") String shortCode,
             @RequestParam(defaultValue = "false") boolean includeBots,
-            @RequestParam(defaultValue = "10") int limit
+            @RequestParam(defaultValue = "10") @Min(1) @Max(100) int limit
     ) {
         return ResponseEntity.ok(analyticsService.getCountries(shortCode, includeBots, limit));
     }
@@ -1129,9 +1206,9 @@ public class AnalyticsController {
      */
     @GetMapping("/{shortCode}/browsers")
     public ResponseEntity<List<StatMetricDto>> getBrowsers(
-            @PathVariable String shortCode,
+            @PathVariable @NotBlank @Size(max = 64, message = "Short code cannot exceed 64 characters") String shortCode,
             @RequestParam(defaultValue = "false") boolean includeBots,
-            @RequestParam(defaultValue = "10") int limit
+            @RequestParam(defaultValue = "10") @Min(1) @Max(100) int limit
     ) {
         return ResponseEntity.ok(analyticsService.getBrowsers(shortCode, includeBots, limit));
     }
@@ -1141,30 +1218,54 @@ public class AnalyticsController {
      */
     @GetMapping("/{shortCode}/referrers")
     public ResponseEntity<List<StatMetricDto>> getReferrers(
-            @PathVariable String shortCode,
+            @PathVariable @NotBlank @Size(max = 64, message = "Short code cannot exceed 64 characters") String shortCode,
             @RequestParam(defaultValue = "false") boolean includeBots,
-            @RequestParam(defaultValue = "10") int limit
+            @RequestParam(defaultValue = "10") @Min(1) @Max(100) int limit
     ) {
         return ResponseEntity.ok(analyticsService.getReferrers(shortCode, includeBots, limit));
     }
+}
+```
 
-    /**
-     * A/B Testing Variant Split Analytics (Conversion / Click share for Variant A, B, C...)
-     */
-    @GetMapping("/{shortCode}/ab-test")
-    public ResponseEntity<List<StatMetricDto>> getVariantBreakdown(@PathVariable String shortCode) {
-        return ResponseEntity.ok(analyticsService.getVariantBreakdown(shortCode));
-    }
+---
 
-    /**
-     * Inbound UTM Traffic Source Attribution (twitter, reddit, newsletter, etc.)
-     */
-    @GetMapping("/{shortCode}/utm-sources")
-    public ResponseEntity<List<StatMetricDto>> getUtmSources(
-            @PathVariable String shortCode,
-            @RequestParam(defaultValue = "10") int limit
-    ) {
-        return ResponseEntity.ok(analyticsService.getUtmSources(shortCode, limit));
+### 4. `GlobalExceptionHandler.java` (RFC-7807 Problem Details)
+File: `analytics/src/main/java/com/urlshortener/analytics/exception/GlobalExceptionHandler.java`
+
+```java
+package com.urlshortener.analytics.exception;
+
+import jakarta.validation.ConstraintViolationException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
+
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<Map<String, Object>> handleConstraintViolation(ConstraintViolationException ex) {
+        Map<String, String> fieldErrors = new HashMap<>();
+        ex.getConstraintViolations().forEach(cv -> {
+            String property = cv.getPropertyPath().toString();
+            String field = property.substring(property.lastIndexOf('.') + 1);
+            fieldErrors.put(field, cv.getMessage());
+        });
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("status", HttpStatus.BAD_REQUEST.value());
+        body.put("error", "Validation Failed");
+        body.put("message", "Request parameter validation failed");
+        body.put("fieldErrors", fieldErrors);
+        body.put("timestamp", Instant.now());
+
+        return ResponseEntity.badRequest().body(body);
     }
 }
 ```

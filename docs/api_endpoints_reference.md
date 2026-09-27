@@ -207,22 +207,19 @@ All `/api/v1/urls/**` requests are routed via Gateway with JWT verification and 
 ---
 
 ### 3.3 Get URL by ID
-- **Method / Path:** `GET /api/v1/urls/{urlId}`
+### 3.3 Get URL by ID or Slug
+- **Method / Path:** `GET /api/v1/urls/{urlId}` or `GET /api/v1/urls/code/{shortCode}`
 - **Header:** `Authorization: Bearer <token>`
 - **Response (`200 OK`):** URL mapping entity details.
 
 ---
 
-### 3.4 Get URL by Shortcode
-- **Method / Path:** `GET /api/v1/urls/short/{shortCode}`
-- **Description:** Internal/public query to inspect URL mapping by its slug.
-- **Response (`200 OK`):** URL mapping entity details.
-
----
-
-### 3.5 Update Short URL
-- **Method / Path:** `PUT /api/v1/urls/{urlId}`
+### 3.4 Update Short URL
+- **Method / Path:** `PUT /api/v1/urls/{urlId}` or `PUT /api/v1/urls/code/{shortCode}`
 - **Header:** `Authorization: Bearer <token>`
+- **Validation Rules:**
+  - `destinationUrl`: Must be a valid URL format (`http://` or `https://`).
+  - `customAlias`: Optional, 1 to 64 alphanumeric characters, hyphens, or underscores (`^[a-zA-Z0-9_-]+$`).
 - **Request Body:**
   ```json
   {
@@ -236,51 +233,81 @@ All `/api/v1/urls/**` requests are routed via Gateway with JWT verification and 
 
 ---
 
-### 3.6 Delete Short URL
-- **Method / Path:** `DELETE /api/v1/urls/{urlId}`
+### 3.5 Delete Short URL
+- **Method / Path:** `DELETE /api/v1/urls/{urlId}` or `DELETE /api/v1/urls/code/{shortCode}`
 - **Header:** `Authorization: Bearer <token>`
-- **Response (`204 No Content`):** URL mapping deleted.
+- **Response (`204 No Content`):** URL mapping deleted. Redis cache key evicted immediately.
 
 ---
 
-### 3.7 Campaign Management
-- **`POST /api/v1/campaigns`**: Create a new marketing campaign folder.
+### 3.6 Campaign Management
+- **`POST /api/v1/campaigns`**: Create a marketing campaign folder.
+  - **Validation:** `name` is required (`@NotBlank`, 1–100 chars), `description` optional (max 500 chars).
   ```json
   {
     "name": "Summer Launch 2026",
-    "description": "Multi-channel launch campaign"
+    "description": "Multi-channel launch campaign across search and social"
   }
   ```
-- **`GET /api/v1/campaigns`**: List all campaigns owned by the user.
-- **`GET /api/v1/campaigns/{id}`**: Get specific campaign details and its associated short URLs.
-- **`DELETE /api/v1/campaigns/{id}`**: Delete campaign (associated links are unassigned, not deleted).
+- **`GET /api/v1/campaigns`**: List campaigns. Supports pagination and search:
+  - Query params: `page` (default: 0), `size` (default: 10), `search` (filter by name/description), `sortBy` (`name` | `createdAt`), `direction` (`ASC` | `DESC`).
+  - If `page` is omitted, returns a flat array of all user campaigns.
+- **`GET /api/v1/campaigns/{id}`**: Get campaign details by UUID along with aggregated link counts.
+- **`PUT /api/v1/campaigns/{id}`**: Update campaign metadata:
+  ```json
+  {
+    "name": "Summer Launch 2026 - Extended",
+    "description": "Extended multi-channel campaign"
+  }
+  ```
+- **`GET /api/v1/campaigns/{id}/urls`**: Retrieve all short URLs assigned to the campaign.
+- **`DELETE /api/v1/campaigns/{id}`**: Delete campaign (associated links are unlinked by setting `campaign_id = NULL`, preserving the URLs).
 
 ---
 
-### 3.8 A/B/n Multivariate Testing Management
-- **`POST /api/v1/urls/{shortCode}/ab-test`**: Configure or start an A/B/n test.
+### 3.7 A/B/n Multivariate Testing Management
+The platform provides both top-level resource endpoints (`/api/v1/ab-tests`) and shortcode-scoped aliases (`/api/v1/urls/{shortCode}/ab-test`).
+
+#### Top-Level Resource Endpoints:
+- **`GET /api/v1/ab-tests`**: Paginated search across all user experiments:
+  - Query params: `page` (int), `size` (int), `search` (name), `status` (`ACTIVE` | `PAUSED` | `CONCLUDED`), `sortBy`, `direction`.
+- **`POST /api/v1/ab-tests`**: Create and launch an A/B test.
+  - **Validation Rules:**
+    - `shortCode`: Required, 1 to 64 chars (`@NotBlank`).
+    - `name`: Required, 1 to 100 chars (`@NotBlank`).
+    - `cookieTtlSeconds`: Integer, minimum 60 seconds (defaults to 2,592,000 / 30 days).
+    - `variants`: Minimum 2 variants, maximum 4 variants. Variant weights must sum to **exactly 100%**. Each destination URL must be valid.
   ```json
   {
-    "name": "Landing Page Copy Test",
+    "shortCode": "summer-promo",
+    "name": "Summer Landing Page Copy Test",
+    "cookieTtlSeconds": 2592000,
     "variants": [
       { "key": "A", "destinationUrl": "https://site.com/v1", "weight": 50, "isControl": true },
-      { "key": "B", "destinationUrl": "https://site.com/v2", "weight": 25, "isControl": false },
-      { "key": "C", "destinationUrl": "https://site.com/v3", "weight": 25, "isControl": false }
+      { "key": "B", "destinationUrl": "https://site.com/v2", "weight": 50, "isControl": false }
     ]
   }
   ```
-- **`GET /api/v1/urls/{shortCode}/ab-test`**: Get active A/B test status and variant weights.
-- **`PUT /api/v1/urls/{shortCode}/ab-test/status`**: Update test status (`ACTIVE`, `PAUSED`, `CONCLUDED`).
+- **`GET /api/v1/ab-tests/{id}`**: Get experiment configuration, variant distributions, and current status.
+- **`PUT /api/v1/ab-tests/{id}`**: Update experiment variants, weights (must sum to 100%), and cookie TTL.
+- **`PUT /api/v1/ab-tests/{id}/status`**: Lifecycle transitions:
   ```json
   {
     "status": "CONCLUDED",
     "winningVariant": "B"
   }
   ```
+- **`DELETE /api/v1/ab-tests/{id}`**: Deletes the test. Traffic routing reverts to the short link's original default destination URL.
+
+#### Shortcode-Scoped Aliases:
+- **`GET /api/v1/ab-tests/code/{shortCode}`** or **`GET /api/v1/urls/{shortCode}/ab-test`**: Retrieve test by shortcode.
+- **`POST /api/v1/urls/{shortCode}/ab-test`**: Configure test using path shortcode.
+- **`PUT /api/v1/urls/{shortCode}/ab-test/status`**: Update status using path shortcode.
+- **`DELETE /api/v1/urls/{shortCode}/ab-test`**: Delete test using path shortcode.
 
 ---
 
-### 3.9 gRPC Server Interface (`port: 9090`)
+### 3.8 gRPC Server Interface (`port: 9090`)
 Core hosts the binary **`UrlService`** interface defined in `url_service.proto`:
 
 ```protobuf
@@ -294,28 +321,28 @@ message UrlResponse {
   bool is_active = 2;
   bool is_found = 3;
   string short_code = 4;
-  string ab_rules_json = 5;      // Optional: A/B variant JSON configuration
-  string smart_rules_json = 6;   // Optional: Device and Geo targeting rules
+  string ab_rules_json = 5;      // A/B test active variants and weights configuration
+  string smart_rules_json = 6;   // Device and Geo targeting rules
 }
 ```
 
-- **`GetDestinationUrl`**: Used by Redirect service to fetch destination URLs and active rules on Redis cache misses.
-- **`CreateUrlMapping`**: Programmatic creation via gRPC RPC.
+- **Resilience**: Configured with keepalive permit settings (`permit-keep-alive-time: 10s`, `permit-keep-alive-without-calls: true`) to maintain persistent channel health with the Redirect service.
 
 ---
 
 ## 4. High-Throughput Redirection Service (`redirect` :8082)
 
-Routed via Gateway at `http://localhost:8080/r/{shortCode}`.
+Routed via Gateway at `http://localhost:8080/r/{shortCode}` or directly at `:8082/r/{shortCode}`.
 
 ### 4.1 Execute URL Redirection
 - **Method / Path:** `GET /r/{shortCode}` (or `GET /s/{shortCode}`)
 - **Auth Required:** No (Public High-Throughput Endpoint)
 - **Execution Flow:**
   1. Checks **Redis Cache** (`url:redirect:{shortCode}`).
-  2. If Cache Miss: Queries Core Service over **gRPC (`:9090`)** and populates Redis with adaptive TTL.
-  3. Emits a non-blocking click event to Kafka (`url-clicks`).
-  4. Returns **`HTTP 302 Found`** with target `Location` header.
+  2. If Cache Miss: Queries Core Service over **gRPC (`:9090`)** with a 5-second deadline and populates Redis with adaptive TTL.
+  3. **A/B Test Evaluation**: If A/B rules exist, checks for visitor cookie (`ab_{experimentId}` or `ab_{shortCode}`). If absent, evaluates weighted random distribution, selects variant, and returns `Set-Cookie` header.
+  4. Emits an asynchronous, non-blocking click event to Kafka (`url-clicks`) carrying IP, User-Agent, Referrer, UTM parameters, and selected variant.
+  5. Returns **`HTTP 302 Found`** with target `Location` header.
 - **Response (`302 Found`):**
   `Location: https://spring.io/projects/spring-boot`
 - **Response on Inactive / Missing:** `404 Not Found`.
@@ -324,161 +351,177 @@ Routed via Gateway at `http://localhost:8080/r/{shortCode}`.
 
 ## 5. Telemetry & Analytics Service (`analytics` :8083)
 
-Routed via Gateway at `http://localhost:8080/api/v1/analytics/**`.
+Routed via Gateway at `http://localhost:8080/api/v1/analytics/**`. Powered by **jOOQ** for dynamic SQL filtering and multi-dimensional aggregations.
 
-### 5.1 Comprehensive Analytics Overview
-- **Method / Path:** `GET /api/v1/analytics/{shortCode}?days={N}&includeBots={bool}`
+### 5.1 Comprehensive Analytics Overview by Shortcode
+- **Method / Path:** `GET /api/v1/analytics/{shortCode}?days={N}&interval={INTERVAL}&timezone={TZ}&includeBots={bool}`
 - **Header:** `Authorization: Bearer <token>`
-- **Query Params:**
-  - `days` (integer, default: `30`): Historical lookback window.
-  - `includeBots` (boolean, default: `false`): Include/exclude automated scrapers.
+- **Validation Rules:**
+  - `shortCode`: `@NotBlank`, max 64 chars.
+  - `days`: `@Min(1)`, `@Max(365)` (default: `30`).
+  - `interval`: Optional `@Pattern` (`HOUR`, `DAY`, `WEEK`, `MONTH`).
+  - `timezone`: Max 50 chars (default: `UTC`).
+  - `includeBots`: Boolean (default: `false`).
 - **Response (`200 OK`):**
   ```json
   {
-    "shortCode": "e2e-4968",
+    "shortCode": "summer-sale-2026",
     "totalClicks": 73,
-    "humanClicks": 13,
-    "botClicks": 60,
-    "botPercentage": 82.2,
+    "humanClicks": 65,
+    "botClicks": 8,
+    "botPercentage": 10.9,
     "timeSeries": [
-      {
-        "timestamp": "2026-08-31T00:00:00Z",
-        "clicks": 73
-      }
+      { "timestamp": "2026-09-01T00:00:00Z", "clicks": 73 }
     ],
     "topCountries": [
-      { "name": "United States", "count": 8, "percentage": 61.5 },
-      { "name": "India", "count": 5, "percentage": 38.5 }
+      { "name": "United States", "count": 45, "percentage": 69.2 },
+      { "name": "India", "count": 20, "percentage": 30.8 }
     ],
     "topCities": [
-      { "city": "San Francisco", "country": "United States", "count": 8, "percentage": 61.5 }
+      { "city": "San Francisco", "country": "United States", "count": 25, "percentage": 38.5 }
     ],
     "topBrowsers": [
-      { "name": "Chrome", "count": 6, "percentage": 46.2 },
-      { "name": "Firefox", "count": 4, "percentage": 30.8 },
-      { "name": "Safari", "count": 3, "percentage": 23.1 }
+      { "name": "Chrome", "count": 40, "percentage": 61.5 },
+      { "name": "Safari", "count": 25, "percentage": 38.5 }
     ],
     "topOperatingSystems": [
-      { "name": "macOS", "count": 7, "percentage": 53.8 },
-      { "name": "Windows", "count": 6, "percentage": 46.2 }
+      { "name": "macOS", "count": 35, "percentage": 53.8 },
+      { "name": "Windows", "count": 30, "percentage": 46.2 }
     ],
     "topDevices": [
-      { "name": "Desktop", "count": 11, "percentage": 84.6 },
-      { "name": "Mobile", "count": 2, "percentage": 15.4 }
+      { "name": "Desktop", "count": 50, "percentage": 76.9 },
+      { "name": "Mobile", "count": 15, "percentage": 23.1 }
     ],
     "topReferrers": [
-      { "name": "https://github.com", "count": 5, "percentage": 38.5 },
-      { "name": "https://twitter.com", "count": 4, "percentage": 30.8 },
-      { "name": "Direct / None", "count": 4, "percentage": 30.8 }
+      { "name": "https://github.com", "count": 30, "percentage": 46.2 },
+      { "name": "Direct / None", "count": 35, "percentage": 53.8 }
     ]
   }
   ```
 
 ---
 
-### 5.2 Granular Time-Series Graph Data
+### 5.2 Analytics Overview by URL UUID
+- **Method / Path:** `GET /api/v1/analytics/urls/{urlId}?days={N}&includeBots={bool}`
+- **Description:** Returns the complete metrics overview queried directly by the primary URL UUID.
+
+---
+
+### 5.3 Dedicated Campaign-Level Rollup Analytics
+- **Method / Path:** `GET /api/v1/analytics/campaigns/{campaignId}?days={N}&includeBots={bool}`
+- **Header:** `Authorization: Bearer <token>`
+- **Description:** Uses single-query jOOQ joins across all URLs assigned to the campaign to aggregate total traffic, bot breakdown, conversion rates, and top-performing links within that campaign.
+
+---
+
+### 5.4 Dedicated A/B Test Experiment Analytics
+- **Method / Path:** `GET /api/v1/analytics/ab-tests/{identifier}?days={N}&includeBots={bool}`
+- **Header:** `Authorization: Bearer <token>`
+- **Identifier:** Supports either the experiment **UUID** or the **`shortCode`**.
+- **Description:** Returns real-time variant traffic counts, percentage splits, statistical conversion rates, and confidence intervals to evaluate winning variants.
+
+---
+
+### 5.5 Granular Time-Series Graph Data
 - **Method / Path:** `GET /api/v1/analytics/{shortCode}/timeseries?interval={HOUR|DAY}&days={N}`
 - **Header:** `Authorization: Bearer <token>`
-- **Description:** Returns point arrays for Chart.js / Recharts with hourly or daily bucket resolution.
-- **Response (`200 OK`):**
+- **Response (`200 OK`):** Point array formatted for Recharts / Chart.js:
   ```json
   [
-    { "timestamp": "2026-08-31T01:00:00Z", "clicks": 42 },
-    { "timestamp": "2026-08-31T02:00:00Z", "clicks": 31 }
+    { "timestamp": "2026-09-01T01:00:00Z", "clicks": 42 },
+    { "timestamp": "2026-09-01T02:00:00Z", "clicks": 31 }
   ]
   ```
 
 ---
 
-### 5.3 Top Countries Breakdown
-- **Method / Path:** `GET /api/v1/analytics/{shortCode}/countries?includeBots=false&limit=10`
-- **Response (`200 OK`):** Array of `{ name, count, percentage }`.
+### 5.6 Breakdown Sub-Endpoints
+- **`GET /api/v1/analytics/{shortCode}/countries?includeBots=false&limit=10`**: Top visitor countries.
+- **`GET /api/v1/analytics/{shortCode}/browsers?includeBots=false&limit=10`**: Top browsers.
+- **`GET /api/v1/analytics/{shortCode}/referrers?includeBots=false&limit=10`**: Top referrer domains.
 
 ---
 
-### 5.4 Top Browsers Breakdown
-- **Method / Path:** `GET /api/v1/analytics/{shortCode}/browsers?includeBots=false&limit=10`
-- **Response (`200 OK`):** Array of `{ name, count, percentage }`.
-
----
-
-### 5.5 Traffic Sources & Referrers
-- **Method / Path:** `GET /api/v1/analytics/{shortCode}/referrers?includeBots=false&limit=10`
-- **Response (`200 OK`):** Array of `{ name, count, percentage }`.
-
----
-
-### 5.6 Kafka Event Consumer
+### 5.7 Kafka Batch Ingestion & JDBC Multi-Row Ingestion
 - **Topic Consumed:** `url-clicks`
-- **Payload (`ClickEvent`):**
-  ```json
-  {
-    "shortCode": "e2e-4968",
-    "timestamp": "2026-08-31T01:54:00Z",
-    "ipAddress": "192.168.1.100",
-    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)...",
-    "referrer": "https://github.com",
-    "variant": "B",
-    "utmSource": "twitter",
-    "utmMedium": "social",
-    "utmCampaign": "summer_launch"
-  }
-  ```
-- **Processing:** Resolves GeoIP country & city via MaxMind GeoLite2, detects bot scrapers, classifies device/browser/OS, and inserts into `click_analytics`.
+- **Consumer Mechanism:** Kafka Batch Listener (`ClickEventConsumer`) with configurable batch size (`batch.size=100`, `poll.timeout=500ms`).
+- **Bulk Insert Engine:** `ClickAnalyticsBatchRepository` constructs multi-row PostgreSQL `INSERT INTO click_analytics (...) VALUES (...), (...)...` statements, bypassing Hibernate single-row overhead to sustain >50,000 writes/sec.
 
 ---
 
-### 5.7 A/B Testing Variant Split Analytics
-- **Method / Path:** `GET /api/v1/analytics/{shortCode}/ab-test`
-- **Header:** `Authorization: Bearer <token>`
-- **Description:** Returns real-time click counts and conversion/traffic distribution across Variant A, B, C...
-- **Response (`200 OK`):**
-  ```json
-  [
-    { "name": "A", "count": 5012, "percentage": 50.1 },
-    { "name": "B", "count": 4988, "percentage": 49.9 }
-  ]
-  ```
+## 6. Unified Error Response & Validation Schema
+
+All microservices (`apigateway`, `core`, `analytics`) utilize centralized Spring `@RestControllerAdvice` global exception handlers conforming to RFC-7807 problem details.
+
+### 6.1 Validation Failure (`400 Bad Request`)
+When JSR-380 Bean Validation fails on `@Valid` request bodies or parameters:
+```json
+{
+  "status": 400,
+  "error": "Validation Failed",
+  "message": "Experiment name is required.",
+  "fieldErrors": {
+    "name": "Experiment name is required.",
+    "shortCode": "Short code cannot exceed 64 characters"
+  },
+  "timestamp": "2026-09-28T00:20:00Z"
+}
+```
+
+### 6.2 Entity Not Found (`404 Not Found`)
+```json
+{
+  "status": 404,
+  "error": "Not Found",
+  "message": "URL mapping not found for short code: unknown-slug",
+  "timestamp": "2026-09-28T00:20:00Z"
+}
+```
+
+### 6.3 Authentication & Authorization Failures (`401` / `403`)
+```json
+{
+  "status": 401,
+  "error": "Unauthorized",
+  "message": "Full authentication is required to access this resource",
+  "timestamp": "2026-09-28T00:20:00Z"
+}
+```
 
 ---
 
-### 5.8 Inbound UTM Traffic Source Attribution
-- **Method / Path:** `GET /api/v1/analytics/{shortCode}/utm-sources?limit=10`
-- **Header:** `Authorization: Bearer <token>`
-- **Description:** Returns ranking of inbound traffic channels dynamically extracted from visitor query strings.
-- **Response (`200 OK`):**
-  ```json
-  [
-    { "name": "twitter", "count": 4500, "percentage": 45.0 },
-    { "name": "newsletter", "count": 3200, "percentage": 32.0 },
-    { "name": "direct", "count": 2300, "percentage": 23.0 }
-  ]
-  ```
-
----
-
-## 6. End-to-End cURL Command Cheat Sheet
+## 7. End-to-End cURL Command Cheat Sheet
 
 ```bash
-# 1. Login & Store Token
+# 1. Login & Extract Bearer Token
 TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"alex@example.com","password":"Password123"}' | jq -r '.accessToken')
 
-# 2. Create Short URL
+# 2. Create Short URL with Custom Alias (Up to 64 chars)
 curl -X POST http://localhost:8080/api/v1/urls \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"destinationUrl":"https://spring.io/projects/spring-boot","customAlias":"my-spring-link"}'
+  -d '{"destinationUrl":"https://spring.io/projects/spring-boot","customAlias":"spring-boot-docs"}'
 
-# 3. Retrieve User URLs
-curl -X GET http://localhost:8080/api/v1/urls \
-  -H "Authorization: Bearer $TOKEN"
+# 3. Create A/B Test Experiment
+curl -X POST http://localhost:8080/api/v1/ab-tests \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "shortCode": "spring-boot-docs",
+    "name": "Docs Landing Test",
+    "variants": [
+      {"key": "A", "destinationUrl": "https://spring.io/projects/spring-boot", "weight": 50, "isControl": true},
+      {"key": "B", "destinationUrl": "https://docs.spring.io/spring-boot/index.html", "weight": 50, "isControl": false}
+    ]
+  }'
 
-# 4. Perform Redirection (Follows 302)
-curl -i http://localhost:8080/r/my-spring-link
+# 4. Perform Redirection (Follows 302 and sets cookie)
+curl -i http://localhost:8080/r/spring-boot-docs
 
-# 5. Fetch Full Analytics Overview
-curl -X GET http://localhost:8080/api/v1/analytics/my-spring-link \
+# 5. Fetch Real-Time A/B Test Analytics
+curl -X GET http://localhost:8080/api/v1/analytics/ab-tests/spring-boot-docs \
   -H "Authorization: Bearer $TOKEN"
 ```
+

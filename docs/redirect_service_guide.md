@@ -70,6 +70,10 @@ grpc:
     core-service:
       address: 'static://${CORE_GRPC_HOST:localhost}:${CORE_GRPC_PORT:9090}'
       negotiation-type: plaintext
+      enable-keep-alive: true
+      keep-alive-without-calls: true
+      keep-alive-time: 30s
+      keep-alive-timeout: 10s
 ```
 
 ---
@@ -110,6 +114,8 @@ message UrlResponse {
 ### 2. gRPC Client Implementation (`CoreGrpcClient.java`)
 File: `redirect/src/main/java/com/urlshortener/redirect/grpc/CoreGrpcClient.java`
 
+Configured with a **5-second deadline** and offloaded to `Schedulers.boundedElastic()` so that slow network hops or downstream Core restarts fail fast and never block Netty event loops:
+
 ```java
 package com.urlshortener.redirect.grpc;
 
@@ -119,20 +125,26 @@ import com.urlshortener.grpc.UrlServiceGrpc;
 import net.devh.boot.grpc.client.inject.GrpcClient;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
+
+import java.util.concurrent.TimeUnit;
 
 @Component
 public class CoreGrpcClient {
 
     @GrpcClient("core-service")
-    private UrlServiceGrpc.UrlServiceBlockingStub urlServiceStub;
+    private UrlServiceGrpc.UrlServiceBlockingStub urlServiceBlockingStub;
 
     public Mono<UrlResponse> getDestinationUrl(String shortCode) {
         return Mono.fromCallable(() -> {
             UrlRequest request = UrlRequest.newBuilder()
                     .setShortCode(shortCode)
                     .build();
-            return urlServiceStub.getDestinationUrl(request);
-        });
+
+            return urlServiceBlockingStub
+                    .withDeadlineAfter(5, TimeUnit.SECONDS)
+                    .getDestinationUrl(request);
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 }
 ```
