@@ -50,14 +50,71 @@ public class GlobalExceptionHandler {
             fieldErrors.put(error.getField(), error.getDefaultMessage());
         }
 
+        String firstErrorMessage = ex.getBindingResult().getFieldErrors().stream()
+                .map(FieldError::getDefaultMessage)
+                .findFirst()
+                .orElse("Request validation failed");
+
         Map<String, Object> body = new HashMap<>();
         body.put("status", HttpStatus.BAD_REQUEST.value());
         body.put("error", "Validation Failed");
-        body.put("message", "Request validation failed");
+        body.put("message", firstErrorMessage);
         body.put("errors", fieldErrors);
         body.put("timestamp", Instant.now());
 
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(jakarta.validation.ConstraintViolationException.class)
+    public ResponseEntity<Map<String, Object>> handleConstraintViolation(jakarta.validation.ConstraintViolationException ex) {
+        Map<String, String> fieldErrors = new HashMap<>();
+        ex.getConstraintViolations().forEach(cv -> {
+            String property = cv.getPropertyPath().toString();
+            fieldErrors.put(property, cv.getMessage());
+        });
+
+        String firstErrorMessage = ex.getConstraintViolations().stream()
+                .map(jakarta.validation.ConstraintViolation::getMessage)
+                .findFirst()
+                .orElse("Constraint violation");
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("status", HttpStatus.BAD_REQUEST.value());
+        body.put("error", "Validation Failed");
+        body.put("message", firstErrorMessage);
+        body.put("errors", fieldErrors);
+        body.put("timestamp", Instant.now());
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
+    public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(org.springframework.dao.DataIntegrityViolationException ex) {
+        log.warn("Database constraint violation in Core service: {}", ex.getMessage());
+        String msg = "Data integrity violation. A resource with this short code or identifier may already exist.";
+        if (ex.getMessage() != null && ex.getMessage().toLowerCase().contains("unique")) {
+            msg = "A link or experiment with this short code or alias already exists.";
+        } else if (ex.getMessage() != null && ex.getMessage().toLowerCase().contains("value too long")) {
+            msg = "One of the provided values exceeds maximum allowed length.";
+        }
+        ErrorResponse response = new ErrorResponse(
+                HttpStatus.CONFLICT.value(),
+                "Conflict",
+                msg,
+                Instant.now()
+        );
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    }
+
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponse> handleHttpMessageNotReadable(org.springframework.http.converter.HttpMessageNotReadableException ex) {
+        ErrorResponse response = new ErrorResponse(
+                HttpStatus.BAD_REQUEST.value(),
+                "Bad Request",
+                "Malformed request payload or unreadable JSON format",
+                Instant.now()
+        );
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
     }
 
     @ExceptionHandler(Exception.class)
