@@ -20,6 +20,7 @@ import {
 	IconAdjustments,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
+import { getShortUrl } from "@/config/constants";
 
 import {
 	AnalyticsKpiCards,
@@ -59,7 +60,7 @@ export function AnalyticsDetailPage() {
 		enabled: !!shortCode,
 	});
 
-	const fullShortUrl = `${window.location.origin}/r/${shortCode}`;
+	const fullShortUrl = getShortUrl(shortCode);
 
 	const handleCopy = () => {
 		navigator.clipboard.writeText(fullShortUrl);
@@ -130,7 +131,7 @@ export function AnalyticsDetailPage() {
 							<BreadcrumbSeparator />
 							<BreadcrumbItem>
 								<BreadcrumbPage className="font-mono font-semibold text-foreground">
-									/r/{shortCode}
+									{shortCode}
 								</BreadcrumbPage>
 							</BreadcrumbItem>
 						</BreadcrumbList>
@@ -138,7 +139,7 @@ export function AnalyticsDetailPage() {
 					<h1 className="font-heading text-xl sm:text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
 						<span>Telemetry & Traffic Attribution</span>
 						<Badge variant="outline" className="font-mono text-xs">
-							/r/{shortCode}
+							{shortCode}
 						</Badge>
 					</h1>
 				</div>
@@ -199,7 +200,7 @@ export function AnalyticsDetailPage() {
 			<AnalyticsTimeSeriesChart
 				data={timeSeriesData}
 				isLoading={isLoading}
-				title={`Traffic Trend: /r/${shortCode}`}
+				title={`Traffic Trend: ${shortCode}`}
 				description="Time-series click frequency across selected resolution window."
 				timeRangeDays={days}
 				onTimeRangeChange={setDays}

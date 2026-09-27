@@ -25,7 +25,7 @@ export function DeleteAbTestDialog({
 					<AlertDialogDescription>
 						Are you sure you want to dismantle the A/B split test on{" "}
 						<span className="font-mono font-semibold text-foreground">
-							/r/{shortCode}
+							{shortCode}
 						</span>
 						? Traffic routing rules will be cleared and the short link will fall back to its primary destination URL.
 					</AlertDialogDescription>

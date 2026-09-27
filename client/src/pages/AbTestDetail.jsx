@@ -245,13 +245,13 @@ export function AbTestDetailPage() {
 
 					<h1 className="font-heading text-xl sm:text-2xl font-bold tracking-tight text-foreground flex items-center gap-2.5">
 						<IconFlask className="size-6 text-primary shrink-0" />
-						<span>{experiment.name || `Experiment /r/${experiment.shortCode}`}</span>
+						<span>{experiment.name || `Experiment ${experiment.shortCode}`}</span>
 					</h1>
 
 					<div className="flex items-center gap-2 pt-0.5">
 						<span className="text-xs text-muted-foreground">Routing Shortlink:</span>
 						<div className="flex items-center gap-1.5 font-mono text-xs font-semibold text-primary">
-							<span>/r/{experiment.shortCode}</span>
+							<span>{experiment.shortCode}</span>
 							<button
 								type="button"
 								onClick={handleCopy}
@@ -615,7 +615,7 @@ export function AbTestDetailPage() {
 				<AnalyticsTimeSeriesChart
 					data={timeSeriesData}
 					isLoading={isAnalyticsLoading}
-					title={`Traffic Trend: /r/${experiment.shortCode}`}
+					title={`Traffic Trend: ${experiment.shortCode}`}
 					description={`Time-series click velocity across past ${days} days.`}
 					timeRangeDays={days}
 					onTimeRangeChange={setDays}

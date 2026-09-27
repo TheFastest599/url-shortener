@@ -20,6 +20,7 @@ import {
 	IconChartBar,
 	IconRefresh,
 } from "@tabler/icons-react";
+import { getShortUrl, getShortDomainPrefix } from "@/config/constants";
 
 /**
  * Hallmark · Interactive Platform Workbench
@@ -99,9 +100,9 @@ export function PlatformDeepDive() {
 	};
 
 	const currentCampaign = CAMPAIGN_PRESETS[selectedCampaignIndex];
-	const activeShortSlug = `sho.rt/${urlState.customSlug || "demo-link"}`;
+	const activeShortSlug = `${getShortDomainPrefix()}${urlState.customSlug || "demo-link"}`;
 	const activeQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(
-		`http://localhost:8080/r/${urlState.customSlug || "demo-link"}`
+		getShortUrl(urlState.customSlug || "demo-link")
 	)}&margin=1`;
 
 	return (
@@ -257,7 +258,7 @@ export function PlatformDeepDive() {
 										</div>
 										<button
 											type="button"
-											onClick={() => handleCopy(`http://localhost:8080/r/${urlState.customSlug}`)}
+											onClick={() => handleCopy(getShortUrl(urlState.customSlug || "demo-link"))}
 											className="inline-flex items-center gap-1 text-xs font-semibold text-foreground px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors cursor-pointer"
 										>
 											{urlState.copied ? (

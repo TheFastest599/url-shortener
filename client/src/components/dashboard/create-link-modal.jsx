@@ -9,6 +9,12 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+	Field,
+	FieldLabel,
+	FieldDescription,
+	FieldError,
+} from "@/components/ui/field";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useCreateUrlMutation, useCampaignsQuery } from "@/queries";
 import {
@@ -20,6 +26,13 @@ import {
 } from "@tabler/icons-react";
 import { toast } from "sonner";
 import { UtmEditor } from "@/components/links/UtmEditor";
+import { getShortUrl, getShortDomainPrefix } from "@/config/constants";
+import {
+	validateUrl,
+	validateCustomAlias,
+	parseApiError,
+	showErrorToast,
+} from "@/lib/errorHandler";
 
 export function CreateLinkModal({
 	open,
@@ -82,13 +95,19 @@ export function CreateLinkModal({
 
 	const [createdResult, setCreatedResult] = React.useState(null);
 	const [copied, setCopied] = React.useState(false);
+	const [clientErrors, setClientErrors] = React.useState({});
 
 	const createUrlMutation = useCreateUrlMutation({
 		onSuccess: (data) => {
 			setCreatedResult(data);
+			setClientErrors({});
 			toast.success("Short URL created successfully!");
 		},
 	});
+
+	const { fieldErrors: serverFieldErrors } = parseApiError(
+		createUrlMutation.error,
+	);
 
 	const handleReset = () => {
 		setDestinationUrl("");
@@ -98,6 +117,7 @@ export function CreateLinkModal({
 		setDebouncedCampaignSearch("");
 		setCreatedResult(null);
 		setCopied(false);
+		setClientErrors({});
 	};
 
 	const handleDialogClose = (newOpen) => {
@@ -109,21 +129,28 @@ export function CreateLinkModal({
 
 	const handleSubmit = (e) => {
 		e.preventDefault();
-		if (!destinationUrl.trim()) {
-			toast.error("Destination URL is required");
+
+		const urlValidation = validateUrl(destinationUrl);
+		const aliasValidation = validateCustomAlias(customAlias);
+
+		const newErrors = {};
+		if (!urlValidation.isValid) {
+			newErrors.destinationUrl = urlValidation.error;
+		}
+		if (!aliasValidation.isValid) {
+			newErrors.customAlias = aliasValidation.error;
+		}
+
+		if (Object.keys(newErrors).length > 0) {
+			setClientErrors(newErrors);
+			const firstError = Object.values(newErrors)[0];
+			toast.error("Validation Error", { description: firstError });
 			return;
 		}
-
-		let formattedUrl = destinationUrl.trim();
-		if (
-			!formattedUrl.startsWith("http://") &&
-			!formattedUrl.startsWith("https://")
-		) {
-			formattedUrl = "https://" + formattedUrl;
-		}
+		setClientErrors({});
 
 		const payload = {
-			destinationUrl: formattedUrl,
+			destinationUrl: urlValidation.formattedUrl,
 			customAlias: customAlias.trim() || undefined,
 			campaignId: selectedCampaignId || undefined,
 		};
@@ -132,7 +159,7 @@ export function CreateLinkModal({
 	};
 
 	const shortUrlHref = createdResult
-		? `http://localhost:8080/r/${createdResult.shortCode}`
+		? getShortUrl(createdResult.shortCode)
 		: "";
 
 	const handleCopy = () => {
@@ -235,52 +262,86 @@ export function CreateLinkModal({
 					/* Creation Form */
 					<form onSubmit={handleSubmit} className="space-y-4 py-2">
 						{/* Destination URL */}
-						<div className="space-y-1.5">
-							<label className="text-xs font-medium text-foreground">
+						<Field>
+							<FieldLabel>
 								Destination URL{" "}
 								<span className="text-destructive">*</span>
-							</label>
+							</FieldLabel>
 							<Input
 								type="text"
 								value={destinationUrl}
-								onChange={(e) =>
-									setDestinationUrl(e.target.value)
-								}
+								onChange={(e) => {
+									setDestinationUrl(e.target.value);
+									if (clientErrors.destinationUrl) {
+										setClientErrors((prev) => ({
+											...prev,
+											destinationUrl: null,
+										}));
+									}
+								}}
 								placeholder="https://example.com/long-landing-page"
 								required
+								aria-invalid={Boolean(
+									clientErrors.destinationUrl ||
+										serverFieldErrors.destinationUrl,
+								)}
 								className="h-9.5 text-xs sm:text-sm bg-muted/30"
 							/>
-						</div>
+							<FieldError>
+								{clientErrors.destinationUrl ||
+									serverFieldErrors.destinationUrl}
+							</FieldError>
+						</Field>
 
 						{/* Custom Alias */}
-						<div className="space-y-1.5">
+						<Field>
 							<div className="flex items-center justify-between text-xs">
-								<label className="font-medium text-foreground">
+								<FieldLabel>
 									Custom Alias (Optional)
-								</label>
-								<span className="text-[11px] text-muted-foreground">
+								</FieldLabel>
+								<FieldDescription>
 									Leave blank for auto Base62
-								</span>
+								</FieldDescription>
 							</div>
-							<div className="flex items-center rounded-lg border border-border bg-muted/30 px-3 h-9.5 focus-within:ring-2 focus-within:ring-ring">
+							<div
+								className={`flex items-center rounded-lg border bg-muted/30 px-3 h-9.5 focus-within:ring-2 focus-within:ring-ring ${
+									Boolean(
+										clientErrors.customAlias ||
+											serverFieldErrors.customAlias,
+									)
+										? "border-destructive ring-2 ring-destructive/20"
+										: "border-border"
+								}`}
+							>
 								<span className="text-xs font-mono text-muted-foreground shrink-0 select-none">
-									/r/
+									{getShortDomainPrefix()}
 								</span>
 								<input
 									type="text"
 									value={customAlias}
-									onChange={(e) =>
+									maxLength={10}
+									onChange={(e) => {
 										setCustomAlias(
 											e.target.value
 												.toLowerCase()
 												.replace(/[^a-z0-9_-]/g, ""),
-										)
-									}
-									placeholder="my-campaign-slug"
+										);
+										if (clientErrors.customAlias) {
+											setClientErrors((prev) => ({
+												...prev,
+												customAlias: null,
+											}));
+										}
+									}}
+									placeholder="my-slug"
 									className="w-full bg-transparent pl-1 text-xs sm:text-sm font-mono text-foreground outline-none"
 								/>
 							</div>
-						</div>
+							<FieldError>
+								{clientErrors.customAlias ||
+									serverFieldErrors.customAlias}
+							</FieldError>
+						</Field>
 
 						{/* Optional Campaign Assignment */}
 						<div className="space-y-1.5">

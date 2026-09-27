@@ -75,7 +75,7 @@ export function AbTestAnalyticsModal({
 					<div className="flex items-center justify-between gap-2 pr-6">
 						<DialogTitle className="flex items-center gap-2">
 							<IconFlask className="size-5 text-primary" />
-							<span>A/B Experiment Telemetry: /r/{shortCode}</span>
+							<span>A/B Experiment Telemetry: {shortCode}</span>
 						</DialogTitle>
 					</div>
 					<DialogDescription className="text-xs">

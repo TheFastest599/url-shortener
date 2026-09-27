@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import { useDeleteUrlMutation } from "@/queries";
 import { toast } from "sonner";
+import { getShortUrl } from "@/config/constants";
 
 export function LinksTable({
 	urls = [],
@@ -46,7 +47,7 @@ export function LinksTable({
 	});
 
 	const handleCopy = (shortCode, id) => {
-		const fullUrl = `http://localhost:8080/r/${shortCode}`;
+		const fullUrl = getShortUrl(shortCode);
 		navigator.clipboard.writeText(fullUrl);
 		setCopiedId(id);
 		toast.success("Short URL copied to clipboard");
@@ -173,7 +174,7 @@ export function LinksTable({
 							<tbody className="divide-y divide-border/60">
 								{filteredUrls.map((url) => {
 									const isCopied = copiedId === url.id;
-									const fullShortUrl = `http://localhost:8080/r/${url.shortCode}`;
+									const fullShortUrl = getShortUrl(url.shortCode);
 									const hostname = extractHostname(url.destinationUrl);
 									const faviconUrl = `https://www.google.com/s2/favicons?domain=${hostname}&sz=32`;
 
@@ -190,7 +191,7 @@ export function LinksTable({
 														className="text-primary font-bold hover:underline transition-colors cursor-pointer"
 														title="Configure link"
 													>
-														/r/{url.shortCode}
+														{url.shortCode}
 													</Link>
 													<button
 														onClick={() => handleCopy(url.shortCode, url.id)}
@@ -321,7 +322,7 @@ export function LinksTable({
 						<DialogDescription>
 							Are you sure you want to delete{" "}
 							<span className="font-mono font-semibold text-foreground">
-								/r/{deleteTarget?.shortCode}
+								{deleteTarget?.shortCode}
 							</span>
 							? This will permanently stop all redirection traffic.
 						</DialogDescription>

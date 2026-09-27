@@ -7,6 +7,8 @@ import { useCampaignsQuery } from "@/queries";
 import { IconLink } from "@tabler/icons-react";
 import { toast } from "sonner";
 import { UtmEditor } from "./UtmEditor";
+import { Field, FieldLabel, FieldError } from "@/components/ui/field";
+import { validateUrl } from "@/lib/errorHandler";
 
 export function LinkConfigCard({
 	url,
@@ -60,16 +62,21 @@ export function LinkConfigCard({
 		return [{ value: "none", label: "None (Standalone link)", badge: "Unassigned" }, ...list];
 	}, [loadedCampaigns, url]);
 
+	const [urlError, setUrlError] = React.useState("");
+
 	const handleSubmit = (e) => {
 		e.preventDefault();
-		if (!destinationUrl.trim()) {
-			toast.error("Destination URL cannot be empty");
+		const val = validateUrl(destinationUrl);
+		if (!val.isValid) {
+			setUrlError(val.error);
+			toast.error("Validation Error", { description: val.error });
 			return;
 		}
 
+		setUrlError("");
 		onSave({
 			id: url?.id,
-			destinationUrl: destinationUrl.trim(),
+			destinationUrl: val.formattedUrl,
 			campaignId: campaignId === "none" ? null : campaignId || null,
 			isActive,
 		});
@@ -94,20 +101,25 @@ export function LinkConfigCard({
 
 			<CardContent className="p-4 sm:p-5 pt-2">
 				<form onSubmit={handleSubmit} className="space-y-4 text-xs">
-					<div className="space-y-1.5">
-						<label className="font-semibold text-foreground">Destination Target URL</label>
+					<Field className="gap-1.5">
+						<FieldLabel className="font-semibold text-foreground">Destination Target URL</FieldLabel>
 						<Input
 							value={destinationUrl}
-							onChange={(e) => setDestinationUrl(e.target.value)}
+							onChange={(e) => {
+								setDestinationUrl(e.target.value);
+								if (urlError) setUrlError("");
+							}}
 							placeholder="https://example.com/target"
 							className="font-mono text-xs"
 							required
+							aria-invalid={Boolean(urlError)}
 						/>
+						<FieldError>{urlError}</FieldError>
 						<UtmEditor
 							url={destinationUrl}
 							onChange={setDestinationUrl}
 						/>
-					</div>
+					</Field>
 
 					<div className="space-y-1.5">
 						<label className="font-semibold text-foreground">Assigned Campaign</label>

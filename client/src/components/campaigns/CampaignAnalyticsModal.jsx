@@ -186,7 +186,7 @@ export function CampaignAnalyticsModal({ campaign, open, onOpenChange }) {
 														className="hover:bg-muted/30 transition-colors"
 													>
 														<td className="py-2.5 px-3 font-mono font-semibold text-primary">
-															/r/{code}
+															{code}
 														</td>
 														<td className="py-2.5 px-3 max-w-[200px] truncate text-muted-foreground" title={item.destinationUrl}>
 															{item.destinationUrl || "Direct"}

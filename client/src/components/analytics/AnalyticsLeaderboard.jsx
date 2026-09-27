@@ -59,7 +59,7 @@ export function AnalyticsLeaderboard({
 													to={`/analytics/${url.shortCode}`}
 													className="font-mono text-primary hover:underline font-bold"
 												>
-													/r/{url.shortCode}
+													{url.shortCode}
 												</Link>
 											</div>
 										</td>

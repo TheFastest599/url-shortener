@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { IconPlus } from "@tabler/icons-react";
 import { toast } from "sonner";
+import { showErrorToast } from "@/lib/errorHandler";
 
 import {
 	LinksTable,

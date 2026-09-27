@@ -73,7 +73,7 @@ export function AbTestCard({
 							to={`/redirect-links/${shortCode}`}
 							className="font-mono font-semibold text-primary hover:underline"
 						>
-							/r/{shortCode}
+							{shortCode}
 						</Link>
 						<span className="text-border">|</span>
 						<span>

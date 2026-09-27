@@ -118,8 +118,8 @@ export function AnalyticsPage() {
 			<AnalyticsTimeSeriesChart
 				data={timeSeriesData}
 				isLoading={analyticsLoading}
-				title={`Traffic Velocity: ${selectedCode ? `/r/${selectedCode}` : "Workspace"}`}
-				description={`Daily redirect request distribution with bot detection for top link /r/${selectedCode || "-"}.`}
+				title={`Traffic Velocity: ${selectedCode ? selectedCode : "Workspace"}`}
+				description={`Daily redirect request distribution with bot detection for top link ${selectedCode || "-"}.`}
 				timeRangeDays={timeRangeDays}
 				onTimeRangeChange={setTimeRangeDays}
 			/>

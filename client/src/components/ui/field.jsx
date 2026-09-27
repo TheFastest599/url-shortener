@@ -51,3 +51,16 @@ export function FieldGroup({ className, ...props }) {
     />
   );
 }
+
+export function FieldError({ className, children, ...props }) {
+  if (!children) return null;
+  return (
+    <p
+      data-slot="field-error"
+      className={cn("text-[11px] font-medium text-destructive flex items-center gap-1", className)}
+      {...props}
+    >
+      {children}
+    </p>
+  );
+}

@@ -24,7 +24,7 @@ export function DeleteLinkDialog({
 					<AlertDialogDescription>
 						Are you sure you want to permanently delete{" "}
 						<span className="font-mono font-bold text-foreground">
-							/r/{url?.shortCode}
+							{url?.shortCode}
 						</span>
 						? This will immediately terminate all incoming traffic and analytics collection for this slug.
 					</AlertDialogDescription>

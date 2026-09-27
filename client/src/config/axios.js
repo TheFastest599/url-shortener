@@ -100,29 +100,59 @@ apiClient.interceptors.response.use(
 		if (!originalRequest?.skipToast) {
 			if (error.response) {
 				const { status, data } = error.response;
-				switch (status) {
-					case 403:
-						toast.error(data?.message || "Access forbidden");
-						break;
-					case 429:
-						toast.error("Too many requests — please slow down");
-						break;
-					case 500:
-						toast.error(
-							"Internal server error — please try again later",
-						);
-						break;
-					default:
-						if (status !== 401) {
-							toast.error(
-								data?.message ||
-									data?.detail ||
-									"An error occurred",
-							);
-						}
+				if (status !== 401) {
+					let title;
+					switch (status) {
+						case 400:
+							title = data?.error || "Validation Failed";
+							break;
+						case 403:
+							title = data?.error || "Access Forbidden";
+							break;
+						case 404:
+							title = data?.error || "Not Found";
+							break;
+						case 409:
+							title = data?.error || "Conflict";
+							break;
+						case 429:
+							title = "Too Many Requests";
+							break;
+						case 500:
+							title = data?.error || "Internal Server Error";
+							break;
+						default:
+							title = data?.error || `HTTP ${status}`;
+					}
+
+					let description =
+						data?.message ||
+						data?.detail ||
+						(typeof data === "string" ? data : null);
+
+					if (
+						!description &&
+						data?.errors &&
+						typeof data.errors === "object"
+					) {
+						description = Object.entries(data.errors)
+							.map(([field, msg]) => `${field}: ${msg}`)
+							.join(", ");
+					}
+
+					if (!description) {
+						description =
+							status === 500
+								? "Internal server error — please try again later"
+								: error.message || "An unexpected error occurred.";
+					}
+
+					toast.error(title, { description });
 				}
 			} else if (error.request) {
-				toast.error("Network error — cannot reach server");
+				toast.error("Network Error", {
+					description: "Cannot reach server. Please check your network connection.",
+				});
 			}
 		}
 

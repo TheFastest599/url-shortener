@@ -10,6 +10,7 @@ import {
 	IconCheck,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
+import { getShortUrl } from "@/config/constants";
 
 export function CampaignUtmTable({ links = [] }) {
 	const [copiedId, setCopiedId] = React.useState(null);
@@ -38,7 +39,7 @@ export function CampaignUtmTable({ links = [] }) {
 						{links.length > 0 ? (
 							links.map((link) => {
 								const id = link.id || link.shortCode;
-								const shortUrl = `${window.location.origin}/r/${link.shortCode}`;
+								const shortUrl = getShortUrl(link.shortCode);
 
 								return (
 									<tr key={id} className="hover:bg-muted/30 transition-colors">
@@ -65,7 +66,7 @@ export function CampaignUtmTable({ links = [] }) {
 												className="font-semibold text-primary hover:underline transition-colors"
 												title="Configure link"
 											>
-												/r/{link.shortCode}
+												{link.shortCode}
 											</Link>
 										</td>
 										<td className="py-3.5 px-4 text-center font-mono">

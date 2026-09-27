@@ -25,7 +25,7 @@ export function ArchitectureShowcase() {
 			icon: IconRoute,
 			color: "text-emerald-500 bg-emerald-500/10",
 			details:
-				"Single entry point for all incoming traffic. Routes `/r/{shortCode}` and `/api/` directly to the Spring API Gateway while serving the compiled React frontend.",
+				"Single entry point for all incoming traffic. Routes `r.{domain}/{shortCode}` directly to the high-speed Redirect Service and `/api/` to the Spring API Gateway while serving the React frontend.",
 		},
 		{
 			id: "gateway",

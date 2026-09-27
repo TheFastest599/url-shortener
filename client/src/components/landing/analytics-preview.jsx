@@ -227,7 +227,7 @@ export function AnalyticsPreview() {
 											<span>{item.city},</span>
 											<span className="text-muted-foreground">{item.country}</span>
 										</div>
-										<p className="font-mono text-[11px] text-primary truncate">/r/{item.code}</p>
+										<p className="font-mono text-[11px] text-primary truncate">{item.code}</p>
 									</div>
 									<div className="text-right text-[11px] text-muted-foreground shrink-0 pl-2">
 										<span>{item.browser}</span>

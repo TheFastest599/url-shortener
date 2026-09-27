@@ -47,9 +47,7 @@ export function SidebarNavContent({
 			title: "Analytics Hub",
 			url: ROUTES.ANALYTICS,
 			icon: IconChartBar,
-			isActive:
-				location.pathname === ROUTES.ANALYTICS ||
-				(location.pathname.startsWith("/analytics") && !location.pathname.includes("/r/")),
+			isActive: location.pathname.startsWith("/analytics"),
 		},
 	];
 

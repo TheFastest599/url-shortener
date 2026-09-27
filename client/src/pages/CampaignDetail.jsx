@@ -108,7 +108,7 @@ export function CampaignDetailPage() {
 			if (isInThisCampaign) {
 				return {
 					value: u.id,
-					label: `/r/${u.shortCode}`,
+					label: u.shortCode,
 					sub: u.destinationUrl,
 					badge: "In this campaign",
 					disabled: true,
@@ -119,7 +119,7 @@ export function CampaignDetailPage() {
 			if (isInOtherCampaign) {
 				return {
 					value: u.id,
-					label: `/r/${u.shortCode}`,
+					label: u.shortCode,
 					sub: u.destinationUrl,
 					badge: `In "${u.campaignName || "Other Campaign"}"`,
 					disabled: true,
@@ -129,7 +129,7 @@ export function CampaignDetailPage() {
 
 			return {
 				value: u.id,
-				label: `/r/${u.shortCode}`,
+				label: u.shortCode,
 				sub: u.destinationUrl,
 				badge: u.isAbTest ? "A/B Test" : "Available",
 				disabled: false,
@@ -201,7 +201,7 @@ export function CampaignDetailPage() {
 				destinationUrl: targetUrl.destinationUrl,
 				campaignId: campaign.id,
 			});
-			toast.success(`Shortlink /r/${targetUrl.shortCode} added to campaign!`);
+			toast.success(`Shortlink ${targetUrl.shortCode} added to campaign!`);
 		} catch (err) {
 			toast.error(err?.response?.data?.message || "Failed to assign link to campaign");
 		}
@@ -214,7 +214,7 @@ export function CampaignDetailPage() {
 				destinationUrl: url.destinationUrl,
 				campaignId: null,
 			});
-			toast.success(`Shortlink /r/${url.shortCode} removed from campaign`);
+			toast.success(`Shortlink ${url.shortCode} removed from campaign`);
 		} catch (err) {
 			toast.error(err?.response?.data?.message || "Failed to remove link from campaign");
 		}
@@ -542,7 +542,7 @@ export function CampaignDetailPage() {
 													to={`/redirect-links/${shortCode}`}
 													className="font-mono font-bold text-primary hover:underline flex items-center gap-1"
 												>
-													<span>/r/{shortCode}</span>
+													<span>{shortCode}</span>
 													<IconExternalLink className="size-3 opacity-60" />
 												</Link>
 												<div className="flex items-center gap-2 font-mono">
@@ -697,7 +697,7 @@ export function CampaignDetailPage() {
 																to={`/redirect-links/${u.shortCode}`}
 																className="font-mono text-xs font-bold text-primary hover:underline"
 															>
-																/r/{u.shortCode}
+																{u.shortCode}
 															</Link>
 															<button
 																type="button"

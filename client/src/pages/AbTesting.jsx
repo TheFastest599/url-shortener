@@ -6,6 +6,7 @@ import {
 	useConfigureAbTestMutation,
 } from "@/queries";
 import { queryKeys } from "@/queries/queryKeys";
+import { showErrorToast } from "@/lib/errorHandler";
 
 import {
 	AbTestHeader,
@@ -145,6 +146,7 @@ export function AbTestingPage() {
 				onSearchUrls={(query) => setLinkSearchQuery(query)}
 				onSubmit={({ shortCode, payload }) => configureMutation.mutate({ shortCode, payload })}
 				isSubmitting={configureMutation.isPending}
+				error={configureMutation.error}
 			/>
 		</div>
 	);

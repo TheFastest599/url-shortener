@@ -14,6 +14,7 @@ import { updateUrl } from "@/api/url";
 import { Input } from "@/components/ui/input";
 import { IconSearch } from "@tabler/icons-react";
 import { toast } from "sonner";
+import { showErrorToast } from "@/lib/errorHandler";
 
 import {
 	CampaignHeader,
@@ -119,7 +120,7 @@ export function CampaignsPage() {
 			if (isInThisCampaign) {
 				return {
 					value: u.id,
-					label: `/r/${u.shortCode}`,
+					label: u.shortCode,
 					sub: u.destinationUrl,
 					badge: "In this campaign",
 					disabled: true,
@@ -130,7 +131,7 @@ export function CampaignsPage() {
 			if (isInOtherCampaign) {
 				return {
 					value: u.id,
-					label: `/r/${u.shortCode}`,
+					label: u.shortCode,
 					sub: u.destinationUrl,
 					badge: `In "${u.campaignName || "Other Campaign"}"`,
 					disabled: true,
@@ -140,7 +141,7 @@ export function CampaignsPage() {
 
 			return {
 				value: u.id,
-				label: `/r/${u.shortCode}`,
+				label: u.shortCode,
 				sub: u.destinationUrl,
 				badge: u.isAbTest ? "A/B Test" : "Available",
 				disabled: false,
@@ -338,6 +339,7 @@ export function CampaignsPage() {
 				onOpenChange={setIsNewCampaignOpen}
 				onSubmit={(payload) => createMutation.mutate(payload)}
 				isSubmitting={createMutation.isPending}
+				error={createMutation.error}
 			/>
 
 			<EditCampaignModal
@@ -347,6 +349,7 @@ export function CampaignsPage() {
 				onOpenChange={(open) => !open && setCampaignToEdit(null)}
 				onSubmit={(data) => updateMutation.mutate(data)}
 				isSubmitting={updateMutation.isPending}
+				error={updateMutation.error}
 			/>
 
 			<CampaignLinksModal

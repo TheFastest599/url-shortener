@@ -33,6 +33,7 @@ import {
 } from "@tabler/icons-react";
 import { RelationalTray } from "./RelationalTray";
 import { toast } from "sonner";
+import { getShortUrl } from "@/config/constants";
 
 /**
  * Pure, reusable Shortlinks table component with integrated search toolbar
@@ -66,7 +67,7 @@ export function LinksTable({
 
 	const handleCopy = (shortCode, id, e) => {
 		e?.stopPropagation();
-		const fullUrl = `${window.location.origin}/r/${shortCode}`;
+		const fullUrl = getShortUrl(shortCode);
 		navigator.clipboard.writeText(fullUrl);
 		setCopiedId(id);
 		toast.success("Short URL copied to clipboard");
@@ -167,7 +168,7 @@ export function LinksTable({
 							) : (
 								rawUrls.map((url) => {
 									const id = url.id || url.shortCode;
-									const fullUrl = `${window.location.origin}/r/${url.shortCode}`;
+									const fullUrl = getShortUrl(url.shortCode);
 									const campaign = url.campaignId ? campaignMap[url.campaignId] : null;
 									const isExpanded = expandedRowId === id;
 									const isHighlighted = highlightCode === url.shortCode;
@@ -194,7 +195,7 @@ export function LinksTable({
 																className="font-mono text-xs font-bold text-primary hover:underline cursor-pointer"
 																title="View Link Details"
 															>
-																/r/{url.shortCode}
+																{url.shortCode}
 															</Link>
 															<button
 																onClick={(e) => handleCopy(url.shortCode, id, e)}

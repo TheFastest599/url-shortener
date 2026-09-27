@@ -20,6 +20,7 @@ import {
 	IconTrash,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
+import { getShortUrl } from "@/config/constants";
 
 export function LinkDetailHeader({
 	shortCode,
@@ -29,7 +30,7 @@ export function LinkDetailHeader({
 	onDeleteClick,
 }) {
 	const [copied, setCopied] = React.useState(false);
-	const fullUrl = `${window.location.origin}/r/${shortCode}`;
+	const fullUrl = getShortUrl(shortCode);
 
 	const handleCopy = () => {
 		navigator.clipboard.writeText(fullUrl);
@@ -51,7 +52,7 @@ export function LinkDetailHeader({
 						<BreadcrumbSeparator />
 						<BreadcrumbItem>
 							<BreadcrumbPage className="font-mono font-semibold text-foreground">
-								/r/{shortCode}
+								{shortCode}
 							</BreadcrumbPage>
 						</BreadcrumbItem>
 					</BreadcrumbList>
@@ -59,7 +60,7 @@ export function LinkDetailHeader({
 
 				<div className="flex items-center gap-2.5 flex-wrap">
 					<h1 className="font-heading text-xl sm:text-2xl font-bold tracking-tight text-foreground font-mono">
-						/r/{shortCode}
+						{shortCode}
 					</h1>
 					<Badge
 						variant="outline"

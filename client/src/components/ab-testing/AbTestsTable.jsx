@@ -22,6 +22,7 @@ import {
 	IconTrophy,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
+import { getShortUrl } from "@/config/constants";
 
 /**
  * Pure, reusable A/B Experiments table component with integrated search toolbar
@@ -43,10 +44,10 @@ export function AbTestsTable({
 
 	const handleCopy = (shortCode, e) => {
 		e.stopPropagation();
-		const fullUrl = `${window.location.origin}/r/${shortCode}`;
+		const fullUrl = getShortUrl(shortCode);
 		navigator.clipboard.writeText(fullUrl);
 		setCopiedCode(shortCode);
-		toast.success(`Copied /r/${shortCode} to clipboard!`);
+		toast.success(`Copied ${shortCode} to clipboard!`);
 		setTimeout(() => setCopiedCode(null), 2000);
 	};
 
@@ -153,7 +154,7 @@ export function AbTestsTable({
 															to={`/redirect-links/${test.shortCode}`}
 															className="font-mono text-[11px] text-primary hover:underline font-bold"
 														>
-															/r/{test.shortCode}
+															{test.shortCode}
 														</Link>
 														<button
 															type="button"

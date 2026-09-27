@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAnalyticsOverview } from "@/queries";
+import { getShortUrl } from "@/config/constants";
 import {
 	IconChartBar,
 	IconRefresh,
@@ -138,11 +139,11 @@ export function AnalyticsOverview({
 		setIsSimulating(true);
 		try {
 			// Trigger a redirect hit in background
-			await fetch(`http://localhost:8080/r/${selectedCode}`, {
+			await fetch(getShortUrl(selectedCode), {
 				mode: "no-cors",
 			});
 			toast.success(
-				`Click event published to Kafka for /r/${selectedCode}`,
+				`Click event published to Kafka for ${selectedCode}`,
 			);
 			// Refetch after 1.5 seconds for Kafka ingestion
 			setTimeout(() => {
@@ -151,7 +152,7 @@ export function AnalyticsOverview({
 			}, 1500);
 		} catch {
 			setIsSimulating(false);
-			window.open(`http://localhost:8080/r/${selectedCode}`, "_blank");
+			window.open(getShortUrl(selectedCode), "_blank");
 		}
 	};
 
@@ -190,7 +191,7 @@ export function AnalyticsOverview({
 								key={u.id || u.shortCode}
 								value={u.shortCode}
 							>
-								/r/{u.shortCode} {u.title ? `(${u.title})` : ""}
+								{u.shortCode} {u.title ? `(${u.title})` : ""}
 							</option>
 						))}
 					</select>
@@ -341,7 +342,7 @@ export function AnalyticsOverview({
 						Historical traffic distribution over the{" "}
 						{days === 1 ? "past 24 hours" : `past ${days} days`} for{" "}
 						<span className="font-mono font-medium text-foreground">
-							/r/{selectedCode}
+							{selectedCode}
 						</span>
 					</CardDescription>
 				</CardHeader>

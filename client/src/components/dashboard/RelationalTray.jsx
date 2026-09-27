@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { ROUTES } from "@/routes/paths";
 import { Badge } from "@/components/ui/badge";
+import { getShortUrl } from "@/config/constants";
 import {
 	IconFolder,
 	IconFlask,
@@ -121,7 +122,7 @@ export function RelationalTray({ url, campaign }) {
 						<span>UTM Tags & Direct Test</span>
 					</span>
 					<a
-						href={`${window.location.origin}/r/${url.shortCode}`}
+						href={getShortUrl(url.shortCode)}
 						target="_blank"
 						rel="noreferrer"
 						className="text-[10px] text-primary hover:underline font-medium inline-flex items-center gap-0.5"

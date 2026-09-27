@@ -14,6 +14,8 @@ import { IconEdit, IconScale, IconPlus, IconTrash } from "@tabler/icons-react";
 import { UtmEditor } from "@/components/links/UtmEditor";
 import { useUpdateAbTestMutation } from "@/queries/abTestingQueries";
 import { toast } from "sonner";
+import { Field, FieldLabel, FieldError } from "@/components/ui/field";
+import { validateUrl, parseApiError, showErrorToast } from "@/lib/errorHandler";
 
 export function EditAbTestModal({
 	open,
@@ -22,6 +24,7 @@ export function EditAbTestModal({
 	shortCode,
 	onSubmit,
 	isSubmitting = false,
+	error = null,
 }) {
 	const [name, setName] = React.useState(experiment?.name || "");
 	const [cookieDays, setCookieDays] = React.useState(
@@ -35,7 +38,6 @@ export function EditAbTestModal({
 			isControl: typeof v.isControl === "boolean" ? v.isControl : i === 0,
 		}))
 	);
-
 	// Sync state whenever modal opens or experiment changes
 	React.useEffect(() => {
 		if (open && experiment) {
@@ -59,6 +61,7 @@ export function EditAbTestModal({
 					isControl: typeof v.isControl === "boolean" ? v.isControl : i === 0,
 				}))
 			);
+			setClientErrors({});
 		}
 	}, [open, experiment]);
 
@@ -67,6 +70,9 @@ export function EditAbTestModal({
 			onOpenChange?.(false);
 		},
 	});
+
+	const activeError = error || defaultMutation.error;
+	const { fieldErrors: serverFieldErrors } = parseApiError(activeError);
 
 	const isProcessing = isSubmitting || defaultMutation.isPending;
 
@@ -160,31 +166,43 @@ export function EditAbTestModal({
 
 	const handleSubmit = (e) => {
 		e.preventDefault();
+		const errors = {};
+
 		if (!name.trim()) {
-			toast.error("Experiment name is required");
-			return;
+			errors.name = "Experiment name is required.";
 		}
 		if (!isWeightValid) {
-			toast.error(`Variant weights must sum to exactly 100% (currently: ${totalWeight}%)`);
-			return;
+			errors.weight = `Variant weights must sum to exactly 100% (currently: ${totalWeight}%).`;
 		}
+
+		const validatedVariants = [];
 		for (const v of variants) {
-			if (!v.destinationUrl.trim()) {
-				toast.error(`Destination URL for Variant ${v.key} is required`);
-				return;
+			const urlVal = validateUrl(v.destinationUrl);
+			if (!urlVal.isValid) {
+				errors[`variant_${v.key}`] = `Variant ${v.key}: ${urlVal.error}`;
+			} else {
+				validatedVariants.push({
+					key: v.key,
+					destinationUrl: urlVal.formattedUrl,
+					weight: parseInt(v.weight, 10) || 0,
+					isControl: !!v.isControl,
+				});
 			}
 		}
 
+		if (Object.keys(errors).length > 0) {
+			setClientErrors(errors);
+			const firstError = Object.values(errors)[0];
+			toast.error("Validation Error", { description: firstError });
+			return;
+		}
+
+		setClientErrors({});
 		const cookieDaysNum = parseInt(cookieDays, 10) || 30;
 		const payload = {
 			name: name.trim(),
 			cookieTtlSeconds: cookieDaysNum * 86400,
-			variants: variants.map((v) => ({
-				key: v.key,
-				destinationUrl: v.destinationUrl.trim(),
-				weight: parseInt(v.weight, 10) || 0,
-				isControl: !!v.isControl,
-			})),
+			variants: validatedVariants,
 		};
 
 		const targetId = experiment?.id;
@@ -202,7 +220,7 @@ export function EditAbTestModal({
 				payload,
 			});
 		} else {
-			toast.error("Unable to update: Experiment ID missing");
+			toast.error("Unable to update", { description: "Experiment ID is missing." });
 		}
 	};
 
@@ -213,7 +231,7 @@ export function EditAbTestModal({
 					<DialogHeader>
 						<DialogTitle className="flex items-center gap-2">
 							<IconEdit className="size-5 text-primary" />
-							<span>Edit A/B Experiment: /r/{experiment?.shortCode || shortCode}</span>
+							<span>Edit A/B Experiment: {experiment?.shortCode || shortCode}</span>
 						</DialogTitle>
 						<DialogDescription className="text-xs">
 							Modify destination URLs, adjust traffic split weights, or change session stickiness.
@@ -222,23 +240,28 @@ export function EditAbTestModal({
 
 					{/* Experiment Basic Details */}
 					<div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-						<div className="sm:col-span-2 space-y-1.5">
-							<label className="text-xs font-semibold text-foreground">
+						<Field className="sm:col-span-2 gap-1.5">
+							<FieldLabel className="text-xs font-semibold text-foreground">
 								Experiment Name <span className="text-destructive">*</span>
-							</label>
+							</FieldLabel>
 							<Input
 								value={name}
-								onChange={(e) => setName(e.target.value)}
+								onChange={(e) => {
+									setName(e.target.value);
+									if (clientErrors.name) setClientErrors((prev) => ({ ...prev, name: null }));
+								}}
 								placeholder="e.g. Landing Page Headline Test"
 								className="text-xs"
 								required
+								aria-invalid={Boolean(clientErrors.name || serverFieldErrors?.name)}
 							/>
-						</div>
+							<FieldError>{clientErrors.name || serverFieldErrors?.name}</FieldError>
+						</Field>
 
-						<div className="space-y-1.5">
-							<label className="text-xs font-semibold text-foreground">
+						<Field className="gap-1.5">
+							<FieldLabel className="text-xs font-semibold text-foreground">
 								Cookie Stickiness
-							</label>
+							</FieldLabel>
 							<div className="flex items-center gap-1.5">
 								<Input
 									type="number"
@@ -251,7 +274,7 @@ export function EditAbTestModal({
 								/>
 								<span className="text-muted-foreground shrink-0 text-xs">days</span>
 							</div>
-						</div>
+						</Field>
 					</div>
 
 					{/* Variants */}
@@ -296,87 +319,101 @@ export function EditAbTestModal({
 							</div>
 						</div>
 
-						<div className="space-y-2.5">
-							{variants.map((v, index) => (
-								<div
-									key={v.key}
-									className="p-3 rounded-xl border border-border/70 bg-card space-y-2"
-								>
-									<div className="flex items-center justify-between gap-2">
-										<div className="flex items-center gap-2">
-											<Badge
-												variant={v.isControl ? "default" : "outline"}
-												className="text-xs font-bold"
-											>
-												Variant {v.key}
-											</Badge>
-											{v.isControl && (
-												<span className="text-[10px] font-medium text-primary">
-													(Control / Default)
-												</span>
-											)}
-										</div>
+						{clientErrors.weight && (
+							<p className="text-[11px] font-medium text-destructive">
+								{clientErrors.weight}
+							</p>
+						)}
 
-										<div className="flex items-center gap-2">
-											<div className="flex items-center gap-1">
-												<span className="text-muted-foreground text-[11px]">Weight:</span>
-												<Input
-													type="number"
-													min="0"
-													max="100"
-													value={v.weight}
-													onChange={(e) =>
-														handleVariantWeightChange(index, e.target.value)
-													}
-													onBlur={() => handleVariantWeightBlur(index)}
-													className="w-16 h-7 text-xs text-center"
-												/>
-												<span className="text-muted-foreground text-xs">%</span>
+						<div className="space-y-2.5">
+							{variants.map((v, index) => {
+								const variantErr = clientErrors[`variant_${v.key}`];
+								return (
+									<div
+										key={v.key}
+										className="p-3 rounded-xl border border-border/70 bg-card space-y-2"
+									>
+										<div className="flex items-center justify-between gap-2">
+											<div className="flex items-center gap-2">
+												<Badge
+													variant={v.isControl ? "default" : "outline"}
+													className="text-xs font-bold"
+												>
+													Variant {v.key}
+												</Badge>
+												{v.isControl && (
+													<span className="text-[10px] font-medium text-primary">
+														(Control / Default)
+													</span>
+												)}
 											</div>
 
-											{variants.length > 2 && (
-												<Button
-													type="button"
-													variant="ghost"
-													size="sm"
-													onClick={() => handleRemoveVariant(index)}
-													className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10 cursor-pointer"
-												>
-													<IconTrash className="size-3.5" />
-												</Button>
-											)}
-										</div>
-									</div>
+											<div className="flex items-center gap-2">
+												<div className="flex items-center gap-1">
+													<span className="text-muted-foreground text-[11px]">Weight:</span>
+													<Input
+														type="number"
+														min="0"
+														max="100"
+														value={v.weight}
+														onChange={(e) =>
+															handleVariantWeightChange(index, e.target.value)
+														}
+														onBlur={() => handleVariantWeightBlur(index)}
+														className="w-16 h-7 text-xs text-center"
+													/>
+													<span className="text-muted-foreground text-xs">%</span>
+												</div>
 
-									<div className="space-y-1.5">
-										<Input
-											value={v.destinationUrl}
-											onChange={(e) => {
-												const val = e.target.value;
-												setVariants((prev) => {
-													const upd = [...prev];
-													upd[index] = { ...upd[index], destinationUrl: val };
-													return upd;
-												});
-											}}
-											placeholder={`https://mysite.com/variant-${v.key.toLowerCase()}`}
-											className="text-xs font-mono"
-											required
-										/>
-										<UtmEditor
-											url={v.destinationUrl}
-											onChange={(newUrl) => {
-												setVariants((prev) => {
-													const upd = [...prev];
-													upd[index] = { ...upd[index], destinationUrl: newUrl };
-													return upd;
-												});
-											}}
-											compact
-										/>
+												{variants.length > 2 && (
+													<Button
+														type="button"
+														variant="ghost"
+														size="sm"
+														onClick={() => handleRemoveVariant(index)}
+														className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10 cursor-pointer"
+													>
+														<IconTrash className="size-3.5" />
+													</Button>
+												)}
+											</div>
+										</div>
+
+										<Field className="gap-1">
+											<Input
+												value={v.destinationUrl}
+												onChange={(e) => {
+													const val = e.target.value;
+													setVariants((prev) => {
+														const upd = [...prev];
+														upd[index] = { ...upd[index], destinationUrl: val };
+														return upd;
+													});
+													if (clientErrors[`variant_${v.key}`]) {
+														setClientErrors((prev) => ({ ...prev, [`variant_${v.key}`]: null }));
+													}
+												}}
+												placeholder={`https://mysite.com/variant-${v.key.toLowerCase()}`}
+												className="text-xs font-mono"
+												required
+												aria-invalid={Boolean(variantErr)}
+											/>
+											<FieldError>{variantErr}</FieldError>
+											<UtmEditor
+												url={v.destinationUrl}
+												onChange={(newUrl) => {
+													setVariants((prev) => {
+														const upd = [...prev];
+														upd[index] = { ...upd[index], destinationUrl: newUrl };
+														return upd;
+													});
+												}}
+												compact
+											/>
+										</Field>
 									</div>
-								</div>
-							))}
+								);
+							})}
 						</div>
 					</div>
 

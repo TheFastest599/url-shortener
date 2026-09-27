@@ -17,6 +17,7 @@ import {
 	IconExternalLink,
 	IconUnlink,
 } from "@tabler/icons-react";
+import { getShortUrl } from "@/config/constants";
 
 export function CampaignLinksModal({
 	campaign,
@@ -96,7 +97,7 @@ export function CampaignLinksModal({
 										to={`/redirect-links/${url.shortCode}`}
 										className="font-mono font-bold text-primary hover:underline"
 									>
-										/r/{url.shortCode}
+										{url.shortCode}
 									</Link>
 									<div
 										className="text-muted-foreground truncate max-w-xs"
@@ -117,7 +118,7 @@ export function CampaignLinksModal({
 										</Button>
 									</Link>
 									<a
-										href={`${window.location.origin}/r/${url.shortCode}`}
+										href={getShortUrl(url.shortCode)}
 										target="_blank"
 										rel="noreferrer"
 										className="inline-flex size-7 items-center justify-center rounded-md border border-border bg-card text-muted-foreground hover:text-foreground"

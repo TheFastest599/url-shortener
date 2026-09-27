@@ -7,6 +7,7 @@ import { useCreateUrlMutation } from "@/queries";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { validateUrl, validateCustomAlias, showErrorToast } from "@/lib/errorHandler";
 import {
 	IconLink,
 	IconCopy,
@@ -28,6 +29,7 @@ import {
 	IconLayersLinked,
 	IconX,
 } from "@tabler/icons-react";
+import { getShortUrl, getShortDomainPrefix } from "@/config/constants";
 
 /**
  * Showcase presets representing the 3 platform pillars:
@@ -43,8 +45,8 @@ const SHOWCASE_CARDS = [
 		badgeColor: "bg-primary/10 text-primary border-primary/20",
 		title: "Branded Short Link",
 		subtitle: "Instant redirection & print-ready QR",
-		shortSlug: "sho.rt/summer-drop",
-		fullUrl: "http://localhost:8080/r/summer-drop",
+		shortSlug: `${getShortDomainPrefix()}summer-drop`,
+		fullUrl: getShortUrl("summer-drop"),
 		targetUrl: "https://brand.com/products/summer-2026?ref=direct",
 		metricLabel: "Redirection Speed",
 		metricValue: "< 5ms Instant",
@@ -62,8 +64,8 @@ const SHOWCASE_CARDS = [
 		badgeColor: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
 		title: "Q4 Product Launch",
 		subtitle: "6 grouped links · Unified multi-touch UTM attribution",
-		shortSlug: "sho.rt/c/q4-launch",
-		fullUrl: "http://localhost:8080/r/c/q4-launch",
+		shortSlug: `${getShortDomainPrefix()}c/q4-launch`,
+		fullUrl: getShortUrl("c/q4-launch"),
 		targetUrl: "https://brand.com/launch?utm_campaign=q4_launch",
 		folderPath: "campaigns / q4-growth-launch",
 		linksCount: 6,
@@ -93,8 +95,8 @@ const SHOWCASE_CARDS = [
 		badgeColor: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
 		title: "Hero CTA Optimization",
 		subtitle: "Server-side traffic split · 30-day sticky sessions",
-		shortSlug: "sho.rt/pricing-test",
-		fullUrl: "http://localhost:8080/r/pricing-test",
+		shortSlug: `${getShortDomainPrefix()}pricing-test`,
+		fullUrl: getShortUrl("pricing-test"),
 		targetUrl: "https://brand.com/pricing-v2",
 		cookieName: "ab_pricing-test=B",
 		cookieTtl: "30 Days (2,592,000s)",
@@ -224,7 +226,7 @@ export function HeroSection() {
 	const createUrlMutation = useCreateUrlMutation({
 		onSuccess: (data) => {
 			const slug = data?.shortCode || customSlug.trim();
-			const fullShortUrl = `http://localhost:8080/r/${slug}`;
+			const fullShortUrl = getShortUrl(slug);
 			update({
 				isShortening: false,
 				shortenedResult: {
@@ -240,23 +242,28 @@ export function HeroSection() {
 			});
 			toast.success("Short link created successfully!");
 		},
-		onError: (err) => {
+		onError: () => {
 			update({ isShortening: false });
-			toast.error(err?.response?.data?.message || "Failed to shorten URL");
 		},
 	});
 
 	const handleShorten = (e) => {
 		e?.preventDefault();
-		let target = urlInput.trim();
-		if (!target) {
-			toast.error("Please enter a destination URL");
+		const urlVal = validateUrl(urlInput);
+		if (!urlVal.isValid) {
+			toast.error("Validation Error", { description: urlVal.error });
 			return;
 		}
 
-		if (!target.startsWith("http://") && !target.startsWith("https://")) {
-			target = "https://" + target;
+		if (customSlug.trim()) {
+			const slugVal = validateCustomAlias(customSlug);
+			if (!slugVal.isValid) {
+				toast.error("Validation Error", { description: slugVal.error });
+				return;
+			}
 		}
+
+		let target = urlVal.formattedUrl;
 
 		// Compose UTM parameters if provided
 		let finalUrl = target;
@@ -284,7 +291,7 @@ export function HeroSection() {
 			// Demonstration short link fallback
 			setTimeout(() => {
 				const randomSlug = customSlug.trim() || Math.random().toString(36).substring(2, 8);
-				const fullShortUrl = `http://localhost:8080/r/${randomSlug}`;
+				const fullShortUrl = getShortUrl(randomSlug);
 				update({
 					isShortening: false,
 					shortenedResult: {

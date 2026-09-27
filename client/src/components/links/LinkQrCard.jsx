@@ -2,9 +2,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { IconQrcode, IconDownload } from "@tabler/icons-react";
 import { toast } from "sonner";
+import { getShortUrl } from "@/config/constants";
 
 export function LinkQrCard({ shortCode, onOpenQrModal }) {
-	const fullShortUrl = `${window.location.origin}/r/${shortCode}`;
+	const fullShortUrl = getShortUrl(shortCode);
 	const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=350x350&data=${encodeURIComponent(
 		fullShortUrl
 	)}&margin=12`;
@@ -39,7 +40,7 @@ export function LinkQrCard({ shortCode, onOpenQrModal }) {
 				<div className="p-2.5 bg-white rounded-xl shadow-2xs border border-border/80">
 					<img
 						src={qrImageUrl}
-						alt={`QR Code for /r/${shortCode}`}
+						alt={`QR Code for ${shortCode}`}
 						className="size-36 object-contain"
 						loading="lazy"
 					/>

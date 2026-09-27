@@ -10,31 +10,55 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Field, FieldLabel, FieldError } from "@/components/ui/field";
+import { parseApiError } from "@/lib/errorHandler";
 import { IconFolder } from "@tabler/icons-react";
 import { toast } from "sonner";
 
-export function CreateCampaignModal({ open, onOpenChange, onSubmit, isSubmitting = false }) {
+export function CreateCampaignModal({
+	open,
+	onOpenChange,
+	onSubmit,
+	isSubmitting = false,
+	error = null,
+}) {
 	const [name, setName] = React.useState("");
 	const [description, setDescription] = React.useState("");
+	const [clientError, setClientError] = React.useState("");
+
+	const { fieldErrors: serverFieldErrors } = parseApiError(error);
 
 	React.useEffect(() => {
 		if (open) {
 			setName("");
 			setDescription("");
+			setClientError("");
 		}
 	}, [open]);
 
 	const handleSubmit = (e) => {
 		e.preventDefault();
-		if (!name.trim()) {
-			toast.error("Campaign name is required");
+		const trimmedName = name.trim();
+		if (!trimmedName) {
+			const msg = "Campaign name is required.";
+			setClientError(msg);
+			toast.error("Validation Error", { description: msg });
 			return;
 		}
+		if (trimmedName.length < 2) {
+			const msg = "Campaign name must be at least 2 characters long.";
+			setClientError(msg);
+			toast.error("Validation Error", { description: msg });
+			return;
+		}
+		setClientError("");
 		onSubmit({
-			name: name.trim(),
+			name: trimmedName,
 			description: description.trim() || null,
 		});
 	};
+
+	const nameError = clientError || serverFieldErrors?.name;
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
@@ -50,29 +74,38 @@ export function CreateCampaignModal({ open, onOpenChange, onSubmit, isSubmitting
 				</DialogHeader>
 
 				<form onSubmit={handleSubmit} className="space-y-4 py-2">
-					<div className="space-y-1.5">
-						<label className="text-xs font-semibold text-foreground">
+					<Field className="gap-1.5">
+						<FieldLabel className="text-xs font-semibold text-foreground">
 							Campaign Name <span className="text-destructive">*</span>
-						</label>
+						</FieldLabel>
 						<Input
 							value={name}
-							onChange={(e) => setName(e.target.value)}
+							onChange={(e) => {
+								setName(e.target.value);
+								if (clientError) setClientError("");
+							}}
 							placeholder="e.g. Q4 Black Friday Launch"
 							className="text-xs"
 							required
 							autoFocus
+							aria-invalid={Boolean(nameError)}
 						/>
-					</div>
+						<FieldError>{nameError}</FieldError>
+					</Field>
 
-					<div className="space-y-1.5">
-						<label className="text-xs font-semibold text-foreground">Description</label>
+					<Field className="gap-1.5">
+						<FieldLabel className="text-xs font-semibold text-foreground">
+							Description
+						</FieldLabel>
 						<Textarea
 							value={description}
 							onChange={(e) => setDescription(e.target.value)}
 							placeholder="Goals, target channels, or campaign context..."
 							className="text-xs min-h-[75px]"
+							aria-invalid={Boolean(serverFieldErrors?.description)}
 						/>
-					</div>
+						<FieldError>{serverFieldErrors?.description}</FieldError>
+					</Field>
 
 					<DialogFooter className="gap-2 sm:gap-0 pt-2 border-t border-border/50">
 						<Button

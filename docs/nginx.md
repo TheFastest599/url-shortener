@@ -9,17 +9,16 @@ Architecture, configuration, and routing reference for the unified Nginx edge re
 Nginx serves as the **sole public-facing gateway** on port 80. By encapsulating both static frontend assets and reverse proxy routing into a single lightweight container, it enforces strict port isolation for the backend microservices.
 
 ```text
-                                  ┌───► /             ──► [Static React SPA] (HTML/JS/CSS)
+                                  ┌───► [Main Domain: yourdomain.com] ──► /     ──► [Static React SPA]
+🌐 Client Browser ──► :80 (Nginx) ├───► [Main Domain: yourdomain.com] ──► /api/ ──► [apigateway-service:8080]
                                   │
-🌐 Client Browser ──► :80 (Nginx) ├───► /r/* & /s/*   ──► [redirect-service:8082] (Sub-10ms)
-                                  │
-                                  └───► /api/*        ──► [apigateway-service:8080] (Auth & REST)
+                                  └───► [Redirect: r.yourdomain.com]  ──► /*    ──► [redirect-service:8082]
 ```
 
 ### Key Architectural Benefits
 - **Zero Port Collisions**: No need to expose ports 8080, 8081, 8082, 8083, or 5173 to the host.
-- **Same-Origin Requests**: The frontend communicates via relative paths (`/api/v1/...`), eliminating Cross-Origin Resource Sharing (CORS) preflight roundtrips in production.
-- **Fast Redirection**: Redirection traffic (`/r/` and `/s/`) bypasses the heavy API Gateway and goes directly to the high-throughput Redis/gRPC redirect microservice.
+- **Strict Domain Separation**: Main app & APIs live on the main domain; all short link redirection is exclusively handled on the `r.` subdomain.
+- **Cleaner Short Links**: Clean URLs (`r.yourdomain.com/{code}`) without redundant `/r/` or `/s/` path prefixes.
 
 ---
 
@@ -49,15 +48,24 @@ CMD ["nginx", "-g", "daemon off;"]
 
 ---
 
-## 3. Ingress Routing Table
+## 3. Dynamic Virtual Hosts & Routing Table
 
-The configuration in [nginx/nginx.conf](../nginx/nginx.conf) routes requests across three distinct path patterns:
+[nginx/nginx.conf](../nginx/nginx.conf) is configured with **zero hardcoded hostnames**, making it fully portable across `localhost`, staging IPs, and production domains:
+
+### 3.1. Dedicated Redirect Domain (`~^r\.(?<main_domain>.+)$`)
+Matches any domain starting with `r.` (e.g., `r.localhost`, `r.yourdomain.com`, `r.sho.rt`):
+
+| Request URL | Target Upstream | Dynamic Behavior |
+| :--- | :--- | :--- |
+| **`http://r.{domain}/{code}`** | `http://redirect:8082/r/{code}` | Direct short link & custom alias redirection (clean format). |
+| **`http://r.{domain}/`** | `$scheme://$main_domain/` | Dynamically redirects root visits to the parent domain (e.g., `http://yourdomain.com/`). |
+
+### 3.2. Main Platform & API Gateway (`default_server`)
+Catch-all for the primary application domain (`yourdomain.com`), `localhost`, or direct cloud IP addresses:
 
 | Request Path | Target Upstream | Behavior & Rules |
 | :--- | :--- | :--- |
-| **`/`** | `/usr/share/nginx/html` | Serves compiled static assets. Falls back to `/index.html` via `try_files` for React client-side routing. |
-| **`/r/`** | `http://redirect:8082/r/` | High-speed redirection by short code. |
-| **`/s/`** | `http://redirect:8082/s/` | High-speed redirection by custom alias. |
+| **`/`** | `/usr/share/nginx/html` | Serves compiled static React SPA. Falls back to `/index.html` via `try_files` for client-side routing. |
 | **`/api/`** | `http://apigateway:8080/api/` | Authentication, OAuth2 callbacks, analytics, and URL CRUD proxy. |
 
 ---
