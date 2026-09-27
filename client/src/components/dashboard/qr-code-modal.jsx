@@ -88,7 +88,7 @@ export function QrCodeModal({ open, onOpenChange, url }) {
 							className="h-7 size-7 p-0 shrink-0 cursor-pointer"
 						>
 							{copied ? (
-								<IconCheck className="size-3.5 text-emerald-500" />
+								<IconCheck className="size-3.5 text-chart-2" />
 							) : (
 								<IconCopy className="size-3.5" />
 							)}

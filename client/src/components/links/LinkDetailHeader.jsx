@@ -66,7 +66,7 @@ export function LinkDetailHeader({
 						variant="outline"
 						className={`text-[10px] ${
 							isActive
-								? "text-emerald-500 border-emerald-500/30"
+								? "text-chart-2 border-chart-2/30"
 								: "text-muted-foreground border-border"
 						}`}
 					>
@@ -74,7 +74,7 @@ export function LinkDetailHeader({
 					</Badge>
 					{isAbTest && (
 						<Link to={ROUTES.AB_TESTING}>
-							<Badge variant="outline" className="text-[10px] text-amber-500 border-amber-500/30 hover:bg-amber-500/10 cursor-pointer">
+							<Badge variant="outline" className="text-[10px] text-chart-3 border-chart-3/30 hover:bg-chart-3/10 cursor-pointer">
 								A/B Test Running
 							</Badge>
 						</Link>
@@ -89,7 +89,7 @@ export function LinkDetailHeader({
 					onClick={handleCopy}
 					className="text-xs h-8.5 gap-1.5 cursor-pointer shadow-2xs"
 				>
-					{copied ? <IconCheck className="size-3.5 text-emerald-500" /> : <IconCopy className="size-3.5" />}
+					{copied ? <IconCheck className="size-3.5 text-chart-2" /> : <IconCopy className="size-3.5" />}
 					<span>Copy</span>
 				</Button>
 

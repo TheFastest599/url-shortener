@@ -36,7 +36,7 @@ public class UrlMapping {
     @GeneratedValue(strategy = GenerationType.AUTO)
     private UUID id;
 
-    @Column(name = "short_code", nullable = false, unique = true, length = 10)
+    @Column(name = "short_code", nullable = false, unique = true, length = 64)
     private String shortCode;
 
     @Column(name = "destination_url", nullable = false, columnDefinition = "TEXT")

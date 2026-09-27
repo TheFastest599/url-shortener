@@ -69,19 +69,19 @@ export function RelationalTray({ url, campaign }) {
 			<div className="space-y-1.5 p-3 rounded-xl bg-card border border-border/60">
 				<div className="flex items-center justify-between">
 					<span className="font-semibold text-foreground flex items-center gap-1.5">
-						<IconFlask className="size-3.5 text-amber-500" />
+						<IconFlask className="size-3.5 text-chart-3" />
 						<span>Routing Engine</span>
 					</span>
 					{url.isAbTest ? (
 						<Link
 							to={url.abTestId ? `/ab-testing/${url.abTestId}` : ROUTES.AB_TESTING}
-							className="text-[10px] text-amber-500 hover:underline font-medium inline-flex items-center gap-0.5"
+							className="text-[10px] text-chart-3 hover:underline font-medium inline-flex items-center gap-0.5"
 						>
 							<span>{url.abTestStatus || "View Test"}</span>
 							<IconArrowRight className="size-2.5" />
 						</Link>
 					) : (
-						<Badge variant="outline" className="text-[9px] text-emerald-500 border-emerald-500/30">
+						<Badge variant="outline" className="text-[9px] text-chart-2 border-chart-2/30">
 							Direct
 						</Badge>
 					)}
@@ -92,7 +92,7 @@ export function RelationalTray({ url, campaign }) {
 							<div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
 								<span>{url.abTestName || "Active Traffic Split"}</span>
 								{url.abTestStatus && (
-									<Badge variant="outline" className="text-[9px] text-amber-500 border-amber-500/30">
+									<Badge variant="outline" className="text-[9px] text-chart-3 border-chart-3/30">
 										{url.abTestStatus}
 									</Badge>
 								)}

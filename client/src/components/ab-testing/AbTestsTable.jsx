@@ -71,7 +71,7 @@ export function AbTestsTable({
 						/>
 						{isFetching && (
 							<div
-								className="absolute right-3 top-1/2 -translate-y-1/2 size-2 rounded-full bg-amber-500 animate-ping"
+								className="absolute right-3 top-1/2 -translate-y-1/2 size-2 rounded-full bg-chart-3 animate-ping"
 								title="Querying backend..."
 							/>
 						)}
@@ -146,7 +146,7 @@ export function AbTestsTable({
 														className="font-heading text-xs font-bold text-foreground hover:text-primary transition-colors flex items-center gap-1.5 hover:underline group"
 														title="View complete A/B telemetry & workbench details"
 													>
-														<IconFlask className="size-3.5 text-amber-500 shrink-0 group-hover:scale-110 transition-transform" />
+														<IconFlask className="size-3.5 text-chart-3 shrink-0 group-hover:scale-110 transition-transform" />
 														<span className="truncate max-w-[210px]">{test.name || "A/B Experiment"}</span>
 													</Link>
 													<div className="flex items-center gap-1.5">
@@ -163,7 +163,7 @@ export function AbTestsTable({
 															title="Copy shortlink"
 														>
 															{copiedCode === test.shortCode ? (
-																<IconCheck className="size-3 text-emerald-500" />
+																<IconCheck className="size-3 text-chart-2" />
 															) : (
 																<IconCopy className="size-3" />
 															)}
@@ -184,10 +184,10 @@ export function AbTestsTable({
 													}
 													className={`text-[10px] font-semibold ${
 														status === "ACTIVE"
-															? "bg-emerald-500/15 text-emerald-500 border border-emerald-500/30"
+															? "bg-chart-2/15 text-chart-2 border border-chart-2/30"
 															: status === "PAUSED"
-																? "text-amber-500 border-amber-500/30 bg-amber-500/10"
-																: "bg-purple-500/15 text-purple-500 border border-purple-500/30"
+																? "text-chart-3 border-chart-3/30 bg-chart-3/10"
+																: "bg-primary/15 text-primary border border-primary/30"
 													}`}
 												>
 													{status}
@@ -222,7 +222,7 @@ export function AbTestsTable({
 													{variants.length > 0 && (
 														<div className="h-1.5 w-full bg-muted/60 rounded-full overflow-hidden flex">
 															{variants.map((v, idx) => {
-																const colors = ["bg-primary", "bg-sky-500", "bg-indigo-500", "bg-emerald-500"];
+																const colors = ["bg-chart-1", "bg-chart-2", "bg-chart-3", "bg-chart-4", "bg-chart-5"];
 																return (
 																	<div
 																		key={v.id || idx}
@@ -240,8 +240,8 @@ export function AbTestsTable({
 											{/* Winning Outcome */}
 											<TableCell className="py-3 text-xs">
 												{test.winningVariant ? (
-													<Badge variant="outline" className="text-[10px] font-mono gap-1 text-emerald-500 border-emerald-500/30 bg-emerald-500/10">
-														<IconTrophy className="size-3 text-amber-500" />
+													<Badge variant="outline" className="text-[10px] font-mono gap-1 text-chart-2 border-chart-2/30 bg-chart-2/10">
+														<IconTrophy className="size-3 text-chart-3" />
 														<span>Winner: {test.winningVariant}</span>
 													</Badge>
 												) : status === "CONCLUDED" ? (

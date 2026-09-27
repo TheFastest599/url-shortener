@@ -74,7 +74,7 @@ export function AudienceInsightsSection() {
 										<span className="font-mono text-muted-foreground">32%</span>
 									</div>
 									<div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
-										<div className="bg-amber-500 h-full w-[32%]" />
+										<div className="bg-chart-3 h-full w-[32%]" />
 									</div>
 								</div>
 
@@ -84,7 +84,7 @@ export function AudienceInsightsSection() {
 										<span className="font-mono text-muted-foreground">20%</span>
 									</div>
 									<div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
-										<div className="bg-emerald-500 h-full w-[20%]" />
+										<div className="bg-chart-2 h-full w-[20%]" />
 									</div>
 								</div>
 							</div>
@@ -94,7 +94,7 @@ export function AudienceInsightsSection() {
 					{/* Card 2: Device & Platform Distribution */}
 					<div className="rounded-2xl border border-border/80 bg-card p-6 sm:p-7 shadow-xs flex flex-col justify-between space-y-6">
 						<div>
-							<div className="flex size-11 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 mb-4">
+							<div className="flex size-11 items-center justify-center rounded-xl bg-chart-3/10 text-chart-3 mb-4">
 								<IconDeviceMobile className="size-5" />
 							</div>
 							<h3 className="font-heading text-lg font-bold text-foreground">
@@ -120,7 +120,7 @@ export function AudienceInsightsSection() {
 								</div>
 
 								<div className="p-2.5 rounded-lg bg-background border border-border/60 text-center space-y-1">
-									<IconDeviceDesktop className="size-4 text-amber-500 mx-auto" />
+									<IconDeviceDesktop className="size-4 text-chart-3 mx-auto" />
 									<span className="text-xs font-bold text-foreground block font-mono">28%</span>
 									<span className="text-[10px] text-muted-foreground block">Desktop / Mac</span>
 								</div>
@@ -135,7 +135,7 @@ export function AudienceInsightsSection() {
 					{/* Card 3: Bot Filtering & Geo Telemetry */}
 					<div className="rounded-2xl border border-border/80 bg-card p-6 sm:p-7 shadow-xs flex flex-col justify-between space-y-6">
 						<div>
-							<div className="flex size-11 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 mb-4">
+							<div className="flex size-11 items-center justify-center rounded-xl bg-chart-2/10 text-chart-2 mb-4">
 								<IconShieldCheck className="size-5" />
 							</div>
 							<h3 className="font-heading text-lg font-bold text-foreground">
@@ -150,7 +150,7 @@ export function AudienceInsightsSection() {
 						<div className="space-y-2.5 p-3.5 rounded-xl bg-muted/30 border border-border/60 text-xs">
 							<div className="flex items-center justify-between text-muted-foreground text-[11px] font-medium">
 								<span>Data Integrity</span>
-								<span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 font-bold">
+								<span className="text-[10px] font-mono text-chart-2 bg-chart-2/10 px-1.5 py-0.5 rounded border border-chart-2/20 font-bold">
 									Active Bot Filter
 								</span>
 							</div>
@@ -165,14 +165,14 @@ export function AudienceInsightsSection() {
 
 								<div className="flex items-center justify-between text-[11px]">
 									<span className="text-muted-foreground flex items-center gap-1">
-										<IconCompass className="size-3 text-amber-500" /> Second Location
+										<IconCompass className="size-3 text-chart-3" /> Second Location
 									</span>
 									<span className="font-semibold text-foreground">United Kingdom (18%)</span>
 								</div>
 
 								<div className="flex items-center justify-between text-[11px]">
 									<span className="text-muted-foreground flex items-center gap-1">
-										<IconFilter className="size-3 text-emerald-500" /> Scrapers Filtered
+										<IconFilter className="size-3 text-chart-2" /> Scrapers Filtered
 									</span>
 									<span className="font-mono text-muted-foreground">342 bot hits excluded</span>
 								</div>

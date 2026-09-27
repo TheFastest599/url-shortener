@@ -101,7 +101,7 @@ export function ComparisonSection() {
 									{/* HiClickMe Highlight Column */}
 									<td className="p-4 sm:p-5 font-semibold text-foreground bg-primary/5 border-x border-border/60">
 										<div className="flex items-center gap-1.5 text-primary">
-											<IconCheck className="size-4 shrink-0 text-emerald-500" />
+											<IconCheck className="size-4 shrink-0 text-chart-2" />
 											<span>{row.hiclickme}</span>
 										</div>
 									</td>
@@ -112,7 +112,7 @@ export function ComparisonSection() {
 											{row.legacy.startsWith("Not") ? (
 												<IconX className="size-4 shrink-0 text-muted-foreground/60" />
 											) : (
-												<span className="size-1.5 rounded-full bg-amber-500 shrink-0" />
+												<span className="size-1.5 rounded-full bg-chart-3 shrink-0" />
 											)}
 											<span>{row.legacy}</span>
 										</div>

@@ -55,14 +55,14 @@ export function AnalyticsKpiCards({
 						<span className="text-xs font-medium text-muted-foreground">
 							Human Traffic
 						</span>
-						<div className="text-2xl sm:text-3xl font-bold font-heading text-emerald-500">
+						<div className="text-2xl sm:text-3xl font-bold font-heading text-chart-1">
 							{humanClicks.toLocaleString()}
 						</div>
-						<div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium truncate">
+						<div className="text-[11px] text-muted-foreground font-medium truncate">
 							{humanPercentage}% verified organic
 						</div>
 					</div>
-					<div className="flex size-9 sm:size-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+					<div className="flex size-9 sm:size-10 shrink-0 items-center justify-center rounded-xl bg-chart-1/10 text-chart-1 border border-chart-1/20">
 						<IconUser className="size-4.5 sm:size-5" />
 					</div>
 				</CardContent>
@@ -78,11 +78,11 @@ export function AnalyticsKpiCards({
 						<div className="text-2xl sm:text-3xl font-bold font-heading text-foreground">
 							{botClicks.toLocaleString()}
 						</div>
-						<div className="text-[11px] text-amber-500 font-medium truncate">
+						<div className="text-[11px] text-chart-3 font-medium truncate">
 							{botPercentage}% crawlers & scrapers
 						</div>
 					</div>
-					<div className="flex size-9 sm:size-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20">
+					<div className="flex size-9 sm:size-10 shrink-0 items-center justify-center rounded-xl bg-chart-3/10 text-chart-3 border border-chart-3/20">
 						<IconRobot className="size-4.5 sm:size-5" />
 					</div>
 				</CardContent>
@@ -95,14 +95,14 @@ export function AnalyticsKpiCards({
 						<span className="text-xs font-medium text-muted-foreground">
 							Unique Visitors
 						</span>
-						<div className="text-2xl sm:text-3xl font-bold font-heading text-blue-500">
+						<div className="text-2xl sm:text-3xl font-bold font-heading text-chart-2">
 							{(uniqueVisitors || humanClicks).toLocaleString()}
 						</div>
 						<div className="text-[11px] text-muted-foreground truncate">
 							Distinct network clients
 						</div>
 					</div>
-					<div className="flex size-9 sm:size-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-blue-500 border border-blue-500/20">
+					<div className="flex size-9 sm:size-10 shrink-0 items-center justify-center rounded-xl bg-chart-2/10 text-chart-2 border border-chart-2/20">
 						<IconUsers className="size-4.5 sm:size-5" />
 					</div>
 				</CardContent>

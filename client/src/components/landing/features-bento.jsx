@@ -37,7 +37,7 @@ export function FeaturesBento() {
 							<div className="flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
 								<IconBolt className="size-6" />
 							</div>
-							<span className="font-mono text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+							<span className="font-mono text-xs font-semibold px-2.5 py-1 rounded-full bg-chart-2/10 text-chart-2 border border-chart-2/20">
 								&lt; 5ms Redirection
 							</span>
 						</div>
@@ -67,10 +67,10 @@ export function FeaturesBento() {
 					{/* Card 2: Kafka Event Streaming (Spans 2 cols) */}
 					<div className="group relative overflow-hidden rounded-3xl border border-border/80 bg-card p-6 sm:p-8 shadow-sm transition-all hover:shadow-md hover:border-primary/40 md:col-span-1 lg:col-span-2">
 						<div className="flex items-center justify-between">
-							<div className="flex size-12 items-center justify-center rounded-2xl bg-indigo-500/10 text-indigo-500">
+							<div className="flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
 								<IconBroadcast className="size-6" />
 							</div>
-							<span className="font-mono text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
+							<span className="font-mono text-xs font-semibold px-2.5 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">
 								Kafka KRaft Topic
 							</span>
 						</div>
@@ -84,16 +84,16 @@ export function FeaturesBento() {
 
 						<div className="mt-6 flex items-center justify-between rounded-2xl bg-background border border-border/60 p-4 text-xs font-mono">
 							<div className="flex items-center gap-2">
-								<div className="size-2 rounded-full bg-emerald-500 animate-ping" />
+								<div className="size-2 rounded-full bg-chart-2 animate-ping" />
 								<span className="text-foreground">Producer: Reactive WebClient</span>
 							</div>
-							<span className="text-indigo-400">Partitioned Stream</span>
+							<span className="text-primary">Partitioned Stream</span>
 						</div>
 					</div>
 
 					{/* Card 3: Deep GeoIP Analytics */}
 					<div className="group relative overflow-hidden rounded-3xl border border-border/80 bg-card p-6 shadow-sm transition-all hover:shadow-md hover:border-primary/40 md:col-span-1 lg:col-span-1">
-						<div className="flex size-11 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-500">
+						<div className="flex size-11 items-center justify-center rounded-2xl bg-chart-3/10 text-chart-3">
 							<IconWorld className="size-5" />
 						</div>
 						<h3 className="font-heading mt-5 text-lg font-bold text-foreground">
@@ -106,7 +106,7 @@ export function FeaturesBento() {
 
 					{/* Card 4: Gateway Security & Rate Limiting */}
 					<div className="group relative overflow-hidden rounded-3xl border border-border/80 bg-card p-6 shadow-sm transition-all hover:shadow-md hover:border-primary/40 md:col-span-1 lg:col-span-1">
-						<div className="flex size-11 items-center justify-center rounded-2xl bg-cyan-500/10 text-cyan-500">
+						<div className="flex size-11 items-center justify-center rounded-2xl bg-chart-1/10 text-chart-1">
 							<IconShieldCheck className="size-5" />
 						</div>
 						<h3 className="font-heading mt-5 text-lg font-bold text-foreground">
@@ -119,7 +119,7 @@ export function FeaturesBento() {
 
 					{/* Card 5: gRPC High-Speed Sync */}
 					<div className="group relative overflow-hidden rounded-3xl border border-border/80 bg-card p-6 shadow-sm transition-all hover:shadow-md hover:border-primary/40 md:col-span-1 lg:col-span-1">
-						<div className="flex size-11 items-center justify-center rounded-2xl bg-rose-500/10 text-rose-500">
+						<div className="flex size-11 items-center justify-center rounded-2xl bg-chart-4/10 text-chart-4">
 							<IconCpu className="size-5" />
 						</div>
 						<h3 className="font-heading mt-5 text-lg font-bold text-foreground">
@@ -132,7 +132,7 @@ export function FeaturesBento() {
 
 					{/* Card 6: UTM Attribution */}
 					<div className="group relative overflow-hidden rounded-3xl border border-border/80 bg-card p-6 shadow-sm transition-all hover:shadow-md hover:border-primary/40 md:col-span-1 lg:col-span-1">
-						<div className="flex size-11 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-500">
+						<div className="flex size-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
 							<IconChartDots className="size-5" />
 						</div>
 						<h3 className="font-heading mt-5 text-lg font-bold text-foreground">

@@ -23,7 +23,7 @@ export function CtaSection() {
 				<div className="relative overflow-hidden rounded-3xl border border-primary/20 bg-card p-8 sm:p-14 text-center shadow-xl">
 					{/* Ambient subtle glow */}
 					<div className="pointer-events-none absolute -top-24 -left-24 size-80 rounded-full bg-primary/10 blur-3xl" />
-					<div className="pointer-events-none absolute -bottom-24 -right-24 size-80 rounded-full bg-emerald-500/10 blur-3xl" />
+					<div className="pointer-events-none absolute -bottom-24 -right-24 size-80 rounded-full bg-chart-2/10 blur-3xl" />
 
 					<div className="mx-auto max-w-2xl relative z-10">
 						<div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3.5 py-1 text-xs font-medium text-primary">
@@ -88,19 +88,19 @@ export function CtaSection() {
 						{/* Clean Honest Trust Checks */}
 						<div className="mt-10 flex flex-wrap items-center justify-center gap-6 text-xs text-muted-foreground">
 							<div className="flex items-center gap-1.5">
-								<IconCheck className="size-4 text-emerald-500" />
+								<IconCheck className="size-4 text-chart-2" />
 								<span>Free forever tier</span>
 							</div>
 							<div className="flex items-center gap-1.5">
-								<IconCheck className="size-4 text-emerald-500" />
+								<IconCheck className="size-4 text-chart-2" />
 								<span>Dynamic vector QR codes</span>
 							</div>
 							<div className="flex items-center gap-1.5">
-								<IconCheck className="size-4 text-emerald-500" />
+								<IconCheck className="size-4 text-chart-2" />
 								<span>30-day sticky sessions</span>
 							</div>
 							<div className="flex items-center gap-1.5">
-								<IconCheck className="size-4 text-emerald-500" />
+								<IconCheck className="size-4 text-chart-2" />
 								<span>No credit card required</span>
 							</div>
 						</div>

@@ -11,8 +11,8 @@ export function DashboardHeader({ username = "growth-marketer", onOpenCreateModa
 					<h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
 						Growth Mission Control
 					</h1>
-					<div className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-						<span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+					<div className="inline-flex items-center gap-1.5 rounded-full border border-chart-2/30 bg-chart-2/10 px-2.5 py-0.5 text-xs font-medium text-chart-2">
+						<span className="size-2 rounded-full bg-chart-2 animate-pulse" />
 						<span>Mesh Connected</span>
 					</div>
 				</div>

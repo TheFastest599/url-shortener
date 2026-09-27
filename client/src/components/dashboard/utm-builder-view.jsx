@@ -202,7 +202,7 @@ export function UtmBuilderView({ onOpenCreateModal }) {
 					<CardHeader className="pb-3">
 						<CardTitle className="text-sm font-heading font-semibold flex items-center justify-between">
 							<span>Generated Tagged Destination</span>
-							<Badge variant="outline" className="text-[10px] font-mono text-emerald-500 border-emerald-500/30">
+							<Badge variant="outline" className="text-[10px] font-mono text-chart-2 border-chart-2/30">
 								Valid URL
 							</Badge>
 						</CardTitle>
@@ -243,7 +243,7 @@ export function UtmBuilderView({ onOpenCreateModal }) {
 							onClick={handleCopy}
 							className="gap-1.5 text-xs cursor-pointer shadow-xs"
 						>
-							{copied ? <IconCheck className="size-3.5 text-emerald-500" /> : <IconCopy className="size-3.5" />}
+							{copied ? <IconCheck className="size-3.5 text-chart-2" /> : <IconCopy className="size-3.5" />}
 							<span>{copied ? "Copied" : "Copy Tagged Link"}</span>
 						</Button>
 					</div>

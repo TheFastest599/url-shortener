@@ -203,7 +203,7 @@ export function LinksTable({
 																title="Copy shortlink"
 															>
 																{copiedId === id ? (
-																	<IconCheck className="size-3.5 text-emerald-500" />
+																	<IconCheck className="size-3.5 text-chart-2" />
 																) : (
 																	<IconCopy className="size-3.5" />
 																)}
@@ -262,7 +262,7 @@ export function LinksTable({
 														>
 															<Badge
 																variant="outline"
-																className="text-[10px] text-amber-500 border-amber-500/30 hover:bg-amber-500/10 cursor-pointer gap-1 max-w-[140px]"
+																className="text-[10px] text-chart-3 border-chart-3/30 hover:bg-chart-3/10 cursor-pointer gap-1 max-w-[140px]"
 															>
 																<IconFlask className="size-3 shrink-0" />
 																<span className="truncate">{url.abTestName || "A/B Split"}</span>
@@ -271,7 +271,7 @@ export function LinksTable({
 													) : (
 														<Badge
 															variant="outline"
-															className="text-[10px] text-emerald-500 border-emerald-500/30 gap-1"
+															className="text-[10px] text-chart-2 border-chart-2/30 gap-1"
 														>
 															<span>⚡ Direct</span>
 														</Badge>
@@ -285,7 +285,7 @@ export function LinksTable({
 															onClick={(e) => onToggleActive(url, e)}
 															className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold transition-colors cursor-pointer border ${
 																url.isActive !== false
-																	? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30 hover:bg-emerald-500/20"
+																	? "bg-chart-2/10 text-chart-2 border-chart-2/30 hover:bg-chart-2/20"
 																	: "bg-muted text-muted-foreground border-border hover:text-foreground"
 															}`}
 															title="Click to toggle status real-time"
@@ -297,7 +297,7 @@ export function LinksTable({
 															variant="outline"
 															className={`text-[10px] ${
 																url.isActive !== false
-																	? "text-emerald-500 border-emerald-500/30"
+																	? "text-chart-2 border-chart-2/30"
 																	: "text-muted-foreground border-border"
 															}`}
 														>

@@ -151,7 +151,7 @@ export function SearchCombobox({
 												item.description) && (
 												<div className="flex items-center gap-1.5 text-[10px] mt-0.5 min-w-0">
 													{item.disabledReason && (
-														<span className="text-amber-500/90 dark:text-amber-400/90 font-medium shrink-0">
+														<span className="text-chart-3/90 font-medium shrink-0">
 															{item.disabledReason}
 														</span>
 													)}

@@ -29,7 +29,7 @@ public class ClickAnalytics {
     @Column(name = "id")
     private UUID id;
 
-    @Column(name = "short_code", nullable = false, length = 10)
+    @Column(name = "short_code", nullable = false, length = 64)
     private String shortCode;
 
     @Column(name = "timestamp", nullable = false)

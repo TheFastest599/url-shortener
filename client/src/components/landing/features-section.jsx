@@ -72,7 +72,7 @@ export function FeaturesSection() {
 								<span className="flex items-center gap-1">
 									<IconLink className="size-3" /> sho.rt/summer-drop
 								</span>
-								<span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 font-semibold">
+								<span className="text-[10px] font-mono text-chart-2 bg-chart-2/10 px-1.5 py-0.5 rounded border border-chart-2/20 font-semibold">
 									&lt; 5ms
 								</span>
 							</div>
@@ -89,12 +89,12 @@ export function FeaturesSection() {
 					</div>
 
 					{/* Pillar 2: Marketing Campaigns & Multi-Touch UTM Tracking */}
-					<div className="group relative rounded-2xl border border-border/80 bg-card p-6 sm:p-7 shadow-xs hover:border-amber-500/40 hover:shadow-md transition-all flex flex-col justify-between">
+					<div className="group relative rounded-2xl border border-border/80 bg-card p-6 sm:p-7 shadow-xs hover:border-chart-3/40 hover:shadow-md transition-all flex flex-col justify-between">
 						<div>
-							<div className="flex size-11 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 mb-5 group-hover:scale-105 transition-transform">
+							<div className="flex size-11 items-center justify-center rounded-xl bg-chart-3/10 text-chart-3 mb-5 group-hover:scale-105 transition-transform">
 								<IconFolder className="size-5" />
 							</div>
-							<span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+							<span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-chart-3">
 								Pillar 02 · Campaign Folders
 							</span>
 							<h3 className="font-heading text-lg font-bold text-foreground mt-1">
@@ -109,7 +109,7 @@ export function FeaturesSection() {
 						<div className="mt-6 pt-5 border-t border-border/50 space-y-2 text-xs">
 							<div className="flex items-center justify-between">
 								<span className="font-mono text-[10px] text-muted-foreground flex items-center gap-1">
-									<IconFolder className="size-3 text-amber-500" /> campaigns/q4-launch
+									<IconFolder className="size-3 text-chart-3" /> campaigns/q4-launch
 								</span>
 								<span className="text-[10px] font-semibold text-foreground bg-muted/60 px-1.5 py-0.5 rounded border border-border">
 									6 URLs
@@ -120,8 +120,8 @@ export function FeaturesSection() {
 							<div className="space-y-1">
 								<div className="h-2 w-full bg-muted rounded-full overflow-hidden flex">
 									<div className="bg-primary w-[48%] h-full" title="Newsletter 48%" />
-									<div className="bg-amber-500 w-[32%] h-full" title="Twitter 32%" />
-									<div className="bg-emerald-500 w-[20%] h-full" title="Ads 20%" />
+									<div className="bg-chart-3 w-[32%] h-full" title="Twitter 32%" />
+									<div className="bg-chart-2 w-[20%] h-full" title="Ads 20%" />
 								</div>
 								<div className="flex justify-between text-[10px] text-muted-foreground">
 									<span>Newsletter 48%</span>
@@ -139,12 +139,12 @@ export function FeaturesSection() {
 					</div>
 
 					{/* Pillar 3: Multivariate A/B Testing & Sticky Sessions */}
-					<div className="group relative rounded-2xl border border-border/80 bg-card p-6 sm:p-7 shadow-xs hover:border-emerald-500/40 hover:shadow-md transition-all flex flex-col justify-between">
+					<div className="group relative rounded-2xl border border-border/80 bg-card p-6 sm:p-7 shadow-xs hover:border-chart-2/40 hover:shadow-md transition-all flex flex-col justify-between">
 						<div>
-							<div className="flex size-11 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 mb-5 group-hover:scale-105 transition-transform">
+							<div className="flex size-11 items-center justify-center rounded-xl bg-chart-2/10 text-chart-2 mb-5 group-hover:scale-105 transition-transform">
 								<IconFlask className="size-5" />
 							</div>
-							<span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+							<span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-chart-2">
 								Pillar 03 · Split Testing
 							</span>
 							<h3 className="font-heading text-lg font-bold text-foreground mt-1">
@@ -160,26 +160,26 @@ export function FeaturesSection() {
 							{/* Variant Split Progress */}
 							<div className="flex items-center justify-between text-[11px]">
 								<span className="font-semibold text-foreground flex items-center gap-1">
-									<IconGitFork className="size-3 text-emerald-500" /> 50 / 50 Traffic Split
+									<IconGitFork className="size-3 text-chart-2" /> 50 / 50 Traffic Split
 								</span>
-								<span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-bold">
+								<span className="text-[10px] font-mono text-chart-2 font-bold">
 									+46.7% Lift
 								</span>
 							</div>
 
 							<div className="h-2 w-full bg-muted rounded-full overflow-hidden flex">
 								<div className="bg-muted-foreground/40 w-[50%] h-full" title="Variant A: 50%" />
-								<div className="bg-emerald-500 w-[50%] h-full" title="Variant B: 50%" />
+								<div className="bg-chart-2 w-[50%] h-full" title="Variant B: 50%" />
 							</div>
 
 							<div className="flex justify-between text-[10px] font-mono">
 								<span className="text-muted-foreground">Var A: 12.4% conv</span>
-								<span className="text-emerald-600 dark:text-emerald-400 font-bold">Var B: 18.2% conv ★</span>
+								<span className="text-chart-2 font-bold">Var B: 18.2% conv ★</span>
 							</div>
 
 							<div className="flex items-center justify-between text-[10px] text-muted-foreground pt-0.5">
 								<span className="flex items-center gap-1 font-mono">
-									<IconCookie className="size-3 text-amber-500" /> ab_pricing=B
+									<IconCookie className="size-3 text-chart-3" /> ab_pricing=B
 								</span>
 								<span>30-Day Sticky Session</span>
 							</div>
@@ -196,19 +196,19 @@ export function FeaturesSection() {
 					</div>
 
 					<div className="flex flex-col items-center justify-center p-3 rounded-xl bg-card/70 border border-border/70 text-xs">
-						<IconFolder className="size-4 text-amber-500 mb-1" />
+						<IconFolder className="size-4 text-chart-3 mb-1" />
 						<span className="font-semibold text-foreground">Campaign Folders</span>
 						<span className="text-[10px] text-muted-foreground">Organized Initiatives</span>
 					</div>
 
 					<div className="flex flex-col items-center justify-center p-3 rounded-xl bg-card/70 border border-border/70 text-xs">
-						<IconFlask className="size-4 text-emerald-500 mb-1" />
+						<IconFlask className="size-4 text-chart-2 mb-1" />
 						<span className="font-semibold text-foreground">A/B Testing</span>
 						<span className="text-[10px] text-muted-foreground">Zero Page Flicker</span>
 					</div>
 
 					<div className="flex flex-col items-center justify-center p-3 rounded-xl bg-card/70 border border-border/70 text-xs">
-						<IconCookie className="size-4 text-amber-500 mb-1" />
+						<IconCookie className="size-4 text-chart-3 mb-1" />
 						<span className="font-semibold text-foreground">Sticky Sessions</span>
 						<span className="text-[10px] text-muted-foreground">30-Day Consistency</span>
 					</div>
@@ -220,7 +220,7 @@ export function FeaturesSection() {
 					</div>
 
 					<div className="flex flex-col items-center justify-center p-3 rounded-xl bg-card/70 border border-border/70 text-xs">
-						<IconShieldCheck className="size-4 text-emerald-500 mb-1" />
+						<IconShieldCheck className="size-4 text-chart-2 mb-1" />
 						<span className="font-semibold text-foreground">Bot Filtering</span>
 						<span className="text-[10px] text-muted-foreground">Real Human Clicks</span>
 					</div>

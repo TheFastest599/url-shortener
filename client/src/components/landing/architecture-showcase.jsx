@@ -23,7 +23,7 @@ export function ArchitectureShowcase() {
 			tech: "Nginx Alpine",
 			role: "SSL Termination, Reverse Proxy, Static Client Distribution",
 			icon: IconRoute,
-			color: "text-emerald-500 bg-emerald-500/10",
+			color: "text-chart-2 bg-chart-2/10",
 			details:
 				"Single entry point for all incoming traffic. Routes `r.{domain}/{shortCode}` directly to the high-speed Redirect Service and `/api/` to the Spring API Gateway while serving the React frontend.",
 		},
@@ -34,7 +34,7 @@ export function ArchitectureShowcase() {
 			tech: "Spring Cloud Gateway + R2DBC",
 			role: "JWT Authentication, Rate Limiting & Header Injection",
 			icon: IconShieldLock,
-			color: "text-cyan-500 bg-cyan-500/10",
+			color: "text-chart-1 bg-chart-1/10",
 			details:
 				"Non-blocking security perimeter. Validates JWT access tokens with zero thread blocking, injects authenticated user headers, and enforces sliding window rate limits.",
 		},
@@ -45,7 +45,7 @@ export function ArchitectureShowcase() {
 			tech: "Spring WebFlux + Reactive Redis",
 			role: "Sub-5ms 302 Redirection & Kafka Publishing",
 			icon: IconBolt,
-			color: "text-amber-500 bg-amber-500/10",
+			color: "text-chart-3 bg-chart-3/10",
 			details:
 				"High-performance reactive microservice dedicated exclusively to link lookup. Fetches target URLs from Redis memory cache in < 3ms and fires asynchronous click events to Kafka.",
 		},
@@ -56,7 +56,7 @@ export function ArchitectureShowcase() {
 			tech: "Spring Boot 3 + Hibernate + JPA",
 			role: "Base62 Encoding, URL Lifecycle, Redis Eviction",
 			icon: IconCpu,
-			color: "text-violet-500 bg-violet-500/10",
+			color: "text-primary bg-primary/10",
 			details:
 				"Handles custom alias assignment, bijective Base62 ID conversions, campaign UTM definitions, and synchronous cache invalidation over gRPC.",
 		},
@@ -67,7 +67,7 @@ export function ArchitectureShowcase() {
 			tech: "Kafka Consumer + MaxMind GeoIP2",
 			role: "Stream Ingestion, Bot Filtering, Geo Resolution",
 			icon: IconBroadcast,
-			color: "text-rose-500 bg-rose-500/10",
+			color: "text-chart-4 bg-chart-4/10",
 			details:
 				"Consumes events from `url-clicks` Kafka topic without bottlenecking redirects. Resolves IP addresses to cities and countries with GeoLite2 and writes time-series records to PostgreSQL.",
 		},
@@ -78,7 +78,7 @@ export function ArchitectureShowcase() {
 			tech: "PostgreSQL 16 · Redis 7.2 · Kafka KRaft",
 			role: "Multi-Tenant Storage, In-Memory Cache, Event Bus",
 			icon: IconDatabase,
-			color: "text-indigo-500 bg-indigo-500/10",
+			color: "text-secondary bg-secondary/15",
 			details:
 				"Three distinct database schemas (`auth`, `core`, `analytics`) with Redis distributed memory caching and Kafka KRaft for resilient event-driven microservices orchestration.",
 		},

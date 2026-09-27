@@ -36,7 +36,7 @@ public class AnalyticsController {
      */
     @GetMapping("/{shortCode}")
     public ResponseEntity<AnalyticsOverviewDto> getOverview(
-            @PathVariable @NotBlank @Size(max = 10, message = "Short code cannot exceed 10 characters") String shortCode,
+            @PathVariable @NotBlank @Size(max = 64, message = "Short code cannot exceed 64 characters") String shortCode,
             @RequestParam(defaultValue = "30") @Min(value = 1, message = "Days must be at least 1") @Max(value = 365, message = "Days cannot exceed 365") int days,
             @RequestParam(required = false) @Pattern(regexp = "^$|^(?i)(HOUR|DAY|WEEK|MONTH)$", message = "Interval must be HOUR, DAY, WEEK, or MONTH") String interval,
             @RequestParam(defaultValue = "UTC") @Size(max = 50, message = "Timezone string too long") String timezone,
@@ -78,7 +78,7 @@ public class AnalyticsController {
      */
     @GetMapping("/ab-tests/{identifier}")
     public ResponseEntity<AbTestAnalyticsDto> getAbTestAnalytics(
-            @PathVariable @NotBlank @Size(min = 1, max = 36, message = "Identifier must be between 1 and 36 characters") String identifier,
+            @PathVariable @NotBlank @Size(min = 1, max = 64, message = "Identifier must be between 1 and 64 characters") String identifier,
             @RequestParam(defaultValue = "30") @Min(value = 1, message = "Days must be at least 1") @Max(value = 365, message = "Days cannot exceed 365") int days,
             @RequestParam(required = false) @Pattern(regexp = "^$|^(?i)(HOUR|DAY|WEEK|MONTH)$", message = "Interval must be HOUR, DAY, WEEK, or MONTH") String interval,
             @RequestParam(defaultValue = "UTC") @Size(max = 50, message = "Timezone string too long") String timezone,
@@ -97,7 +97,7 @@ public class AnalyticsController {
      */
     @GetMapping("/{shortCode}/timeseries")
     public ResponseEntity<List<TimeSeriesPoint>> getTimeSeries(
-            @PathVariable @NotBlank @Size(max = 10, message = "Short code cannot exceed 10 characters") String shortCode,
+            @PathVariable @NotBlank @Size(max = 64, message = "Short code cannot exceed 64 characters") String shortCode,
             @RequestParam(defaultValue = "DAY") @Pattern(regexp = "^(?i)(HOUR|DAY|WEEK|MONTH)$", message = "Interval must be HOUR, DAY, WEEK, or MONTH") String interval,
             @RequestParam(defaultValue = "30") @Min(value = 1, message = "Days must be at least 1") @Max(value = 365, message = "Days cannot exceed 365") int days,
             @RequestParam(defaultValue = "UTC") @Size(max = 50, message = "Timezone string too long") String timezone
@@ -110,7 +110,7 @@ public class AnalyticsController {
      */
     @GetMapping("/{shortCode}/countries")
     public ResponseEntity<List<StatMetricDto>> getCountries(
-            @PathVariable @NotBlank @Size(max = 10, message = "Short code cannot exceed 10 characters") String shortCode,
+            @PathVariable @NotBlank @Size(max = 64, message = "Short code cannot exceed 64 characters") String shortCode,
             @RequestParam(defaultValue = "false") boolean includeBots,
             @RequestParam(defaultValue = "10") @Min(value = 1, message = "Limit must be at least 1") @Max(value = 100, message = "Limit cannot exceed 100") int limit
     ) {
@@ -122,7 +122,7 @@ public class AnalyticsController {
      */
     @GetMapping("/{shortCode}/browsers")
     public ResponseEntity<List<StatMetricDto>> getBrowsers(
-            @PathVariable @NotBlank @Size(max = 10, message = "Short code cannot exceed 10 characters") String shortCode,
+            @PathVariable @NotBlank @Size(max = 64, message = "Short code cannot exceed 64 characters") String shortCode,
             @RequestParam(defaultValue = "false") boolean includeBots,
             @RequestParam(defaultValue = "10") @Min(value = 1, message = "Limit must be at least 1") @Max(value = 100, message = "Limit cannot exceed 100") int limit
     ) {
@@ -134,7 +134,7 @@ public class AnalyticsController {
      */
     @GetMapping("/{shortCode}/referrers")
     public ResponseEntity<List<StatMetricDto>> getReferrers(
-            @PathVariable @NotBlank @Size(max = 10, message = "Short code cannot exceed 10 characters") String shortCode,
+            @PathVariable @NotBlank @Size(max = 64, message = "Short code cannot exceed 64 characters") String shortCode,
             @RequestParam(defaultValue = "false") boolean includeBots,
             @RequestParam(defaultValue = "10") @Min(value = 1, message = "Limit must be at least 1") @Max(value = 100, message = "Limit cannot exceed 100") int limit
     ) {

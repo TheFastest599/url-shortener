@@ -15,7 +15,7 @@ export function AnalyticsLeaderboard({
 			<CardHeader className="p-4 sm:p-5 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
 				<div className="space-y-0.5">
 					<CardTitle className="text-base font-bold font-heading text-foreground flex items-center gap-2">
-						<IconFlame className="size-4 text-amber-500" />
+						<IconFlame className="size-4 text-chart-3" />
 						<span>Shortlink Traffic Leaderboard</span>
 					</CardTitle>
 					<CardDescription className="text-xs">
@@ -68,11 +68,11 @@ export function AnalyticsLeaderboard({
 										</td>
 										<td className="py-3 px-4 text-center">
 											{url.isAbTest ? (
-												<Badge variant="outline" className="text-[10px] text-amber-500 border-amber-500/30">
+												<Badge variant="outline" className="text-[10px] text-chart-3 border-chart-3/30">
 													A/B Test
 												</Badge>
 											) : (
-												<Badge variant="outline" className="text-[10px] text-emerald-500 border-emerald-500/30">
+												<Badge variant="outline" className="text-[10px] text-chart-2 border-chart-2/30">
 													Direct
 												</Badge>
 											)}

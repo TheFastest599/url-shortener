@@ -233,10 +233,10 @@ export function AbTestDetailPage() {
 							variant="outline"
 							className={`text-[10px] font-mono capitalize ${
 								isRunning
-									? "text-emerald-500 border-emerald-500/30"
+									? "text-chart-2 border-chart-2/30"
 									: isConcluded
-									? "text-blue-500 border-blue-500/30"
-									: "text-amber-500 border-amber-500/30"
+									? "text-primary border-primary/30"
+									: "text-chart-3 border-chart-3/30"
 							}`}
 						>
 							{experiment.status || "Draft"}
@@ -259,7 +259,7 @@ export function AbTestDetailPage() {
 								title="Copy routing shortlink"
 							>
 								{copied ? (
-									<IconCheck className="size-3.5 text-emerald-500" />
+									<IconCheck className="size-3.5 text-chart-2" />
 								) : (
 									<IconCopy className="size-3.5" />
 								)}
@@ -289,12 +289,12 @@ export function AbTestDetailPage() {
 						>
 							{isRunning ? (
 								<>
-									<IconPlayerPause className="size-3.5 text-amber-500" />
+									<IconPlayerPause className="size-3.5 text-chart-3" />
 									<span>Pause</span>
 								</>
 							) : (
 								<>
-									<IconPlayerPlay className="size-3.5 text-emerald-500" />
+									<IconPlayerPlay className="size-3.5 text-chart-2" />
 									<span>Resume</span>
 								</>
 							)}
@@ -306,7 +306,7 @@ export function AbTestDetailPage() {
 							variant="outline"
 							size="sm"
 							onClick={() => setPromoteDialogOpen(true)}
-							className="text-xs gap-1.5 shadow-2xs text-amber-500 hover:bg-amber-500/10 border-amber-500/30 cursor-pointer"
+							className="text-xs gap-1.5 shadow-2xs text-chart-3 hover:bg-chart-3/10 border-chart-3/30 cursor-pointer"
 						>
 							<IconTrophy className="size-3.5" />
 							<span>Promote Winner</span>
@@ -389,12 +389,12 @@ export function AbTestDetailPage() {
 					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
 						<div>
 							<p className="text-[11px] font-medium text-muted-foreground">Human Traffic</p>
-							<div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-emerald-500 mt-0.5">
+							<div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-chart-1 mt-0.5">
 								{isAnalyticsLoading ? <Skeleton className="h-7 w-16" /> : humanClicks.toLocaleString()}
 							</div>
-							<p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5">{humanPct}% organic</p>
+							<p className="text-[10px] text-muted-foreground mt-0.5">{humanPct}% organic</p>
 						</div>
-						<div className="size-10 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
+						<div className="size-10 rounded-xl bg-chart-1/10 text-chart-1 flex items-center justify-center">
 							<IconUsers className="size-5" />
 						</div>
 					</CardContent>
@@ -404,12 +404,12 @@ export function AbTestDetailPage() {
 					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
 						<div>
 							<p className="text-[11px] font-medium text-muted-foreground">Automated Bots</p>
-							<div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-amber-500 mt-0.5">
+							<div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-chart-3 mt-0.5">
 								{isAnalyticsLoading ? <Skeleton className="h-7 w-16" /> : botClicks.toLocaleString()}
 							</div>
 							<p className="text-[10px] text-muted-foreground mt-0.5">{botPct}% filtered</p>
 						</div>
-						<div className="size-10 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center">
+						<div className="size-10 rounded-xl bg-chart-3/10 text-chart-3 flex items-center justify-center">
 							<IconRobot className="size-5" />
 						</div>
 					</CardContent>
@@ -424,7 +424,7 @@ export function AbTestDetailPage() {
 							</div>
 							<p className="text-[10px] text-muted-foreground mt-0.5">Active split targets</p>
 						</div>
-						<div className="size-10 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center">
+						<div className="size-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
 							<IconPercentage className="size-5" />
 						</div>
 					</CardContent>
@@ -439,7 +439,7 @@ export function AbTestDetailPage() {
 							</div>
 							<p className="text-[10px] text-muted-foreground mt-0.5">User stickiness</p>
 						</div>
-						<div className="size-10 rounded-xl bg-purple-500/10 text-purple-500 flex items-center justify-center">
+						<div className="size-10 rounded-xl bg-secondary/15 text-secondary flex items-center justify-center">
 							<IconFlask className="size-5" />
 						</div>
 					</CardContent>
@@ -461,12 +461,14 @@ export function AbTestDetailPage() {
 						{variants.map((v, i) => {
 							const colorClass =
 								i === 0
-									? "bg-primary"
+									? "bg-chart-1"
 									: i === 1
-									? "bg-blue-500"
+									? "bg-chart-2"
 									: i === 2
-									? "bg-purple-500"
-									: "bg-emerald-500";
+									? "bg-chart-3"
+									: i === 3
+									? "bg-chart-4"
+									: "bg-chart-5";
 							return (
 								<div
 									key={v.key}
@@ -483,12 +485,14 @@ export function AbTestDetailPage() {
 							{variants.map((v, i) => {
 								const dotColor =
 									i === 0
-										? "bg-primary"
+										? "bg-chart-1"
 										: i === 1
-										? "bg-blue-500"
+										? "bg-chart-2"
 										: i === 2
-										? "bg-purple-500"
-										: "bg-emerald-500";
+										? "bg-chart-3"
+										: i === 3
+										? "bg-chart-4"
+										: "bg-chart-5";
 								return (
 									<div key={v.key} className="flex items-center gap-1.5">
 										<span className={`size-2.5 rounded-full ${dotColor}`} />
@@ -536,7 +540,7 @@ export function AbTestDetailPage() {
 								key={v.key}
 								className={`border bg-card shadow-xs transition-colors ${
 									isWinner
-										? "border-amber-500/60 bg-amber-500/5 dark:bg-amber-500/10"
+										? "border-chart-3/60 bg-chart-3/5 dark:bg-chart-3/10"
 										: "border-border/70"
 								}`}
 							>
@@ -544,14 +548,14 @@ export function AbTestDetailPage() {
 									<div className="flex items-center gap-2">
 										<Badge
 											variant={isWinner ? "default" : "secondary"}
-											className={isWinner ? "bg-amber-500 text-white font-bold" : ""}
+											className={isWinner ? "bg-chart-3 text-primary-foreground font-bold" : ""}
 										>
 											Variant {v.key}
 										</Badge>
 										{isWinner && (
 											<Badge
 												variant="outline"
-												className="text-[10px] text-amber-500 border-amber-500/40 gap-1"
+												className="text-[10px] text-chart-3 border-chart-3/40 gap-1"
 											>
 												<IconTrophy className="size-3" />
 												<span>Winner</span>
@@ -597,7 +601,7 @@ export function AbTestDetailPage() {
 											variant="outline"
 											size="sm"
 											onClick={() => setPromoteDialogOpen(true)}
-											className="w-full text-xs gap-1.5 shadow-2xs border-amber-500/30 text-amber-500 hover:bg-amber-500/10 cursor-pointer mt-2"
+											className="w-full text-xs gap-1.5 shadow-2xs border-chart-3/30 text-chart-3 hover:bg-chart-3/10 cursor-pointer mt-2"
 										>
 											<IconTrophy className="size-3.5" />
 											<span>Promote Variant {v.key} as Winner</span>

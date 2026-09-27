@@ -31,14 +31,14 @@ export function CampaignStatsCards({ totalCampaigns = 0, totalUtmLinks = 0, tota
 						<div className="text-[11px] sm:text-xs font-medium text-muted-foreground truncate">
 							UTM Tagged Links
 						</div>
-						<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-emerald-500 mt-0.5 sm:mt-1">
+						<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-chart-2 mt-0.5 sm:mt-1">
 							{totalUtmLinks}
 						</div>
-						<div className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 font-medium truncate">
+						<div className="text-[10px] sm:text-[11px] text-muted-foreground mt-0.5 font-medium truncate">
 							{utmPercentage}% of short links
 						</div>
 					</div>
-					<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+					<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-chart-2/10 text-chart-2 border border-chart-2/20">
 						<IconTag className="size-3.5 sm:size-4.5 lg:size-5" />
 					</div>
 				</CardContent>
@@ -50,14 +50,14 @@ export function CampaignStatsCards({ totalCampaigns = 0, totalUtmLinks = 0, tota
 						<div className="text-[11px] sm:text-xs font-medium text-muted-foreground truncate">
 							Attributed Traffic
 						</div>
-						<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-blue-500 mt-0.5 sm:mt-1">
+						<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-chart-4 mt-0.5 sm:mt-1">
 							{totalTaggedClicks.toLocaleString()}
 						</div>
 						<div className="text-[10px] sm:text-[11px] text-muted-foreground mt-0.5 truncate">
 							Total clicks across tagged URLs
 						</div>
 					</div>
-					<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-blue-500/10 text-blue-500 border border-blue-500/20">
+					<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-chart-4/10 text-chart-4 border border-chart-4/20">
 						<IconShare className="size-3.5 sm:size-4.5 lg:size-5" />
 					</div>
 				</CardContent>

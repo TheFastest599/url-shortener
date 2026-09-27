@@ -18,7 +18,7 @@ export function CampaignSpotlight({ campaigns = [], totalCampaignClicks = 0 }) {
 			<div className="flex items-center justify-between">
 				<div className="space-y-0.5">
 					<h2 className="text-base sm:text-lg font-heading font-semibold text-foreground flex items-center gap-2">
-						<IconFlame className="size-4 text-amber-500" />
+						<IconFlame className="size-4 text-chart-3" />
 						<span>Campaign Performance Spotlight</span>
 					</h2>
 					<p className="text-xs text-muted-foreground">

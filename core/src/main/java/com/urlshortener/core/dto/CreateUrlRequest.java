@@ -12,7 +12,7 @@ public record CreateUrlRequest(
         @Pattern(regexp = "^(https?://).+", message = "Destination URL must start with http:// or https://")
         String destinationUrl,
 
-        @Pattern(regexp = "^$|^[a-zA-Z0-9_-]{3,10}$", message = "Custom alias must be 3 to 10 characters and contain only letters, numbers, hyphens, and underscores")
+        @Pattern(regexp = "^$|^[a-zA-Z0-9_-]{3,64}$", message = "Custom alias must be 3 to 64 characters and contain only letters, numbers, hyphens, and underscores")
         String customAlias,
 
         UUID campaignId,

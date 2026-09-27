@@ -41,7 +41,7 @@ export function PromoteWinnerDialog({
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
 					<DialogTitle className="flex items-center gap-2">
-						<IconTrophy className="size-5 text-amber-500" />
+						<IconTrophy className="size-5 text-chart-3" />
 						<span>Promote Winning Variant</span>
 					</DialogTitle>
 					<DialogDescription className="text-xs">
@@ -60,7 +60,7 @@ export function PromoteWinnerDialog({
 								key={v.key}
 								className={`p-3 rounded-xl border flex items-center justify-between gap-3 cursor-pointer transition-colors ${
 									selectedKey === v.key
-										? "border-amber-500/80 bg-amber-500/10 ring-1 ring-amber-500/30"
+										? "border-chart-3/80 bg-chart-3/10 ring-1 ring-chart-3/30"
 										: "border-border/70 bg-card hover:bg-muted/30"
 								}`}
 							>
@@ -71,7 +71,7 @@ export function PromoteWinnerDialog({
 										value={v.key}
 										checked={selectedKey === v.key}
 										onChange={() => setSelectedKey(v.key)}
-										className="size-4 text-amber-500 focus:ring-amber-500"
+										className="size-4 text-chart-3 focus:ring-chart-3"
 									/>
 									<div className="min-w-0">
 										<div className="flex items-center gap-1.5 font-semibold text-xs text-foreground">
@@ -112,7 +112,7 @@ export function PromoteWinnerDialog({
 						size="sm"
 						onClick={handleConfirm}
 						disabled={isSubmitting || !selectedKey}
-						className="text-xs font-semibold bg-amber-500 text-white hover:bg-amber-600 cursor-pointer"
+						className="text-xs font-semibold bg-chart-3 text-primary-foreground hover:bg-chart-3/90 cursor-pointer"
 					>
 						{isSubmitting ? "Promoting..." : `Promote Variant ${selectedKey}`}
 					</Button>

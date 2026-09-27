@@ -11,7 +11,7 @@ import jakarta.validation.constraints.Size;
 import java.util.List;
 
 public record CreateAbTestRequest(
-        @Size(max = 10, message = "Short code cannot exceed 10 characters")
+        @Size(max = 64, message = "Short code cannot exceed 64 characters")
         String shortCode,
 
         @NotBlank(message = "A/B test name is required")

@@ -15,7 +15,7 @@ export function LinkAbTestWidget({ isAbTest = false, abTest = null }) {
 						<span>A/B Split Experiment</span>
 					</div>
 					{isAbTest ? (
-						<Badge variant="outline" className="text-[10px] text-amber-500 border-amber-500/40">
+						<Badge variant="outline" className="text-[10px] text-chart-3 border-chart-3/40">
 							{abTest?.status || "Active"}
 						</Badge>
 					) : (
@@ -47,14 +47,17 @@ export function LinkAbTestWidget({ isAbTest = false, abTest = null }) {
 						{abTest.variants && (
 							<div className="space-y-1">
 								<div className="h-2.5 w-full rounded-full overflow-hidden flex bg-muted border border-border/50">
-									{abTest.variants.map((v, i) => (
-										<div
-											key={v.key}
-											style={{ width: `${v.weight}%` }}
-											className={`h-full ${i === 0 ? "bg-primary" : "bg-blue-500"}`}
-											title={`Variant ${v.key}: ${v.weight}%`}
-										/>
-									))}
+									{abTest.variants.map((v, i) => {
+										const chartBg = ["bg-chart-1", "bg-chart-2", "bg-chart-3", "bg-chart-4", "bg-chart-5"][i % 5];
+										return (
+											<div
+												key={v.key}
+												style={{ width: `${v.weight}%` }}
+												className={`h-full ${chartBg}`}
+												title={`Variant ${v.key}: ${v.weight}%`}
+											/>
+										);
+									})}
 								</div>
 							</div>
 						)}

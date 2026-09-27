@@ -199,7 +199,7 @@ export function LinksTable({
 														title="Copy Short Link"
 													>
 														{isCopied ? (
-															<IconCheck className="size-3.5 text-emerald-500" />
+															<IconCheck className="size-3.5 text-chart-2" />
 														) : (
 															<IconCopy className="size-3.5 opacity-60 group-hover:opacity-100" />
 														)}

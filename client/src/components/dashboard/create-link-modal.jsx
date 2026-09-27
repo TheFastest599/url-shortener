@@ -197,13 +197,13 @@ export function CreateLinkModal({
 				{createdResult ? (
 					/* Success View */
 					<div className="space-y-4 py-2">
-						<div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 space-y-3">
+						<div className="rounded-xl border border-chart-2/30 bg-chart-2/10 p-4 space-y-3">
 							<div className="flex items-center justify-between">
-								<span className="text-xs font-semibold text-emerald-500 uppercase tracking-wider">
+								<span className="text-xs font-semibold text-chart-2 uppercase tracking-wider">
 									Active Short URL
 								</span>
-								<span className="inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-mono font-medium">
-									<span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+								<span className="inline-flex items-center gap-1.5 text-xs text-chart-2 font-mono font-medium">
+									<span className="size-2 rounded-full bg-chart-2 animate-pulse" />
 									Live on Gateway
 								</span>
 							</div>
@@ -219,7 +219,7 @@ export function CreateLinkModal({
 									className="h-8 gap-1.5 text-xs cursor-pointer shrink-0"
 								>
 									{copied ? (
-										<IconCheck className="size-3.5 text-emerald-500" />
+										<IconCheck className="size-3.5 text-chart-2" />
 									) : (
 										<IconCopy className="size-3.5" />
 									)}
@@ -319,7 +319,7 @@ export function CreateLinkModal({
 								<input
 									type="text"
 									value={customAlias}
-									maxLength={10}
+									maxLength={64}
 									onChange={(e) => {
 										setCustomAlias(
 											e.target.value

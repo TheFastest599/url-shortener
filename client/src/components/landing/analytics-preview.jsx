@@ -100,24 +100,24 @@ export function AnalyticsPreview() {
 							<p className="font-heading mt-2 text-2xl font-bold text-foreground">
 								{currentStats.clicks}
 							</p>
-							<span className="text-[11px] text-emerald-500 font-medium">+14.2% vs previous period</span>
+							<span className="text-[11px] text-chart-2 font-medium">+14.2% vs previous period</span>
 						</div>
 
 						<div className="rounded-2xl border border-border/60 bg-background/60 p-4">
 							<div className="flex items-center justify-between text-muted-foreground text-xs">
 								<span>Unique Visitors</span>
-								<IconUsers className="size-4 text-cyan-500" />
+								<IconUsers className="size-4 text-chart-2" />
 							</div>
 							<p className="font-heading mt-2 text-2xl font-bold text-foreground">
 								{currentStats.visitors}
 							</p>
-							<span className="text-[11px] text-emerald-500 font-medium">99.1% non-bot traffic</span>
+							<span className="text-[11px] text-chart-2 font-medium">99.1% non-bot traffic</span>
 						</div>
 
 						<div className="rounded-2xl border border-border/60 bg-background/60 p-4">
 							<div className="flex items-center justify-between text-muted-foreground text-xs">
 								<span>Top Geographic Origin</span>
-								<IconWorld className="size-4 text-amber-500" />
+								<IconWorld className="size-4 text-chart-3" />
 							</div>
 							<p className="font-heading mt-2 text-lg font-bold text-foreground truncate">
 								{currentStats.topCountry}
@@ -128,7 +128,7 @@ export function AnalyticsPreview() {
 						<div className="rounded-2xl border border-border/60 bg-background/60 p-4">
 							<div className="flex items-center justify-between text-muted-foreground text-xs">
 								<span>Top Referrer</span>
-								<IconRadar2 className="size-4 text-indigo-500" />
+								<IconRadar2 className="size-4 text-chart-4" />
 							</div>
 							<p className="font-heading mt-2 text-lg font-bold text-foreground truncate">
 								{currentStats.topReferrer}
@@ -208,7 +208,7 @@ export function AnalyticsPreview() {
 					<div className="mt-6 rounded-2xl border border-border/60 bg-background/60 p-4">
 						<div className="flex items-center justify-between pb-3 border-b border-border/40">
 							<div className="flex items-center gap-2">
-								<div className="size-2 rounded-full bg-emerald-500 animate-ping" />
+								<div className="size-2 rounded-full bg-chart-2 animate-ping" />
 								<span className="text-xs font-semibold uppercase tracking-wider text-foreground">
 									Live Event Stream (Kafka Consumer)
 								</span>

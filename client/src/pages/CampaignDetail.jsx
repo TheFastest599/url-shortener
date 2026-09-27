@@ -415,14 +415,14 @@ export function CampaignDetailPage() {
 					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
 						<div>
 							<p className="text-[11px] font-medium text-muted-foreground">Human Traffic</p>
-							<div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-emerald-500 mt-0.5">
+							<div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-chart-1 mt-0.5">
 								{isAnalyticsLoading ? <Skeleton className="h-7 w-16" /> : humanClicks.toLocaleString()}
 							</div>
-							<p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5">
+							<p className="text-[10px] text-muted-foreground mt-0.5">
 								{humanPercentage}% organic
 							</p>
 						</div>
-						<div className="size-10 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
+						<div className="size-10 rounded-xl bg-chart-1/10 text-chart-1 flex items-center justify-center">
 							<IconUsers className="size-5" />
 						</div>
 					</CardContent>
@@ -432,12 +432,12 @@ export function CampaignDetailPage() {
 					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
 						<div>
 							<p className="text-[11px] font-medium text-muted-foreground">Bot / Scraper</p>
-							<div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-amber-500 mt-0.5">
+							<div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-chart-3 mt-0.5">
 								{isAnalyticsLoading ? <Skeleton className="h-7 w-16" /> : botClicks.toLocaleString()}
 							</div>
 							<p className="text-[10px] text-muted-foreground mt-0.5">Filtered automations</p>
 						</div>
-						<div className="size-10 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center">
+						<div className="size-10 rounded-xl bg-chart-3/10 text-chart-3 flex items-center justify-center">
 							<IconRobot className="size-5" />
 						</div>
 					</CardContent>
@@ -452,7 +452,7 @@ export function CampaignDetailPage() {
 							</div>
 							<p className="text-[10px] text-muted-foreground mt-0.5">Active routing nodes</p>
 						</div>
-						<div className="size-10 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center">
+						<div className="size-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
 							<IconLink className="size-5" />
 						</div>
 					</CardContent>
@@ -706,7 +706,7 @@ export function CampaignDetailPage() {
 																title="Copy shortlink"
 															>
 																{isCopied ? (
-																	<IconCheck className="size-3.5 text-emerald-500" />
+																	<IconCheck className="size-3.5 text-chart-2" />
 																) : (
 																	<IconCopy className="size-3.5" />
 																)}
@@ -753,7 +753,7 @@ export function CampaignDetailPage() {
 														onClick={(e) => handleToggleUrlActive(u, e)}
 														className={`px-2 py-0.5 rounded-full text-[10px] font-semibold transition-colors cursor-pointer border ${
 															u.isActive !== false
-																? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30 hover:bg-emerald-500/20"
+																? "bg-chart-2/10 text-chart-2 border-chart-2/30 hover:bg-chart-2/20"
 																: "bg-muted text-muted-foreground border-border hover:text-foreground"
 														}`}
 													>

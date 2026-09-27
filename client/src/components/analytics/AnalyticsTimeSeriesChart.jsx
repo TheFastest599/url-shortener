@@ -95,12 +95,12 @@ export function AnalyticsTimeSeriesChart({
 							<AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
 								<defs>
 									<linearGradient id="colorHuman" x1="0" y1="0" x2="0" y2="1">
-										<stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
-										<stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+										<stop offset="5%" stopColor="var(--chart-1)" stopOpacity={0.4} />
+										<stop offset="95%" stopColor="var(--chart-1)" stopOpacity={0.0} />
 									</linearGradient>
 									<linearGradient id="colorBot" x1="0" y1="0" x2="0" y2="1">
-										<stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3} />
-										<stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0} />
+										<stop offset="5%" stopColor="var(--chart-3)" stopOpacity={0.3} />
+										<stop offset="95%" stopColor="var(--chart-3)" stopOpacity={0.0} />
 									</linearGradient>
 								</defs>
 								<CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.15} />
@@ -126,12 +126,12 @@ export function AnalyticsTimeSeriesChart({
 													{pt.fullDate || label}
 												</div>
 												<div className="flex items-center gap-3">
-													<div className="flex items-center gap-1 text-emerald-500 font-bold">
+													<div className="flex items-center gap-1 text-chart-1 font-bold">
 														<span>Humans:</span>
 														<span>{pt.humanClicks ?? pt.clicks}</span>
 													</div>
 													{pt.botClicks > 0 && (
-														<div className="flex items-center gap-1 text-amber-500 font-bold">
+														<div className="flex items-center gap-1 text-chart-3 font-bold">
 															<span>Bots:</span>
 															<span>{pt.botClicks}</span>
 														</div>
@@ -145,7 +145,7 @@ export function AnalyticsTimeSeriesChart({
 									type="monotone"
 									dataKey="humanClicks"
 									name="Human Clicks"
-									stroke="#10b981"
+									stroke="var(--chart-1)"
 									strokeWidth={2}
 									fill="url(#colorHuman)"
 								/>
@@ -153,7 +153,7 @@ export function AnalyticsTimeSeriesChart({
 									type="monotone"
 									dataKey="botClicks"
 									name="Bot Clicks"
-									stroke="#f59e0b"
+									stroke="var(--chart-3)"
 									strokeWidth={1.5}
 									fill="url(#colorBot)"
 								/>

@@ -205,7 +205,7 @@ export function AnalyticsOverview({
 						title="Simulate redirect hit to test Kafka pipeline"
 					>
 						<IconBolt
-							className={`size-3.5 text-amber-500 ${isSimulating ? "animate-pulse" : ""}`}
+							className={`size-3.5 text-chart-3 ${isSimulating ? "animate-pulse" : ""}`}
 						/>
 						<span>
 							{isSimulating ? "Streaming..." : "Simulate Click"}
@@ -275,51 +275,51 @@ export function AnalyticsOverview({
 					</CardContent>
 				</Card>
 
-				<Card className="border-border/70 bg-card shadow-xs hover:border-emerald-500/40 transition-colors">
+				<Card className="border-border/70 bg-card shadow-xs hover:border-chart-2/40 transition-colors">
 					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
 						<div>
 							<div className="text-xs font-medium text-muted-foreground">
 								Human Verified Traffic
 							</div>
-							<div className="text-2xl sm:text-3xl font-bold font-heading text-emerald-500 mt-1">
+							<div className="text-2xl sm:text-3xl font-bold font-heading text-chart-2 mt-1">
 								{isLoading ? (
 									<Skeleton className="h-8 w-20" />
 								) : (
 									(analytics?.humanClicks ?? 0)
 								)}
 							</div>
-							<div className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5">
+							<div className="text-[11px] text-chart-2 mt-0.5">
 								{analytics?.totalClicks
 									? `${Math.round(((analytics.humanClicks || 0) / analytics.totalClicks) * 100)}% of all traffic`
 									: "Ready to stream"}
 							</div>
 						</div>
-						<div className="flex size-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+						<div className="flex size-10 items-center justify-center rounded-xl bg-chart-2/10 text-chart-2 border border-chart-2/20">
 							<IconUser className="size-5" />
 						</div>
 					</CardContent>
 				</Card>
 
-				<Card className="border-border/70 bg-card shadow-xs hover:border-amber-500/40 transition-colors">
+				<Card className="border-border/70 bg-card shadow-xs hover:border-chart-3/40 transition-colors">
 					<CardContent className="p-4 sm:p-5 flex items-center justify-between">
 						<div>
 							<div className="text-xs font-medium text-muted-foreground">
 								Automated Bots Filtered
 							</div>
-							<div className="text-2xl sm:text-3xl font-bold font-heading text-amber-500 mt-1">
+							<div className="text-2xl sm:text-3xl font-bold font-heading text-chart-3 mt-1">
 								{isLoading ? (
 									<Skeleton className="h-8 w-20" />
 								) : (
 									`${analytics?.botClicks ?? 0}`
 								)}
 							</div>
-							<div className="text-[11px] text-amber-600 dark:text-amber-400 mt-0.5">
+							<div className="text-[11px] text-chart-3 mt-0.5">
 								{analytics?.botPercentage
 									? `${analytics.botPercentage}% bot ratio`
 									: "0% bots"}
 							</div>
 						</div>
-						<div className="flex size-10 items-center justify-center rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20">
+						<div className="flex size-10 items-center justify-center rounded-xl bg-chart-3/10 text-chart-3 border border-chart-3/20">
 							<IconRobot className="size-5" />
 						</div>
 					</CardContent>
@@ -333,7 +333,7 @@ export function AnalyticsOverview({
 						<span>Click Velocity & Trends</span>
 						<Badge
 							variant="outline"
-							className="text-[10px] font-mono text-emerald-500 border-emerald-500/30"
+							className="text-[10px] font-mono text-chart-2 border-chart-2/30"
 						>
 							Live Stream
 						</Badge>
@@ -422,7 +422,7 @@ export function AnalyticsOverview({
 								onClick={handleSimulateClick}
 								className="gap-1.5 text-xs cursor-pointer"
 							>
-								<IconBolt className="size-3.5 text-amber-500" />
+								<IconBolt className="size-3.5 text-chart-3" />
 								<span>Send Test Click Event</span>
 							</Button>
 						</div>
@@ -476,7 +476,7 @@ export function AnalyticsOverview({
 				<Card className="border-border/70 bg-card shadow-xs">
 					<CardHeader className="pb-3">
 						<CardTitle className="text-sm font-heading font-semibold flex items-center gap-2">
-							<IconBrowser className="size-4 text-emerald-500" />
+							<IconBrowser className="size-4 text-chart-2" />
 							<span>Browser Breakdown</span>
 						</CardTitle>
 					</CardHeader>
@@ -496,7 +496,7 @@ export function AnalyticsOverview({
 									</div>
 									<div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
 										<div
-											className="h-full rounded-full bg-emerald-500"
+											className="h-full rounded-full bg-chart-2"
 											style={{
 												width: `${Math.min(b.percentage, 100)}%`,
 											}}
@@ -516,7 +516,7 @@ export function AnalyticsOverview({
 				<Card className="border-border/70 bg-card shadow-xs">
 					<CardHeader className="pb-3">
 						<CardTitle className="text-sm font-heading font-semibold flex items-center gap-2">
-							<IconDevices className="size-4 text-amber-500" />
+							<IconDevices className="size-4 text-chart-3" />
 							<span>Operating Systems & Devices</span>
 						</CardTitle>
 					</CardHeader>
@@ -537,7 +537,7 @@ export function AnalyticsOverview({
 									</div>
 									<div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
 										<div
-											className="h-full rounded-full bg-amber-500"
+											className="h-full rounded-full bg-chart-3"
 											style={{
 												width: `${Math.min(os.percentage, 100)}%`,
 											}}
@@ -557,7 +557,7 @@ export function AnalyticsOverview({
 				<Card className="border-border/70 bg-card shadow-xs">
 					<CardHeader className="pb-3">
 						<CardTitle className="text-sm font-heading font-semibold flex items-center gap-2">
-							<IconArrowUpRight className="size-4 text-blue-500" />
+							<IconArrowUpRight className="size-4 text-chart-4" />
 							<span>Referrer Channels</span>
 						</CardTitle>
 					</CardHeader>
@@ -577,7 +577,7 @@ export function AnalyticsOverview({
 									</div>
 									<div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
 										<div
-											className="h-full rounded-full bg-blue-500"
+											className="h-full rounded-full bg-chart-4"
 											style={{
 												width: `${Math.min(ref.percentage, 100)}%`,
 											}}

@@ -152,7 +152,7 @@ export function AnalyticsDetailPage() {
 						onClick={handleCopy}
 						className="text-xs h-8.5 gap-1.5 cursor-pointer shadow-2xs"
 					>
-						{copied ? <IconCheck className="size-3.5 text-emerald-500" /> : <IconCopy className="size-3.5" />}
+						{copied ? <IconCheck className="size-3.5 text-chart-2" /> : <IconCopy className="size-3.5" />}
 						<span>Copy Link</span>
 					</Button>
 
@@ -171,7 +171,7 @@ export function AnalyticsDetailPage() {
 						size="sm"
 						onClick={handleSimulateClick}
 						disabled={isSimulating}
-						className="text-xs h-8.5 gap-1.5 cursor-pointer shadow-2xs text-amber-500 hover:text-amber-600 border-amber-500/30"
+						className="text-xs h-8.5 gap-1.5 cursor-pointer shadow-2xs text-chart-3 hover:text-chart-3/80 border-chart-3/30"
 						title="Produce real Kafka click event"
 					>
 						<IconBolt className={`size-3.5 ${isSimulating ? "animate-spin" : ""}`} />

@@ -340,7 +340,7 @@ export function SignupPage() {
 								className="h-9 gap-2 cursor-pointer text-xs justify-center"
 								onClick={() => handleOAuth("google")}
 							>
-								<IconBrandGoogle className="size-4 text-rose-500" />
+								<IconBrandGoogle className="size-4 text-destructive" />
 								<span>
 									{oauthMutation.isPending &&
 									oauthMutation.variables === "google"

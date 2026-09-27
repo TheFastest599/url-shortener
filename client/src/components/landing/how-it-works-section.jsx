@@ -28,7 +28,7 @@ export function HowItWorksSection() {
 			description:
 				"Organize short links into structured marketing folders. Standardize UTM parameters to monitor real-time cross-channel attribution.",
 			icon: IconFolder,
-			color: "text-amber-600 dark:text-amber-400 bg-amber-500/10",
+			color: "text-chart-3 bg-chart-3/10",
 		},
 		{
 			step: "03",
@@ -37,7 +37,7 @@ export function HowItWorksSection() {
 			description:
 				"Route visitors across multivariate variants with in-memory weighted splits and 30-day sticky sessions to scientifically pick winning funnels.",
 			icon: IconFlask,
-			color: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10",
+			color: "text-chart-2 bg-chart-2/10",
 		},
 	];
 
@@ -90,7 +90,7 @@ export function HowItWorksSection() {
 
 								{/* Bottom Status Dot */}
 								<div className="mt-6 pt-4 border-t border-border/40 w-full flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground">
-									<span className="size-1.5 rounded-full bg-emerald-500" />
+									<span className="size-1.5 rounded-full bg-chart-2" />
 									<span>Production ready</span>
 								</div>
 							</div>

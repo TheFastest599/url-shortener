@@ -149,7 +149,7 @@ export function MarketingSolutions() {
 									: "text-muted-foreground hover:text-foreground"
 							}`}
 						>
-							<IconFolder className="size-4 text-amber-500" />
+							<IconFolder className="size-4 text-chart-3" />
 							<span>Campaign Marketers</span>
 						</button>
 
@@ -162,7 +162,7 @@ export function MarketingSolutions() {
 									: "text-muted-foreground hover:text-foreground"
 							}`}
 						>
-							<IconFlask className="size-4 text-emerald-500" />
+							<IconFlask className="size-4 text-chart-2" />
 							<span>Growth & Conversion Teams</span>
 						</button>
 
@@ -209,7 +209,7 @@ export function MarketingSolutions() {
 									</span>
 								</div>
 								<div className="flex items-start gap-2 pt-1 border-t border-border/40">
-									<span className="text-emerald-600 dark:text-emerald-400 font-bold uppercase tracking-wider text-[10px] shrink-0 mt-0.5">
+									<span className="text-chart-2 font-bold uppercase tracking-wider text-[10px] shrink-0 mt-0.5">
 										With HiClickMe:
 									</span>
 									<span className="text-foreground font-medium leading-relaxed">
@@ -246,7 +246,7 @@ export function MarketingSolutions() {
 						<div className="lg:col-span-5 rounded-2xl border border-border/80 bg-muted/20 p-6 space-y-4 shadow-xs">
 							<div className="flex items-center justify-between pb-3 border-b border-border/60 text-xs">
 								<span className="font-semibold text-foreground flex items-center gap-1.5">
-									<span className="size-2 rounded-full bg-emerald-500" />
+									<span className="size-2 rounded-full bg-chart-2" />
 									{current.preview.tag}
 								</span>
 								<span className="text-[10px] font-mono text-muted-foreground">READY TO SHARE</span>
@@ -278,10 +278,10 @@ export function MarketingSolutions() {
 
 							<div className="pt-2 flex items-center justify-between text-xs text-muted-foreground">
 								<span className="flex items-center gap-1">
-									<IconCheck className="size-3.5 text-emerald-500" /> Zero tracking cookies
+									<IconCheck className="size-3.5 text-chart-2" /> Zero tracking cookies
 								</span>
 								<span className="flex items-center gap-1">
-									<IconCheck className="size-3.5 text-emerald-500" /> Clean redirection
+									<IconCheck className="size-3.5 text-chart-2" /> Clean redirection
 								</span>
 							</div>
 						</div>

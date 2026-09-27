@@ -49,10 +49,10 @@ export function AbTestCard({
 							variant={isConcluded ? "secondary" : isPaused ? "outline" : "default"}
 							className={`text-[10px] font-semibold ${
 								status === "ACTIVE"
-									? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
+									? "bg-chart-2/15 text-chart-2 border border-chart-2/30"
 									: isPaused
-										? "text-amber-500 border-amber-500/30"
-										: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30"
+										? "text-chart-3 border-chart-3/30"
+										: "bg-primary/15 text-primary border border-primary/30"
 							}`}
 						>
 							{status}
@@ -60,7 +60,7 @@ export function AbTestCard({
 						{isConcluded && experiment?.winningVariant && (
 							<Badge
 								variant="outline"
-								className="text-[10px] text-amber-500 border-amber-500/40 gap-1"
+								className="text-[10px] text-chart-3 border-chart-3/40 gap-1"
 							>
 								<IconTrophy className="size-3" />
 								<span>Winner: Variant {experiment.winningVariant}</span>
@@ -94,7 +94,7 @@ export function AbTestCard({
 								className="text-xs h-8 gap-1.5 cursor-pointer shadow-2xs hover:border-primary/50 text-foreground"
 								title="Edit experiment variants, URLs and traffic distribution"
 							>
-								<IconEdit className="size-3.5 text-blue-500" />
+								<IconEdit className="size-3.5 text-primary" />
 								<span>Edit</span>
 							</Button>
 
@@ -107,12 +107,12 @@ export function AbTestCard({
 							>
 								{isPaused ? (
 									<>
-										<IconPlayerPlay className="size-3.5 text-emerald-500" />
+										<IconPlayerPlay className="size-3.5 text-chart-2" />
 										<span>Resume</span>
 									</>
 								) : (
 									<>
-										<IconPlayerPause className="size-3.5 text-amber-500" />
+										<IconPlayerPause className="size-3.5 text-chart-3" />
 										<span>Pause</span>
 									</>
 								)}
@@ -122,7 +122,7 @@ export function AbTestCard({
 								variant="outline"
 								size="sm"
 								onClick={() => onPromoteWinner(experiment, shortCode)}
-								className="text-xs h-8 gap-1.5 cursor-pointer text-amber-500 border-amber-500/30 hover:bg-amber-500/10 shadow-2xs"
+								className="text-xs h-8 gap-1.5 cursor-pointer text-chart-3 border-chart-3/30 hover:bg-chart-3/10 shadow-2xs"
 								title="Declare winner and promote to single destination"
 							>
 								<IconTrophy className="size-3.5" />
@@ -176,10 +176,11 @@ export function AbTestCard({
 					<div className="h-3 w-full rounded-full overflow-hidden flex bg-muted border border-border/60 shadow-inner">
 						{variants.map((v, i) => {
 							const colors = [
-								"bg-primary",
-								"bg-blue-500",
-								"bg-purple-500",
-								"bg-amber-500",
+								"bg-chart-1",
+								"bg-chart-2",
+								"bg-chart-3",
+								"bg-chart-4",
+								"bg-chart-5",
 							];
 							const barColor = colors[i % colors.length];
 
@@ -212,7 +213,7 @@ export function AbTestCard({
 							key={variant.key}
 							className={`p-3.5 rounded-xl border text-xs flex flex-col justify-between gap-3 transition-all ${
 								isWinner
-									? "border-amber-500/60 bg-amber-500/5 shadow-2xs ring-1 ring-amber-500/20"
+									? "border-chart-3/60 bg-chart-3/5 shadow-2xs ring-1 ring-chart-3/20"
 									: isControl
 										? "border-primary/40 bg-primary/5"
 										: "border-border/60 bg-muted/10"
@@ -224,7 +225,7 @@ export function AbTestCard({
 										<Badge
 											variant={isWinner ? "default" : isControl ? "default" : "outline"}
 											className={`text-[10px] font-bold ${
-												isWinner ? "bg-amber-500 text-white" : ""
+												isWinner ? "bg-chart-3 text-primary-foreground font-bold" : ""
 											}`}
 										>
 											Variant {variant.key}
@@ -235,7 +236,7 @@ export function AbTestCard({
 											</span>
 										)}
 										{isWinner && (
-											<span className="text-[10px] font-bold text-amber-500 flex items-center gap-0.5">
+											<span className="text-[10px] font-bold text-chart-3 flex items-center gap-0.5">
 												<IconTrophy className="size-3" /> Winner
 											</span>
 										)}

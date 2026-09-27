@@ -98,7 +98,7 @@ export function AnalyticsPage() {
 					</Link>
 					<Link to={ROUTES.AB_TESTING}>
 						<Button variant="outline" size="sm" className="gap-1.5 text-xs h-9 font-medium cursor-pointer shadow-2xs">
-							<IconFlask className="size-3.5 text-amber-500" />
+							<IconFlask className="size-3.5 text-chart-3" />
 							<span>A/B Tests</span>
 						</Button>
 					</Link>

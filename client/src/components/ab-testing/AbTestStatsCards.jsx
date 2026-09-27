@@ -34,14 +34,14 @@ export function AbTestStatsCards({
 						<div className="text-[11px] sm:text-xs font-medium text-muted-foreground truncate">
 							Running Active Tests
 						</div>
-						<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-emerald-500 mt-0.5 sm:mt-1">
+						<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-chart-2 mt-0.5 sm:mt-1">
 							{activeExperiments}
 						</div>
-						<div className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 font-medium truncate">
+						<div className="text-[10px] sm:text-[11px] text-muted-foreground mt-0.5 font-medium truncate">
 							Live traffic splits
 						</div>
 					</div>
-					<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+					<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-chart-2/10 text-chart-2 border border-chart-2/20">
 						<IconScale className="size-3.5 sm:size-4.5 lg:size-5" />
 					</div>
 				</CardContent>
@@ -53,14 +53,14 @@ export function AbTestStatsCards({
 						<div className="text-[11px] sm:text-xs font-medium text-muted-foreground truncate">
 							Concluded / Winners
 						</div>
-						<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-amber-500 mt-0.5 sm:mt-1">
+						<div className="text-lg sm:text-2xl lg:text-3xl font-bold font-heading text-chart-3 mt-0.5 sm:mt-1">
 							{concludedExperiments}
 						</div>
-						<div className="text-[10px] sm:text-[11px] text-amber-600 dark:text-amber-400 mt-0.5 font-medium truncate">
+						<div className="text-[10px] sm:text-[11px] text-muted-foreground mt-0.5 font-medium truncate">
 							Promoted targets
 						</div>
 					</div>
-					<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20">
+					<div className="flex size-7 sm:size-9 lg:size-10 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-chart-3/10 text-chart-3 border border-chart-3/20">
 						<IconTrophy className="size-3.5 sm:size-4.5 lg:size-5" />
 					</div>
 				</CardContent>

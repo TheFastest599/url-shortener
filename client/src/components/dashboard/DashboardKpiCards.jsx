@@ -22,7 +22,7 @@ export function DashboardKpiCards({
 						<div className="text-2xl sm:text-3xl font-bold font-heading text-foreground">
 							{totalLinks}
 						</div>
-						<div className="text-[11px] text-emerald-500 font-medium flex items-center gap-1">
+						<div className="text-[11px] text-chart-2 font-medium flex items-center gap-1">
 							<span>{activeLinks} active</span>
 							<span className="text-muted-foreground">·</span>
 							<span>{activePercentage}% live</span>
@@ -44,11 +44,11 @@ export function DashboardKpiCards({
 						<div className="text-2xl sm:text-3xl font-bold font-heading text-foreground">
 							{totalCampaigns}
 						</div>
-						<div className="text-[11px] text-purple-500 font-medium truncate">
+						<div className="text-[11px] text-chart-4 font-medium truncate">
 							Attribution channels
 						</div>
 					</div>
-					<div className="flex size-9 sm:size-10 shrink-0 items-center justify-center rounded-xl bg-purple-500/10 text-purple-500 border border-purple-500/20">
+					<div className="flex size-9 sm:size-10 shrink-0 items-center justify-center rounded-xl bg-chart-4/10 text-chart-4 border border-chart-4/20">
 						<IconFolder className="size-4.5 sm:size-5" />
 					</div>
 				</CardContent>
@@ -64,11 +64,11 @@ export function DashboardKpiCards({
 						<div className="text-2xl sm:text-3xl font-bold font-heading text-foreground">
 							{totalAbTests}
 						</div>
-						<div className="text-[11px] text-amber-500 font-medium truncate">
+						<div className="text-[11px] text-chart-3 font-medium truncate">
 							{activeAbTests} traffic splits running
 						</div>
 					</div>
-					<div className="flex size-9 sm:size-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20">
+					<div className="flex size-9 sm:size-10 shrink-0 items-center justify-center rounded-xl bg-chart-3/10 text-chart-3 border border-chart-3/20">
 						<IconFlask className="size-4.5 sm:size-5" />
 					</div>
 				</CardContent>
@@ -81,14 +81,14 @@ export function DashboardKpiCards({
 						<span className="text-xs font-medium text-muted-foreground">
 							Routing Engine
 						</span>
-						<div className="text-2xl sm:text-3xl font-bold font-heading text-emerald-500">
+						<div className="text-2xl sm:text-3xl font-bold font-heading text-chart-2">
 							100%
 						</div>
-						<div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium truncate">
+						<div className="text-[11px] text-chart-2 font-medium truncate">
 							High-availability gRPC
 						</div>
 					</div>
-					<div className="flex size-9 sm:size-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+					<div className="flex size-9 sm:size-10 shrink-0 items-center justify-center rounded-xl bg-chart-2/10 text-chart-2 border border-chart-2/20">
 						<IconBolt className="size-4.5 sm:size-5" />
 					</div>
 				</CardContent>

@@ -61,7 +61,7 @@ const SHOWCASE_CARDS = [
 		id: "campaign",
 		tab: "Campaigns",
 		tag: "Marketing Campaign",
-		badgeColor: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+		badgeColor: "bg-chart-3/10 text-chart-3 border-chart-3/20",
 		title: "Q4 Product Launch",
 		subtitle: "6 grouped links · Unified multi-touch UTM attribution",
 		shortSlug: `${getShortDomainPrefix()}c/q4-launch`,
@@ -76,8 +76,8 @@ const SHOWCASE_CARDS = [
 		],
 		channels: [
 			{ name: "Email Newsletter", pct: 48, clicks: "1,834", color: "bg-primary" },
-			{ name: "Social / Twitter", pct: 32, clicks: "1,223", color: "bg-amber-500" },
-			{ name: "Search & Ads", pct: 20, clicks: "763", color: "bg-emerald-500" },
+			{ name: "Social / Twitter", pct: 32, clicks: "1,223", color: "bg-chart-3" },
+			{ name: "Search & Ads", pct: 20, clicks: "763", color: "bg-chart-2" },
 		],
 		metricLabel: "Campaign Clicks",
 		metricValue: "3,820 Total",
@@ -92,7 +92,7 @@ const SHOWCASE_CARDS = [
 		id: "ab-test",
 		tab: "A/B Testing",
 		tag: "Conversion Split",
-		badgeColor: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+		badgeColor: "bg-chart-2/10 text-chart-2 border-chart-2/20",
 		title: "Hero CTA Optimization",
 		subtitle: "Server-side traffic split · 30-day sticky sessions",
 		shortSlug: `${getShortDomainPrefix()}pricing-test`,
@@ -333,7 +333,7 @@ export function HeroSection() {
 					<div className="lg:col-span-7 space-y-6 text-left">
 						{/* Status Pill */}
 						<div className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-muted/40 px-3.5 py-1 text-xs font-medium text-foreground/85 shadow-2xs">
-							<span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+							<span className="size-2 rounded-full bg-chart-2 animate-pulse" />
 							<span>URLs · Marketing Campaigns · Multivariate A/B Testing</span>
 						</div>
 
@@ -346,13 +346,13 @@ export function HeroSection() {
 							Links.
 							<br />
 							Run{" "}
-							<span className="inline-flex items-center justify-center size-9 sm:size-11 rounded-2xl bg-amber-500/10 text-amber-500 align-middle mx-1 border border-amber-500/20 shadow-2xs">
+							<span className="inline-flex items-center justify-center size-9 sm:size-11 rounded-2xl bg-chart-3/10 text-chart-3 align-middle mx-1 border border-chart-3/20 shadow-2xs">
 								<IconTag className="size-5 sm:size-6" />
 							</span>{" "}
 							Campaigns.
 							<br />
 							Split Test{" "}
-							<span className="inline-flex items-center justify-center size-9 sm:size-11 rounded-2xl bg-emerald-500/10 text-emerald-500 align-middle mx-1 border border-emerald-500/20 shadow-2xs">
+							<span className="inline-flex items-center justify-center size-9 sm:size-11 rounded-2xl bg-chart-2/10 text-chart-2 align-middle mx-1 border border-chart-2/20 shadow-2xs">
 								<IconFlask className="size-5 sm:size-6" />
 							</span>{" "}
 							Smarter.
@@ -433,14 +433,14 @@ export function HeroSection() {
 													activeOptionTab === "utm"
 														? "bg-primary text-primary-foreground border-primary shadow-xs font-semibold"
 														: utmCount > 0
-														? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30 font-medium"
+														? "bg-chart-3/10 text-chart-3 border-chart-3/30 font-medium"
 														: "bg-muted/40 border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted"
 												}`}
 											>
 												<IconTag className="size-3.5" />
 												<span>UTM parameters</span>
 												{utmCount > 0 && (
-													<span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 font-mono font-semibold">
+													<span className="text-[10px] px-1.5 py-0.2 rounded-full bg-chart-3/20 text-chart-3 font-mono font-semibold">
 														{utmCount}
 													</span>
 												)}
@@ -458,20 +458,20 @@ export function HeroSection() {
 													activeOptionTab === "campaign"
 														? "bg-primary text-primary-foreground border-primary shadow-xs font-semibold"
 														: hasCampaign
-														? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 font-medium"
+														? "bg-chart-2/10 text-chart-2 border-chart-2/30 font-medium"
 														: "bg-muted/40 border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted"
 												}`}
 											>
 												<IconFolder className="size-3.5" />
 												<span>Campaign tag</span>
 												{hasCampaign && activeOptionTab !== "campaign" && (
-													<span className="size-1.5 rounded-full bg-emerald-500" />
+													<span className="size-1.5 rounded-full bg-chart-2" />
 												)}
 											</button>
 										</div>
 
 										<div className="flex items-center gap-1.5 text-[11px] text-muted-foreground select-none shrink-0">
-											<span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+											<span className="size-1.5 rounded-full bg-chart-2 animate-pulse" />
 											<span>Sub-10ms redirection</span>
 										</div>
 									</div>
@@ -489,13 +489,13 @@ export function HeroSection() {
 													)}
 													{activeOptionTab === "utm" && (
 														<>
-															<IconTag className="size-3.5 text-amber-500" />
+															<IconTag className="size-3.5 text-chart-3" />
 															<span>UTM Attribution Parameters</span>
 														</>
 													)}
 													{activeOptionTab === "campaign" && (
 														<>
-															<IconFolder className="size-3.5 text-emerald-500" />
+															<IconFolder className="size-3.5 text-chart-2" />
 															<span>Marketing Campaign Tag</span>
 														</>
 													)}
@@ -684,7 +684,7 @@ export function HeroSection() {
 								{shortenedResult && (
 									<div className="mt-4 pt-3 border-t border-border/60 space-y-3">
 										<div className="flex items-center justify-between text-xs font-semibold text-foreground">
-											<span className="flex items-center gap-1.5 text-emerald-500">
+											<span className="flex items-center gap-1.5 text-chart-2">
 												<IconCheck className="size-4" /> Ready to share
 											</span>
 											{!shortenedResult.isReal && (
@@ -705,7 +705,7 @@ export function HeroSection() {
 													className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg bg-background border border-border hover:bg-muted text-foreground cursor-pointer"
 												>
 													{copied ? (
-														<IconCheck className="size-3 text-emerald-500" />
+														<IconCheck className="size-3 text-chart-2" />
 													) : (
 														<IconCopy className="size-3" />
 													)}
@@ -731,13 +731,13 @@ export function HeroSection() {
 										{(shortenedResult.campaignName || shortenedResult.utmSource || shortenedResult.utmCampaign) && (
 											<div className="flex items-center gap-1.5 flex-wrap text-[10px]">
 												{shortenedResult.campaignName && (
-													<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-medium">
+													<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-chart-2/10 text-chart-2 border border-chart-2/20 font-medium">
 														<IconFolder className="size-3" />
 														<span>{shortenedResult.campaignName}</span>
 													</span>
 												)}
 												{(shortenedResult.utmSource || shortenedResult.utmCampaign) && (
-													<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-medium">
+													<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-chart-3/10 text-chart-3 border border-chart-3/20 font-medium">
 														<IconTag className="size-3" />
 														<span>UTM: {[shortenedResult.utmCampaign, shortenedResult.utmSource, shortenedResult.utmMedium].filter(Boolean).join(" · ")}</span>
 													</span>
@@ -814,14 +814,14 @@ export function HeroSection() {
 											Live Engagement
 										</span>
 									</div>
-									<span className="text-[11px] font-mono text-emerald-500 font-semibold">
+									<span className="text-[11px] font-mono text-chart-2 font-semibold">
 										{currentCard.bgTrend}
 									</span>
 								</div>
 								<div className="pt-3 flex items-center justify-between text-xs text-muted-foreground">
 									<span>{currentCard.bgClicks}</span>
 									<span className="flex items-center gap-1 font-mono">
-										<IconBolt className="size-3.5 text-amber-500" /> {currentCard.bgDevice}
+										<IconBolt className="size-3.5 text-chart-3" /> {currentCard.bgDevice}
 									</span>
 								</div>
 							</div>
@@ -881,7 +881,7 @@ export function HeroSection() {
 														className="inline-flex items-center gap-1 text-[11px] font-semibold text-foreground/80 hover:text-primary transition-colors cursor-pointer bg-background px-2 py-1 rounded-md border border-border/60 shadow-2xs"
 													>
 														{copied ? (
-															<IconCheck className="size-3 text-emerald-500" />
+															<IconCheck className="size-3 text-chart-2" />
 														) : (
 															<IconCopy className="size-3" />
 														)}
@@ -902,7 +902,7 @@ export function HeroSection() {
 												<div className="min-w-0 flex-1 space-y-1">
 													<div className="flex items-center justify-between text-xs">
 														<span className="font-semibold text-foreground flex items-center gap-1">
-															<IconBolt className="size-3 text-amber-500" /> {currentCard.metricLabel}
+															<IconBolt className="size-3 text-chart-3" /> {currentCard.metricLabel}
 														</span>
 														<span className="font-mono font-bold text-xs text-foreground">
 															{currentCard.metricValue}
@@ -933,7 +933,7 @@ export function HeroSection() {
 											{/* Campaign Folder Breadcrumb */}
 											<div className="flex items-center justify-between bg-muted/30 px-2.5 py-1.5 rounded-lg border border-border/50 text-xs">
 												<div className="flex items-center gap-1.5 font-mono text-muted-foreground">
-													<IconFolder className="size-3.5 text-amber-500" />
+													<IconFolder className="size-3.5 text-chart-3" />
 													<span>{currentCard.folderPath}</span>
 												</div>
 												<span className="text-[10px] font-semibold text-foreground bg-background px-2 py-0.5 rounded border border-border/60">
@@ -962,7 +962,7 @@ export function HeroSection() {
 											<div className="p-3 rounded-xl bg-muted/20 border border-border/50 space-y-2">
 												<div className="flex items-center justify-between text-xs">
 													<span className="font-semibold text-foreground flex items-center gap-1">
-														<IconLayersLinked className="size-3 text-amber-500" /> Multi-Channel Attribution
+														<IconLayersLinked className="size-3 text-chart-3" /> Multi-Channel Attribution
 													</span>
 													<span className="font-mono font-bold text-xs text-foreground">
 														{currentCard.metricValue}
@@ -1002,10 +1002,10 @@ export function HeroSection() {
 											{/* Server-side Routing Notice */}
 											<div className="flex items-center justify-between bg-muted/30 px-2.5 py-1.5 rounded-lg border border-border/50 text-xs">
 												<div className="flex items-center gap-1.5 text-foreground font-medium">
-													<IconGitFork className="size-3.5 text-emerald-500" />
+													<IconGitFork className="size-3.5 text-chart-2" />
 													<span>In-Memory Weighted Edge Router</span>
 												</div>
-												<span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 font-semibold">
+												<span className="text-[10px] font-mono text-chart-2 bg-chart-2/10 px-1.5 py-0.5 rounded border border-chart-2/20 font-semibold">
 													ACTIVE
 												</span>
 											</div>
@@ -1017,7 +1017,7 @@ export function HeroSection() {
 														key={v.key}
 														className={`p-2.5 rounded-xl border text-xs flex items-center justify-between ${
 															v.isLeading
-																? "bg-emerald-500/5 border-emerald-500/30"
+																? "bg-chart-2/5 border-chart-2/30"
 																: "bg-muted/30 border-border/50"
 														}`}
 													>
@@ -1030,7 +1030,7 @@ export function HeroSection() {
 																	{v.label}
 																</span>
 																{v.isLeading && (
-																	<span className="text-[9px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-1 rounded">
+																	<span className="text-[9px] font-semibold bg-chart-2/10 text-chart-2 border border-chart-2/20 px-1 rounded">
 																		Leading (+46.7%)
 																	</span>
 																)}
@@ -1055,7 +1055,7 @@ export function HeroSection() {
 											{/* Sticky Session Badge */}
 											<div className="p-2 rounded-xl bg-muted/20 border border-border/50 flex items-center justify-between text-[10px]">
 												<div className="flex items-center gap-1.5 text-muted-foreground font-mono truncate">
-													<IconCookie className="size-3.5 text-amber-500 shrink-0" />
+													<IconCookie className="size-3.5 text-chart-3 shrink-0" />
 													<span className="truncate">{currentCard.cookieName}</span>
 												</div>
 												<span className="text-muted-foreground shrink-0 font-medium pl-1">
@@ -1090,7 +1090,7 @@ export function HeroSection() {
 				<div className="mt-16 sm:mt-20 pt-8 border-t border-border/50 flex flex-col md:flex-row items-center justify-between gap-6">
 					{/* Platform Highlights */}
 					<div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-						<span className="size-2 rounded-full bg-emerald-500" />
+						<span className="size-2 rounded-full bg-chart-2" />
 						<span className="font-semibold text-foreground">
 							Purpose-built for growth teams:
 						</span>
@@ -1106,10 +1106,10 @@ export function HeroSection() {
 						<span className="rounded-full bg-primary/10 border border-primary/20 text-primary px-3 py-1 font-medium">
 							1. High-Velocity URLs & QR
 						</span>
-						<span className="rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 px-3 py-1 font-medium">
+						<span className="rounded-full bg-chart-3/10 border border-chart-3/20 text-chart-3 px-3 py-1 font-medium">
 							2. Multi-Touch Campaigns
 						</span>
-						<span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-3 py-1 font-medium">
+						<span className="rounded-full bg-chart-2/10 border border-chart-2/20 text-chart-2 px-3 py-1 font-medium">
 							3. Multivariate A/B Testing
 						</span>
 					</div>

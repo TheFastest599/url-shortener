@@ -111,10 +111,10 @@ export function validateCustomAlias(alias) {
 		};
 	}
 
-	if (trimmed.length > 10) {
+	if (trimmed.length > 64) {
 		return {
 			isValid: false,
-			error: "Custom alias must not exceed 10 characters.",
+			error: "Custom alias must not exceed 64 characters.",
 		};
 	}
 

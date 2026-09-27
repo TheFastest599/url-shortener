@@ -94,7 +94,7 @@ export function CampaignUtmTable({ links = [] }) {
 													title="Copy short link"
 												>
 													{copiedId === id ? (
-														<IconCheck className="size-3.5 text-emerald-500" />
+														<IconCheck className="size-3.5 text-chart-2" />
 													) : (
 														<IconCopy className="size-3.5" />
 													)}

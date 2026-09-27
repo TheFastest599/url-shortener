@@ -38,6 +38,7 @@ export function EditAbTestModal({
 			isControl: typeof v.isControl === "boolean" ? v.isControl : i === 0,
 		}))
 	);
+	const [clientErrors, setClientErrors] = React.useState({});
 	// Sync state whenever modal opens or experiment changes
 	React.useEffect(() => {
 		if (open && experiment) {

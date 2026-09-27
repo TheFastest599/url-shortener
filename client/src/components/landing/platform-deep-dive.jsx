@@ -47,8 +47,8 @@ export function PlatformDeepDive() {
 			linksCount: 4,
 			channels: [
 				{ name: "Email Newsletter", pct: 45, clicks: "1,926", color: "bg-primary" },
-				{ name: "Twitter / X Post", pct: 35, clicks: "1,498", color: "bg-amber-500" },
-				{ name: "ProductHunt Drop", pct: 20, clicks: "856", color: "bg-emerald-500" },
+				{ name: "Twitter / X Post", pct: 35, clicks: "1,498", color: "bg-chart-3" },
+				{ name: "ProductHunt Drop", pct: 20, clicks: "856", color: "bg-chart-2" },
 			],
 			links: [
 				{ slug: "sho.rt/q4-news", source: "newsletter", medium: "email", clicks: 1926 },
@@ -64,8 +64,8 @@ export function PlatformDeepDive() {
 			linksCount: 3,
 			channels: [
 				{ name: "VIP SMS Broadcast", pct: 52, clicks: "4,648", color: "bg-primary" },
-				{ name: "Creator Affiliate Links", pct: 33, clicks: "2,950", color: "bg-amber-500" },
-				{ name: "Retargeting Ads", pct: 15, clicks: "1,342", color: "bg-emerald-500" },
+				{ name: "Creator Affiliate Links", pct: 33, clicks: "2,950", color: "bg-chart-3" },
+				{ name: "Retargeting Ads", pct: 15, clicks: "1,342", color: "bg-chart-2" },
 			],
 			links: [
 				{ slug: "sho.rt/bf-vip", source: "sms", medium: "mobile", clicks: 4648 },
@@ -149,7 +149,7 @@ export function PlatformDeepDive() {
 										: "text-muted-foreground hover:text-foreground"
 								}`}
 							>
-								<IconFolder className="size-3.5 text-amber-500 shrink-0" />
+								<IconFolder className="size-3.5 text-chart-3 shrink-0" />
 								<span>Campaigns</span>
 							</button>
 
@@ -162,7 +162,7 @@ export function PlatformDeepDive() {
 										: "text-muted-foreground hover:text-foreground"
 								}`}
 							>
-								<IconFlask className="size-3.5 text-emerald-500 shrink-0" />
+								<IconFlask className="size-3.5 text-chart-2 shrink-0" />
 								<span>A/B Split Test</span>
 							</button>
 						</div>
@@ -227,9 +227,9 @@ export function PlatformDeepDive() {
 									<div className="p-3.5 rounded-2xl bg-muted/20 border border-border/60 text-xs space-y-2">
 										<div className="flex items-center justify-between">
 											<span className="font-semibold text-foreground flex items-center gap-1.5">
-												<IconBolt className="size-3.5 text-amber-500" /> Instant Redirection
+												<IconBolt className="size-3.5 text-chart-3" /> Instant Redirection
 											</span>
-											<span className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+											<span className="font-mono text-[11px] text-chart-2 font-bold bg-chart-2/10 px-1.5 py-0.5 rounded border border-chart-2/20">
 												Sub-10ms Speed
 											</span>
 										</div>
@@ -262,7 +262,7 @@ export function PlatformDeepDive() {
 											className="inline-flex items-center gap-1 text-xs font-semibold text-foreground px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors cursor-pointer"
 										>
 											{urlState.copied ? (
-												<IconCheck className="size-3.5 text-emerald-500" />
+												<IconCheck className="size-3.5 text-chart-2" />
 											) : (
 												<IconCopy className="size-3.5" />
 											)}
@@ -329,7 +329,7 @@ export function PlatformDeepDive() {
 										<div className="p-4 rounded-2xl border border-border/80 bg-muted/20 space-y-3">
 											<div className="flex items-center justify-between text-xs">
 												<span className="font-mono text-muted-foreground flex items-center gap-1.5">
-													<IconFolder className="size-4 text-amber-500" />
+													<IconFolder className="size-4 text-chart-3" />
 													<span>{currentCampaign.folder}</span>
 												</span>
 												<span className="text-[10px] font-bold bg-background px-2 py-0.5 rounded border border-border text-foreground">
@@ -431,7 +431,7 @@ export function PlatformDeepDive() {
 											Adjust the weight slider to simulate how redirect requests are distributed with 30-day sticky sessions.
 										</p>
 									</div>
-									<div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-semibold">
+									<div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-chart-2/10 border border-chart-2/20 text-chart-2 text-xs font-semibold">
 										<IconGitFork className="size-3.5" />
 										<span>Zero Client Flicker</span>
 									</div>
@@ -443,7 +443,7 @@ export function PlatformDeepDive() {
 										<span className="text-foreground">
 											Variant A (Control): {trafficWeightA}%
 										</span>
-										<span className="text-emerald-600 dark:text-emerald-400">
+										<span className="text-chart-2">
 											Variant B (Challenger): {trafficWeightB}%
 										</span>
 									</div>
@@ -487,7 +487,7 @@ export function PlatformDeepDive() {
 									<div className="p-4 rounded-2xl border border-border/80 bg-muted/10 space-y-2 text-xs">
 										<div className="flex items-center justify-between">
 											<span className="font-semibold text-foreground flex items-center gap-1.5">
-												<span className="size-2 rounded-full bg-emerald-500 animate-ping" />
+												<span className="size-2 rounded-full bg-chart-2 animate-ping" />
 												<span>Visitor {simulatedVisitor.id} Handled</span>
 											</span>
 											<span className="font-mono text-[10px] text-muted-foreground">
@@ -513,7 +513,7 @@ export function PlatformDeepDive() {
 												<span className="text-[10px] uppercase font-semibold text-muted-foreground block">
 													Sticky Cookie Injected
 												</span>
-												<span className="font-mono text-xs text-amber-600 dark:text-amber-400 font-semibold truncate block">
+												<span className="font-mono text-xs text-chart-3 font-semibold truncate block">
 													{simulatedVisitor.cookieValue}
 												</span>
 											</div>
@@ -539,7 +539,7 @@ export function PlatformDeepDive() {
 					{/* Workbench Bottom Footer */}
 					<div className="border-t border-border/50 bg-muted/20 px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
 						<div className="flex items-center gap-2 text-muted-foreground">
-							<span className="size-2 rounded-full bg-emerald-500" />
+							<span className="size-2 rounded-full bg-chart-2" />
 							<span>All 3 features ready to use in your workspace</span>
 						</div>
 

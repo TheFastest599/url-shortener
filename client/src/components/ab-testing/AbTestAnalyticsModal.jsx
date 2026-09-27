@@ -140,10 +140,10 @@ export function AbTestAnalyticsModal({
 
 							<div className="p-3 rounded-xl border border-border/70 bg-card shadow-2xs space-y-1">
 								<div className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
-									<IconUsers className="size-3.5 text-emerald-500" />
+									<IconUsers className="size-3.5 text-chart-2" />
 									<span>Unique Visitors</span>
 								</div>
-								<div className="text-xl font-bold font-heading text-emerald-500">
+								<div className="text-xl font-bold font-heading text-chart-2">
 									{uniqueVisitors.toLocaleString()}
 								</div>
 								<div className="text-[10px] text-muted-foreground">Distinct clients</div>
@@ -151,7 +151,7 @@ export function AbTestAnalyticsModal({
 
 							<div className="p-3 rounded-xl border border-border/70 bg-card shadow-2xs space-y-1">
 								<div className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
-									<IconRobot className="size-3.5 text-amber-500" />
+									<IconRobot className="size-3.5 text-chart-3" />
 									<span>Bot Traffic</span>
 								</div>
 								<div className="text-xl font-bold font-heading text-foreground">
