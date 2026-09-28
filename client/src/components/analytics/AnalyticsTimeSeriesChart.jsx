@@ -1,4 +1,10 @@
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+	Card,
+	CardContent,
+	CardHeader,
+	CardTitle,
+	CardDescription,
+} from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
 	AreaChart,
@@ -27,15 +33,24 @@ export function AnalyticsTimeSeriesChart({
 			try {
 				const d = new Date(rawDate);
 				if (timeRangeDays === 1) {
-					label = d.toLocaleTimeString([], { hour: "numeric", hour12: true });
+					label = d.toLocaleTimeString([], {
+						hour: "numeric",
+						hour12: true,
+					});
 				} else {
-					label = d.toLocaleDateString([], { month: "short", day: "numeric" });
+					label = d.toLocaleDateString([], {
+						month: "short",
+						day: "numeric",
+					});
 				}
 			} catch {
 				label = rawDate;
 			}
 		}
-		const total = pt.clicks ?? pt.count ?? ((pt.humanClicks || 0) + (pt.botClicks || 0));
+		const total =
+			pt.clicks ??
+			pt.count ??
+			(pt.humanClicks || 0) + (pt.botClicks || 0);
 		return {
 			...pt,
 			date: label || "—",
@@ -46,7 +61,9 @@ export function AnalyticsTimeSeriesChart({
 		};
 	});
 
-	const hasClicks = chartData.some((d) => (d.clicks > 0 || d.humanClicks > 0 || d.botClicks > 0));
+	const hasClicks = chartData.some(
+		(d) => d.clicks > 0 || d.humanClicks > 0 || d.botClicks > 0,
+	);
 
 	return (
 		<Card className="border-border/70 bg-card shadow-xs">
@@ -61,24 +78,42 @@ export function AnalyticsTimeSeriesChart({
 					</CardDescription>
 				</div>
 
-				{showRangeSelector && onTimeRangeChange && (
-					<div className="flex items-center gap-1 bg-muted/40 p-1 rounded-lg border border-border/60 text-xs">
-						{[7, 30, 90].map((d) => (
-							<button
-								key={d}
-								type="button"
-								onClick={() => onTimeRangeChange(d)}
-								className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer transition-colors ${
-									timeRangeDays === d
-										? "bg-card text-foreground font-semibold shadow-2xs border border-border/70"
-										: "text-muted-foreground hover:text-foreground"
-								}`}
-							>
-								{d}d
-							</button>
-						))}
+				<div className="flex items-center gap-3 flex-wrap">
+					{/* Tri-metric Legend */}
+					<div className="hidden sm:flex items-center gap-3 text-xs bg-muted/30 px-2.5 py-1 rounded-lg border border-border/50">
+						<div className="flex items-center gap-1.5 font-medium text-foreground">
+							<span className="size-2 rounded-full bg-chart-2" />
+							<span>Total Clicks</span>
+						</div>
+						<div className="flex items-center gap-1.5 font-medium text-chart-1">
+							<span className="size-2 rounded-full bg-chart-1" />
+							<span>Human</span>
+						</div>
+						<div className="flex items-center gap-1.5 font-medium text-chart-3">
+							<span className="size-2 rounded-full bg-chart-3" />
+							<span>Bots</span>
+						</div>
 					</div>
-				)}
+
+					{showRangeSelector && onTimeRangeChange && (
+						<div className="flex items-center gap-1 bg-muted/40 p-1 rounded-lg border border-border/60 text-xs">
+							{[7, 30, 90].map((d) => (
+								<button
+									key={d}
+									type="button"
+									onClick={() => onTimeRangeChange(d)}
+									className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer transition-colors ${
+										timeRangeDays === d
+											? "bg-card text-foreground font-semibold shadow-2xs border border-border/70"
+											: "text-muted-foreground hover:text-foreground"
+									}`}
+								>
+									{d}d
+								</button>
+							))}
+						</div>
+					)}
+				</div>
 			</CardHeader>
 
 			<CardContent className="p-4 sm:p-5 pt-2">
@@ -92,48 +127,132 @@ export function AnalyticsTimeSeriesChart({
 				) : (
 					<div className="h-64 w-full">
 						<ResponsiveContainer width="100%" height="100%">
-							<AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+							<AreaChart
+								data={chartData}
+								margin={{
+									top: 10,
+									right: 10,
+									left: -20,
+									bottom: 0,
+								}}
+							>
 								<defs>
-									<linearGradient id="colorHuman" x1="0" y1="0" x2="0" y2="1">
-										<stop offset="5%" stopColor="var(--chart-1)" stopOpacity={0.4} />
-										<stop offset="95%" stopColor="var(--chart-1)" stopOpacity={0.0} />
+									<linearGradient
+										id="colorTotal"
+										x1="0"
+										y1="0"
+										x2="0"
+										y2="1"
+									>
+										<stop
+											offset="5%"
+											stopColor="var(--chart-2)"
+											stopOpacity={0.25}
+										/>
+										<stop
+											offset="95%"
+											stopColor="var(--chart-2)"
+											stopOpacity={0.0}
+										/>
 									</linearGradient>
-									<linearGradient id="colorBot" x1="0" y1="0" x2="0" y2="1">
-										<stop offset="5%" stopColor="var(--chart-3)" stopOpacity={0.3} />
-										<stop offset="95%" stopColor="var(--chart-3)" stopOpacity={0.0} />
+									<linearGradient
+										id="colorHuman"
+										x1="0"
+										y1="0"
+										x2="0"
+										y2="1"
+									>
+										<stop
+											offset="5%"
+											stopColor="var(--chart-1)"
+											stopOpacity={0.4}
+										/>
+										<stop
+											offset="95%"
+											stopColor="var(--chart-1)"
+											stopOpacity={0.0}
+										/>
+									</linearGradient>
+									<linearGradient
+										id="colorBot"
+										x1="0"
+										y1="0"
+										x2="0"
+										y2="1"
+									>
+										<stop
+											offset="5%"
+											stopColor="var(--chart-3)"
+											stopOpacity={0.3}
+										/>
+										<stop
+											offset="95%"
+											stopColor="var(--chart-3)"
+											stopOpacity={0.0}
+										/>
 									</linearGradient>
 								</defs>
-								<CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.15} />
+								<CartesianGrid
+									strokeDasharray="3 3"
+									vertical={false}
+									opacity={0.15}
+								/>
 								<XAxis
 									dataKey="date"
 									tickLine={false}
 									axisLine={false}
-									tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+									tick={{
+										fontSize: 11,
+										fill: "var(--muted-foreground)",
+									}}
 								/>
 								<YAxis
 									tickLine={false}
 									axisLine={false}
 									allowDecimals={false}
-									tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+									tick={{
+										fontSize: 11,
+										fill: "var(--muted-foreground)",
+									}}
 								/>
 								<Tooltip
 									content={({ active, payload, label }) => {
-										if (!active || !payload?.length) return null;
+										if (!active || !payload?.length)
+											return null;
 										const pt = payload[0].payload;
 										return (
-											<div className="p-2.5 rounded-lg border border-border bg-popover text-popover-foreground shadow-md text-xs space-y-1">
-												<div className="font-semibold text-[11px] text-muted-foreground">
+											<div className="p-2.5 rounded-lg border border-border bg-popover text-popover-foreground shadow-md text-xs space-y-1.5 min-w-[150px]">
+												<div className="font-semibold text-[11px] text-muted-foreground font-mono">
 													{pt.fullDate || label}
 												</div>
-												<div className="flex items-center gap-3">
-													<div className="flex items-center gap-1 text-chart-1 font-bold">
-														<span>Humans:</span>
-														<span>{pt.humanClicks ?? pt.clicks}</span>
+												<div className="space-y-1">
+													<div className="flex items-center justify-between gap-4 font-semibold text-chart-2">
+														<span className="flex items-center gap-1.5">
+															<span className="size-2 rounded-full bg-chart-2" />
+															Total Clicks:
+														</span>
+														<span>{pt.clicks}</span>
+													</div>
+													<div className="flex items-center justify-between gap-4 font-medium text-chart-1">
+														<span className="flex items-center gap-1.5">
+															<span className="size-2 rounded-full bg-chart-1" />
+															Human Traffic:
+														</span>
+														<span>
+															{pt.humanClicks ??
+																pt.clicks}
+														</span>
 													</div>
 													{pt.botClicks > 0 && (
-														<div className="flex items-center gap-1 text-chart-3 font-bold">
-															<span>Bots:</span>
-															<span>{pt.botClicks}</span>
+														<div className="flex items-center justify-between gap-4 font-medium text-chart-3">
+															<span className="flex items-center gap-1.5">
+																<span className="size-2 rounded-full bg-chart-3" />
+																Automated /
+																Bots:
+															</span>
+															<span>
+																{pt.botClicks}
+															</span>
 														</div>
 													)}
 												</div>
@@ -143,8 +262,16 @@ export function AnalyticsTimeSeriesChart({
 								/>
 								<Area
 									type="monotone"
+									dataKey="clicks"
+									name="Total Clicks"
+									stroke="var(--chart-2)"
+									strokeWidth={2}
+									fill="url(#colorTotal)"
+								/>
+								<Area
+									type="monotone"
 									dataKey="humanClicks"
-									name="Human Clicks"
+									name="Human Traffic"
 									stroke="var(--chart-1)"
 									strokeWidth={2}
 									fill="url(#colorHuman)"
@@ -152,7 +279,7 @@ export function AnalyticsTimeSeriesChart({
 								<Area
 									type="monotone"
 									dataKey="botClicks"
-									name="Bot Clicks"
+									name="Bot Traffic"
 									stroke="var(--chart-3)"
 									strokeWidth={1.5}
 									fill="url(#colorBot)"

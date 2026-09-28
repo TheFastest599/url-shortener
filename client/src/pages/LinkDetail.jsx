@@ -79,7 +79,7 @@ export function LinkDetailPage() {
 	// Analytics preview
 	const { data: analytics } = useAnalyticsOverview(shortCode, {
 		days: 7,
-		includeBots: true,
+		includeBots: false,
 		enabled: !isDeleting && !!shortCode,
 	});
 

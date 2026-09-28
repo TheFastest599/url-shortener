@@ -15,7 +15,7 @@ import { queryKeys } from "./queryKeys";
 // 1. QUERY OPTIONS (ANALYTICS)
 // ==========================================
 export const analyticsQueryOptions = {
-	overview: (shortCode, { days = 30, interval = null, includeBots = false, enabled = true, refetchInterval = false } = {}) => ({
+	overview: (shortCode, { days = 30, interval = null, includeBots = true, enabled = true, refetchInterval = false } = {}) => ({
 		queryKey: queryKeys.analytics.overview(shortCode, days, includeBots, interval),
 		queryFn: async () => getOverview(shortCode, days, includeBots, interval),
 		enabled: enabled && !!shortCode,

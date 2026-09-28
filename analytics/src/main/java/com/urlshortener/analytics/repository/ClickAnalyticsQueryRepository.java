@@ -121,13 +121,20 @@ public class ClickAnalyticsQueryRepository {
         ).as("label");
         Field<?> hourTrunc = DSL.field("date_trunc('hour', timezone('UTC', {0}))", CLICK_ANALYTICS.TIMESTAMP);
         Field<Long> countField = DSL.count().cast(Long.class).as("count");
+        Field<Long> humanCountField = DSL.count().filterWhere(CLICK_ANALYTICS.IS_BOT.isFalse()).cast(Long.class).as("human_count");
+        Field<Long> botCountField = DSL.count().filterWhere(CLICK_ANALYTICS.IS_BOT.isTrue()).cast(Long.class).as("bot_count");
 
-        return dsl.select(labelField, countField)
+        return dsl.select(labelField, countField, humanCountField, botCountField)
                 .from(CLICK_ANALYTICS)
                 .where(baseCondition.and(CLICK_ANALYTICS.TIMESTAMP.ge(sinceOdt)))
                 .groupBy(hourTrunc)
                 .orderBy(hourTrunc.asc())
-                .fetch(r -> new TimeSeriesRecord(r.get(labelField), r.get(countField)));
+                .fetch(r -> new TimeSeriesRecord(
+                        r.get(labelField),
+                        r.get(countField) != null ? r.get(countField) : 0L,
+                        r.get(humanCountField) != null ? r.get(humanCountField) : 0L,
+                        r.get(botCountField) != null ? r.get(botCountField) : 0L
+                ));
     }
 
     public List<TimeSeriesProjection> findDailyTimeSeries(Condition baseCondition, Instant since) {
@@ -139,13 +146,20 @@ public class ClickAnalyticsQueryRepository {
         ).as("label");
         Field<?> dayTrunc = DSL.field("date_trunc('day', {0})", CLICK_ANALYTICS.TIMESTAMP);
         Field<Long> countField = DSL.count().cast(Long.class).as("count");
+        Field<Long> humanCountField = DSL.count().filterWhere(CLICK_ANALYTICS.IS_BOT.isFalse()).cast(Long.class).as("human_count");
+        Field<Long> botCountField = DSL.count().filterWhere(CLICK_ANALYTICS.IS_BOT.isTrue()).cast(Long.class).as("bot_count");
 
-        return dsl.select(labelField, countField)
+        return dsl.select(labelField, countField, humanCountField, botCountField)
                 .from(CLICK_ANALYTICS)
                 .where(baseCondition.and(CLICK_ANALYTICS.TIMESTAMP.ge(sinceOdt)))
                 .groupBy(dayTrunc)
                 .orderBy(dayTrunc.asc())
-                .fetch(r -> new TimeSeriesRecord(r.get(labelField), r.get(countField)));
+                .fetch(r -> new TimeSeriesRecord(
+                        r.get(labelField),
+                        r.get(countField) != null ? r.get(countField) : 0L,
+                        r.get(humanCountField) != null ? r.get(humanCountField) : 0L,
+                        r.get(botCountField) != null ? r.get(botCountField) : 0L
+                ));
     }
 
     // ==========================================
@@ -176,33 +190,33 @@ public class ClickAnalyticsQueryRepository {
         return findCategorical(CLICK_ANALYTICS.REFERRER, "Direct / None", botFilter(CLICK_ANALYTICS.SHORT_CODE.eq(shortCode), includeBots), limit);
     }
 
-    public List<StatProjection> findVariantBreakdown(String shortCode) {
-        return findCategorical(CLICK_ANALYTICS.VARIANT, "Control", CLICK_ANALYTICS.SHORT_CODE.eq(shortCode).and(CLICK_ANALYTICS.VARIANT.isNotNull()), 0);
+    public List<StatProjection> findVariantBreakdown(String shortCode, boolean includeBots) {
+        return findCategorical(CLICK_ANALYTICS.VARIANT, "Control", botFilter(CLICK_ANALYTICS.SHORT_CODE.eq(shortCode).and(CLICK_ANALYTICS.VARIANT.isNotNull()), includeBots), 0);
     }
 
-    public List<StatProjection> findTopUtmSources(String shortCode, int limit) {
-        return findCategorical(CLICK_ANALYTICS.UTM_SOURCE, "Direct", CLICK_ANALYTICS.SHORT_CODE.eq(shortCode).and(CLICK_ANALYTICS.UTM_SOURCE.isNotNull()), limit);
+    public List<StatProjection> findTopUtmSources(String shortCode, boolean includeBots, int limit) {
+        return findCategorical(CLICK_ANALYTICS.UTM_SOURCE, "Direct", botFilter(CLICK_ANALYTICS.SHORT_CODE.eq(shortCode).and(CLICK_ANALYTICS.UTM_SOURCE.isNotNull()), includeBots), limit);
     }
 
-    public List<StatProjection> findTopUtmCampaigns(String shortCode, int limit) {
-        return findCategorical(CLICK_ANALYTICS.UTM_CAMPAIGN, "None", CLICK_ANALYTICS.SHORT_CODE.eq(shortCode).and(CLICK_ANALYTICS.UTM_CAMPAIGN.isNotNull()), limit);
+    public List<StatProjection> findTopUtmCampaigns(String shortCode, boolean includeBots, int limit) {
+        return findCategorical(CLICK_ANALYTICS.UTM_CAMPAIGN, "None", botFilter(CLICK_ANALYTICS.SHORT_CODE.eq(shortCode).and(CLICK_ANALYTICS.UTM_CAMPAIGN.isNotNull()), includeBots), limit);
     }
 
-    public List<StatProjection> findTopUtmMediums(String shortCode, int limit) {
-        return findCategorical(CLICK_ANALYTICS.UTM_MEDIUM, "None", CLICK_ANALYTICS.SHORT_CODE.eq(shortCode).and(CLICK_ANALYTICS.UTM_MEDIUM.isNotNull()), limit);
+    public List<StatProjection> findTopUtmMediums(String shortCode, boolean includeBots, int limit) {
+        return findCategorical(CLICK_ANALYTICS.UTM_MEDIUM, "None", botFilter(CLICK_ANALYTICS.SHORT_CODE.eq(shortCode).and(CLICK_ANALYTICS.UTM_MEDIUM.isNotNull()), includeBots), limit);
     }
 
     // ==========================================
     // CAMPAIGN ANALYTICS QUERIES (BY CAMPAIGN_ID)
     // ==========================================
 
-    public List<StatProjection> findLinkBreakdownByCampaignId(UUID campaignId) {
+    public List<StatProjection> findLinkBreakdownByCampaignId(UUID campaignId, boolean includeBots) {
         Field<String> nameField = CLICK_ANALYTICS.SHORT_CODE.as("name");
         Field<Long> countField = DSL.count().cast(Long.class).as("count");
 
         return dsl.select(nameField, countField)
                 .from(CLICK_ANALYTICS)
-                .where(CLICK_ANALYTICS.CAMPAIGN_ID.eq(campaignId))
+                .where(botFilter(CLICK_ANALYTICS.CAMPAIGN_ID.eq(campaignId), includeBots))
                 .groupBy(CLICK_ANALYTICS.SHORT_CODE)
                 .orderBy(countField.desc())
                 .fetch(r -> new StatRecord(r.get(nameField), r.get(countField)));
@@ -228,16 +242,16 @@ public class ClickAnalyticsQueryRepository {
         return findCategorical(CLICK_ANALYTICS.REFERRER, "Direct / None", botFilter(CLICK_ANALYTICS.CAMPAIGN_ID.eq(campaignId), includeBots), limit);
     }
 
-    public List<StatProjection> findTopUtmSourcesByCampaignId(UUID campaignId, int limit) {
-        return findCategorical(CLICK_ANALYTICS.UTM_SOURCE, "Direct", CLICK_ANALYTICS.CAMPAIGN_ID.eq(campaignId).and(CLICK_ANALYTICS.UTM_SOURCE.isNotNull()), limit);
+    public List<StatProjection> findTopUtmSourcesByCampaignId(UUID campaignId, boolean includeBots, int limit) {
+        return findCategorical(CLICK_ANALYTICS.UTM_SOURCE, "Direct", botFilter(CLICK_ANALYTICS.CAMPAIGN_ID.eq(campaignId).and(CLICK_ANALYTICS.UTM_SOURCE.isNotNull()), includeBots), limit);
     }
 
     // ==========================================
     // A/B TEST ANALYTICS QUERIES (BY AB_TEST_ID)
     // ==========================================
 
-    public List<StatProjection> findVariantBreakdownByAbTestId(UUID abTestId) {
-        return findCategorical(CLICK_ANALYTICS.VARIANT, "Control", CLICK_ANALYTICS.AB_TEST_ID.eq(abTestId).and(CLICK_ANALYTICS.VARIANT.isNotNull()), 0);
+    public List<StatProjection> findVariantBreakdownByAbTestId(UUID abTestId, boolean includeBots) {
+        return findCategorical(CLICK_ANALYTICS.VARIANT, "Control", botFilter(CLICK_ANALYTICS.AB_TEST_ID.eq(abTestId).and(CLICK_ANALYTICS.VARIANT.isNotNull()), includeBots), 0);
     }
 
     public List<StatProjection> findTopCountriesByAbTestId(UUID abTestId, boolean includeBots, int limit) {
@@ -288,16 +302,16 @@ public class ClickAnalyticsQueryRepository {
         return findCategorical(CLICK_ANALYTICS.REFERRER, "Direct / None", botFilter(CLICK_ANALYTICS.URL_ID.eq(urlId), includeBots), limit);
     }
 
-    public List<StatProjection> findVariantBreakdownByUrlId(UUID urlId) {
-        return findCategorical(CLICK_ANALYTICS.VARIANT, "Control", CLICK_ANALYTICS.URL_ID.eq(urlId).and(CLICK_ANALYTICS.VARIANT.isNotNull()), 0);
+    public List<StatProjection> findVariantBreakdownByUrlId(UUID urlId, boolean includeBots) {
+        return findCategorical(CLICK_ANALYTICS.VARIANT, "Control", botFilter(CLICK_ANALYTICS.URL_ID.eq(urlId).and(CLICK_ANALYTICS.VARIANT.isNotNull()), includeBots), 0);
     }
 
-    public List<StatProjection> findTopUtmSourcesByUrlId(UUID urlId, int limit) {
-        return findCategorical(CLICK_ANALYTICS.UTM_SOURCE, "Direct", CLICK_ANALYTICS.URL_ID.eq(urlId).and(CLICK_ANALYTICS.UTM_SOURCE.isNotNull()), limit);
+    public List<StatProjection> findTopUtmSourcesByUrlId(UUID urlId, boolean includeBots, int limit) {
+        return findCategorical(CLICK_ANALYTICS.UTM_SOURCE, "Direct", botFilter(CLICK_ANALYTICS.URL_ID.eq(urlId).and(CLICK_ANALYTICS.UTM_SOURCE.isNotNull()), includeBots), limit);
     }
 
-    public List<StatProjection> findTopUtmCampaignsByUrlId(UUID urlId, int limit) {
-        return findCategorical(CLICK_ANALYTICS.UTM_CAMPAIGN, "None", CLICK_ANALYTICS.URL_ID.eq(urlId).and(CLICK_ANALYTICS.UTM_CAMPAIGN.isNotNull()), limit);
+    public List<StatProjection> findTopUtmCampaignsByUrlId(UUID urlId, boolean includeBots, int limit) {
+        return findCategorical(CLICK_ANALYTICS.UTM_CAMPAIGN, "None", botFilter(CLICK_ANALYTICS.URL_ID.eq(urlId).and(CLICK_ANALYTICS.UTM_CAMPAIGN.isNotNull()), includeBots), limit);
     }
 
     // ==========================================
