@@ -12,7 +12,7 @@ export function MiniSparkline({ shortCode }) {
 	const rawSeries = analytics?.timeSeries || [];
 	const chartData = rawSeries.map((pt, idx) => ({
 		idx,
-		clicks: pt.clicks,
+		clicks: pt.humanClicks ?? pt.clicks,
 	}));
 
 	if (isLoading) {

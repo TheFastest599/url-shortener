@@ -36,24 +36,24 @@ public class GeoIpService {
         }
     }
 
-    public GeoLocation resolve (String ipAddress) {
+    public GeoLocation resolve(String ipAddress) {
         // Guard Clause 1: Null or blank IP
         if (ipAddress == null || ipAddress.isBlank()) {
             return new GeoLocation("Unknown", "Unknown");
         }
 
-        // Guard Clause 2: Localhost and Private Networks (RFC 1918)
-        if (ipAddress.equals("127.0.0.1") || ipAddress.equals("0:0:0:0:0:0:0:1") || ipAddress.startsWith("192.168." )|| ipAddress.startsWith("10.") ) {
+        // Guard Clause 2: Localhost, IPv6 loopback, and Private Networks (RFC 1918 / Docker subnets)
+        if (isPrivateOrLoopback(ipAddress.trim())) {
             return new GeoLocation("Localhost / Private Network", "Localhost");
         }
 
         // Guard Clause 3: Reader not available
         if (databaseReader == null) {
-            return new GeoLocation("India", "Delhi"); //Graceful fallback
+            return new GeoLocation("India", "Delhi"); // Graceful fallback
         }
 
         try {
-            InetAddress  ip = InetAddress.getByName(ipAddress);
+            InetAddress ip = InetAddress.getByName(ipAddress.trim());
             CityResponse response = databaseReader.city(ip);
 
             String country = (response.getCountry() != null && response.getCountry().getName() != null)
@@ -67,8 +67,26 @@ public class GeoIpService {
             return new GeoLocation(country, city);
         } catch (Exception e) {
             log.debug("GeoIP lookup failed for IP [{}] : {}", ipAddress, e.getMessage());
-
             return new GeoLocation("Unknown", "Unknown");
+        }
+    }
+
+    private boolean isPrivateOrLoopback(String ip) {
+        if (ip.equals("127.0.0.1") || ip.equals("::1") || ip.equals("0:0:0:0:0:0:0:1")) {
+            return true;
+        }
+        if (ip.startsWith("10.") || ip.startsWith("192.168.")) {
+            return true;
+        }
+        // RFC 1918: 172.16.0.0 - 172.31.255.255 (standard Docker bridge networks)
+        if (ip.matches("^172\\.(1[6-9]|2[0-9]|3[0-1])\\..*")) {
+            return true;
+        }
+        try {
+            InetAddress addr = InetAddress.getByName(ip);
+            return addr.isLoopbackAddress() || addr.isSiteLocalAddress() || addr.isLinkLocalAddress();
+        } catch (Exception ignored) {
+            return false;
         }
     }
 }

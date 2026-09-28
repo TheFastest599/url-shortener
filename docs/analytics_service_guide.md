@@ -7,6 +7,7 @@ The Analytics service listens asynchronously to click events published on the Ap
 ---
 
 ## Table of Contents
+
 1. [Key Concepts & Architecture](#1-key-concepts--architecture)
 2. [Module 1: Database Schema Setup (`url_shortener_analytics`)](#module-1-database-schema-setup-url_shortener_analytics)
 3. [Module 2: JPA Entities, Projections & Repositories](#module-2-jpa-entities-projections--repositories)
@@ -37,11 +38,11 @@ Kafka Topic ("url-clicks") ──► [ Kafka Batch Listener: List<ClickEvent> ]
                                [ GET /api/v1/analytics/** Endpoints ]
 ```
 
-* **High-Throughput Batch Ingestion:** Consumes click events off Kafka in batches (up to 5,000 records or 5-second broker timeout, whichever comes first).
-* **Zero Data Loss Guarantee:** Uses `manual_immediate` offset acknowledgment. Kafka consumer offsets are only committed *after* the PostgreSQL transaction successfully commits. If the service or DB encounters an error, uncommitted batches are safely replayed.
-* **True Single-Query Bulk Insert:** Uses `JdbcTemplate.batchUpdate(...)` alongside PostgreSQL's `reWriteBatchedInserts=true` to consolidate 5,000 entity inserts into a single multi-row `INSERT` statement, eliminating 99% of network round trips and WAL syncs compared to sequential JPA `saveAll(...)`.
-* **Metadata Extraction:** Extracts Device Type (`Mobile`, `Desktop`, `Tablet`), OS (`iOS`, `Android`, `Windows`, `macOS`), and Browser (`Chrome`, `Safari`, `Firefox`, `Edge`).
-* **Database Isolation:** Operates strictly on `url_shortener_analytics` database (Port `5432`).
+- **High-Throughput Batch Ingestion:** Consumes click events off Kafka in batches (up to 5,000 records or 5-second broker timeout, whichever comes first).
+- **Zero Data Loss Guarantee:** Uses `manual_immediate` offset acknowledgment. Kafka consumer offsets are only committed _after_ the PostgreSQL transaction successfully commits. If the service or DB encounters an error, uncommitted batches are safely replayed.
+- **True Single-Query Bulk Insert:** Uses `JdbcTemplate.batchUpdate(...)` alongside PostgreSQL's `reWriteBatchedInserts=true` to consolidate 5,000 entity inserts into a single multi-row `INSERT` statement, eliminating 99% of network round trips and WAL syncs compared to sequential JPA `saveAll(...)`.
+- **Metadata Extraction:** Extracts Device Type (`Mobile`, `Desktop`, `Tablet`), OS (`iOS`, `Android`, `Windows`, `macOS`), and Browser (`Chrome`, `Safari`, `Firefox`, `Edge`).
+- **Database Isolation:** Operates strictly on `url_shortener_analytics` database (Port `5432`).
 
 ---
 
@@ -72,6 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_click_analytics_timestamp ON click_analytics(time
 ```
 
 #### Migration V2: Adding A/B Variant and Inbound UTM Attribution
+
 Create Flyway migration at `analytics/src/main/resources/db/migration/V2__add_variant_and_utm.sql`:
 
 ```sql
@@ -88,6 +90,7 @@ CREATE INDEX IF NOT EXISTS idx_click_analytics_utm_source ON click_analytics(sho
 ```
 
 #### Migration V3: Adding Decoupled Entity UUID Foreign References
+
 Create Flyway migration at `analytics/src/main/resources/db/migration/V3__add_ids_to_click_analytics.sql`:
 
 ```sql
@@ -103,6 +106,7 @@ CREATE INDEX IF NOT EXISTS idx_click_analytics_ab_test_id ON click_analytics(ab_
 ```
 
 #### Migration V4: Branded Custom Vanity Alias Expansion
+
 Create Flyway migration at `analytics/src/main/resources/db/migration/V4__increase_short_code_length.sql`:
 
 ```sql
@@ -118,67 +122,68 @@ File: `analytics/src/main/resources/application.yaml`
 
 ```yaml
 server:
-  port: ${PORT:8083}
+    port: ${PORT:8083}
 
 grpc:
-  server:
-    port: ${GRPC_PORT:9091}
+    server:
+        port: ${GRPC_PORT:9091}
 
 logging:
-  level:
-    root: INFO
-    com.urlshortener.analytics: DEBUG
+    level:
+        root: INFO
+        com.urlshortener.analytics: DEBUG
 
 spring:
-  application:
-    name: url-analytics-service
-  datasource:
-    # reWriteBatchedInserts=true rewrites batched PreparedStatement inserts into a single multi-row INSERT query in PostgreSQL
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:url_shortener_analytics}?reWriteBatchedInserts=true
-    username: ${DB_USERNAME:postgres}
-    password: ${DB_PASSWORD:postgres_password}
-    driver-class-name: org.postgresql.Driver
-  flyway:
-    enabled: true
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:url_shortener_analytics}
-    user: ${DB_USERNAME:postgres}
-    password: ${DB_PASSWORD:postgres_password}
-    baseline-on-migrate: true
-    locations: classpath:db/migration
-  jpa:
-    hibernate:
-      ddl-auto: validate
-    show-sql: false
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
-  kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-    listener:
-      type: batch
-      ack-mode: manual_immediate
-    consumer:
-      group-id: ${KAFKA_CONSUMER_GROUP:analytics-ingest-group}
-      auto-offset-reset: earliest
-      max-poll-records: ${ANALYTICS_BATCH_SIZE:5000}
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
-      properties:
-        spring.json.trusted.packages: "com.urlshortener.*"
-        spring.json.value.default.type: "com.urlshortener.analytics.dto.ClickEvent"
-        spring.json.use.type.headers: false
-        fetch.max.wait.ms: ${ANALYTICS_BATCH_TIMEOUT_MS:5000}
-        fetch.min.bytes: ${ANALYTICS_BATCH_FETCH_MIN_BYTES:1048576}
+    application:
+        name: url-analytics-service
+    datasource:
+        # reWriteBatchedInserts=true rewrites batched PreparedStatement inserts into a single multi-row INSERT query in PostgreSQL
+        url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:url_shortener_analytics}?reWriteBatchedInserts=true
+        username: ${DB_USERNAME:postgres}
+        password: ${DB_PASSWORD:postgres_password}
+        driver-class-name: org.postgresql.Driver
+    flyway:
+        enabled: true
+        url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:url_shortener_analytics}
+        user: ${DB_USERNAME:postgres}
+        password: ${DB_PASSWORD:postgres_password}
+        baseline-on-migrate: true
+        locations: classpath:db/migration
+    jpa:
+        hibernate:
+            ddl-auto: validate
+        show-sql: false
+        properties:
+            hibernate:
+                dialect: org.hibernate.dialect.PostgreSQLDialect
+    kafka:
+        bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+        listener:
+            type: batch
+            ack-mode: manual_immediate
+        consumer:
+            group-id: ${KAFKA_CONSUMER_GROUP:analytics-ingest-group}
+            auto-offset-reset: earliest
+            max-poll-records: ${ANALYTICS_BATCH_SIZE:5000}
+            key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+            value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+            properties:
+                spring.json.trusted.packages: "com.urlshortener.*"
+                spring.json.value.default.type: "com.urlshortener.analytics.dto.ClickEvent"
+                spring.json.use.type.headers: false
+                fetch.max.wait.ms: ${ANALYTICS_BATCH_TIMEOUT_MS:5000}
+                fetch.min.bytes: ${ANALYTICS_BATCH_FETCH_MIN_BYTES:1048576}
 ```
 
 #### Batch Tuning Environment Variables (`.env`)
 
-| Variable | Default | Description |
-| :--- | :--- | :--- |
-| `ANALYTICS_BATCH_SIZE` | `5000` | Maximum number of records polled in a single batch (`max.poll.records`). |
-| `ANALYTICS_BATCH_TIMEOUT_MS` | `5000` | Maximum wait time in ms before Kafka broker delivers records (`fetch.max.wait.ms`). |
-| `ANALYTICS_BATCH_FETCH_MIN_BYTES` | `1048576` (1MB) | Minimum bytes to accumulate before returning a fetch response (`fetch.min.bytes`). |eaders: false
-```
+| Variable                          | Default         | Description                                                                         |
+| :-------------------------------- | :-------------- | :---------------------------------------------------------------------------------- | ------------- |
+| `ANALYTICS_BATCH_SIZE`            | `5000`          | Maximum number of records polled in a single batch (`max.poll.records`).            |
+| `ANALYTICS_BATCH_TIMEOUT_MS`      | `5000`          | Maximum wait time in ms before Kafka broker delivers records (`fetch.max.wait.ms`). |
+| `ANALYTICS_BATCH_FETCH_MIN_BYTES` | `1048576` (1MB) | Minimum bytes to accumulate before returning a fetch response (`fetch.min.bytes`).  | eaders: false |
+
+````
 
 ---
 
@@ -261,13 +266,14 @@ public class ClickAnalytics {
     @Column(name = "ab_test_id")
     private UUID abTestId;
 }
-```
+````
 
 ---
 
 ### 2. Projections & Record Implementations
 
 File: `analytics/src/main/java/com/urlshortener/analytics/repository/projection/TimeSeriesRecord.java`
+
 ```java
 package com.urlshortener.analytics.repository.projection;
 
@@ -278,6 +284,7 @@ public record TimeSeriesRecord(String label, long count) implements TimeSeriesPr
 ```
 
 File: `analytics/src/main/java/com/urlshortener/analytics/repository/projection/StatRecord.java`
+
 ```java
 package com.urlshortener.analytics.repository.projection;
 
@@ -288,6 +295,7 @@ public record StatRecord(String name, long count) implements StatProjection {
 ```
 
 File: `analytics/src/main/java/com/urlshortener/analytics/repository/projection/CityStatRecord.java`
+
 ```java
 package com.urlshortener.analytics.repository.projection;
 
@@ -301,6 +309,7 @@ public record CityStatRecord(String city, String country, long count) implements
 ---
 
 ### 3. `ClickAnalyticsQueryRepository.java` (jOOQ Type-Safe Aggregations)
+
 File: `analytics/src/main/java/com/urlshortener/analytics/repository/ClickAnalyticsQueryRepository.java`
 
 Instead of static JPA `@Query` strings, the Analytics service uses **jOOQ** for dynamic predicates, database-native `date_trunc`, dynamic bot filtering, and multi-tenant campaign / A/B test aggregations:
@@ -413,6 +422,7 @@ public class ClickAnalyticsQueryRepository {
 ---
 
 ### 4. `ClickAnalyticsRepository.java` (JPA Entity Operations)
+
 File: `analytics/src/main/java/com/urlshortener/analytics/repository/ClickAnalyticsRepository.java`
 
 ```java
@@ -435,6 +445,7 @@ public interface ClickAnalyticsRepository extends JpaRepository<ClickAnalytics, 
 ## Module 3: MaxMind GeoIP2 Resolution & Kafka Event Consumer
 
 ### 1. `ClickEvent.java` Event Payload DTO
+
 File: `analytics/src/main/java/com/urlshortener/analytics/dto/ClickEvent.java`
 
 ```java
@@ -460,6 +471,7 @@ public record ClickEvent(
 ### 2. `GeoLocation.java` DTO & `GeoIpService.java` (MaxMind GeoIP2 Engine)
 
 File: `analytics/src/main/java/com/urlshortener/analytics/dto/GeoLocation.java`
+
 ```java
 package com.urlshortener.analytics.dto;
 
@@ -470,6 +482,7 @@ public record GeoLocation(
 ```
 
 File: `analytics/src/main/java/com/urlshortener/analytics/service/GeoIpService.java`
+
 ```java
 package com.urlshortener.analytics.service;
 
@@ -555,7 +568,7 @@ Instead, we use **`JdbcTemplate.batchUpdate(...)`** coupled with PostgreSQL's **
 ```sql
 -- What the driver sends across the wire to PostgreSQL (1 round trip, 1 WAL commit):
 INSERT INTO click_analytics (id, short_code, timestamp, ...)
-VALUES 
+VALUES
   ('uuid-1', 'xyz', '...'),
   ('uuid-2', 'abc', '...'),
   ... (up to 5,000 rows in one statement);
@@ -756,7 +769,7 @@ public class ClickEventConsumer {
         }
 
         // 4. Bot Detection
-        boolean isBot = uaLower.contains("bot") || uaLower.contains("crawler") || uaLower.contains("spider") 
+        boolean isBot = uaLower.contains("bot") || uaLower.contains("crawler") || uaLower.contains("spider")
                 || uaLower.contains("curl") || uaLower.contains("wget") || uaLower.contains("python");
 
         // 5. Clean Referrer Domain
@@ -808,6 +821,7 @@ public class ClickEventConsumer {
 ### 1. Complex Reporting DTOs
 
 File: `analytics/src/main/java/com/urlshortener/analytics/dto/TimeSeriesPoint.java`
+
 ```java
 package com.urlshortener.analytics.dto;
 
@@ -818,6 +832,7 @@ public record TimeSeriesPoint(
 ```
 
 File: `analytics/src/main/java/com/urlshortener/analytics/dto/StatMetricDto.java`
+
 ```java
 package com.urlshortener.analytics.dto;
 
@@ -829,6 +844,7 @@ public record StatMetricDto(
 ```
 
 File: `analytics/src/main/java/com/urlshortener/analytics/dto/CityStatDto.java`
+
 ```java
 package com.urlshortener.analytics.dto;
 
@@ -841,6 +857,7 @@ public record CityStatDto(
 ```
 
 File: `analytics/src/main/java/com/urlshortener/analytics/dto/AnalyticsOverviewDto.java`
+
 ```java
 package com.urlshortener.analytics.dto;
 
@@ -865,6 +882,7 @@ public record AnalyticsOverviewDto(
 ---
 
 ### 2. `AnalyticsService.java` (Timezone-Aware Aggregation & Zero-Filling)
+
 File: `analytics/src/main/java/com/urlshortener/analytics/service/AnalyticsService.java`
 
 ```java
@@ -1092,6 +1110,7 @@ public class AnalyticsService {
 ---
 
 ### 3. `AnalyticsController.java` (REST API Endpoints)
+
 File: `analytics/src/main/java/com/urlshortener/analytics/controller/AnalyticsController.java`
 
 ```java
@@ -1230,6 +1249,7 @@ public class AnalyticsController {
 ---
 
 ### 4. `GlobalExceptionHandler.java` (RFC-7807 Problem Details)
+
 File: `analytics/src/main/java/com/urlshortener/analytics/exception/GlobalExceptionHandler.java`
 
 ```java
@@ -1275,6 +1295,7 @@ public class GlobalExceptionHandler {
 ## Module 5: Step-by-Step Testing & Verification Guide
 
 Supports parameters:
+
 - `days` (default `30`): Range window in days.
 - `interval` (optional, `"HOUR"` or `"DAY"`): Granularity of data points. Defaults to hourly if `days <= 2`, daily otherwise.
 - `timezone` (default `"UTC"`): Client IANA timezone (e.g. `"Asia/Calcutta"`, `"America/New_York"`). The service automatically aggregates buckets by local day and local hour.
@@ -1286,72 +1307,87 @@ curl -X GET "http://localhost:8080/api/v1/analytics/xyz123?days=7&timezone=Asia/
 ```
 
 **Expected JSON Response (`HTTP 200 OK`):**
+
 ```json
 {
-  "shortCode": "xyz123",
-  "totalClicks": 1420,
-  "humanClicks": 1350,
-  "botClicks": 70,
-  "botPercentage": 4.9,
-  "timeSeries": [
-    { "timestamp": "2026-08-28T00:00:00+05:30", "clicks": 0 },
-    { "timestamp": "2026-08-29T00:00:00+05:30", "clicks": 180 },
-    { "timestamp": "2026-08-30T00:00:00+05:30", "clicks": 240 },
-    { "timestamp": "2026-08-31T00:00:00+05:30", "clicks": 310 },
-    { "timestamp": "2026-09-01T00:00:00+05:30", "clicks": 120 },
-    { "timestamp": "2026-09-02T00:00:00+05:30", "clicks": 290 },
-    { "timestamp": "2026-09-03T00:00:00+05:30", "clicks": 280 }
-  ],
-  "topCountries": [
-    { "name": "United States", "count": 850, "percentage": 63.0 },
-    { "name": "India", "count": 300, "percentage": 22.2 }
-  ],
-  "topCities": [
-    { "city": "San Francisco", "country": "United States", "count": 450, "percentage": 33.3 },
-    { "city": "Bengaluru", "country": "India", "count": 210, "percentage": 15.5 }
-  ],
-  "topBrowsers": [
-    { "name": "Chrome", "count": 980, "percentage": 72.6 },
-    { "name": "Safari", "count": 270, "percentage": 20.0 }
-  ],
-  "topOperatingSystems": [
-    { "name": "macOS", "count": 620, "percentage": 45.9 },
-    { "name": "Windows", "count": 480, "percentage": 35.6 },
-    { "name": "iOS", "count": 250, "percentage": 18.5 }
-  ],
-  "topDeviceTypes": [
-    { "name": "Desktop", "count": 1050, "percentage": 77.8 },
-    { "name": "Mobile", "count": 300, "percentage": 22.2 }
-  ],
-  "topReferrers": [
-    { "name": "https://t.co", "count": 720, "percentage": 53.3 },
-    { "name": "https://linkedin.com", "count": 410, "percentage": 30.4 },
-    { "name": "Direct / None", "count": 220, "percentage": 16.3 }
-  ]
+	"shortCode": "xyz123",
+	"totalClicks": 1420,
+	"humanClicks": 1350,
+	"botClicks": 70,
+	"botPercentage": 4.9,
+	"timeSeries": [
+		{ "timestamp": "2026-08-28T00:00:00+05:30", "clicks": 0 },
+		{ "timestamp": "2026-08-29T00:00:00+05:30", "clicks": 180 },
+		{ "timestamp": "2026-08-30T00:00:00+05:30", "clicks": 240 },
+		{ "timestamp": "2026-08-31T00:00:00+05:30", "clicks": 310 },
+		{ "timestamp": "2026-09-01T00:00:00+05:30", "clicks": 120 },
+		{ "timestamp": "2026-09-02T00:00:00+05:30", "clicks": 290 },
+		{ "timestamp": "2026-09-03T00:00:00+05:30", "clicks": 280 }
+	],
+	"topCountries": [
+		{ "name": "United States", "count": 850, "percentage": 63.0 },
+		{ "name": "India", "count": 300, "percentage": 22.2 }
+	],
+	"topCities": [
+		{
+			"city": "San Francisco",
+			"country": "United States",
+			"count": 450,
+			"percentage": 33.3
+		},
+		{
+			"city": "Bengaluru",
+			"country": "India",
+			"count": 210,
+			"percentage": 15.5
+		}
+	],
+	"topBrowsers": [
+		{ "name": "Chrome", "count": 980, "percentage": 72.6 },
+		{ "name": "Safari", "count": 270, "percentage": 20.0 }
+	],
+	"topOperatingSystems": [
+		{ "name": "macOS", "count": 620, "percentage": 45.9 },
+		{ "name": "Windows", "count": 480, "percentage": 35.6 },
+		{ "name": "iOS", "count": 250, "percentage": 18.5 }
+	],
+	"topDeviceTypes": [
+		{ "name": "Desktop", "count": 1050, "percentage": 77.8 },
+		{ "name": "Mobile", "count": 300, "percentage": 22.2 }
+	],
+	"topReferrers": [
+		{ "name": "https://t.co", "count": 720, "percentage": 53.3 },
+		{ "name": "https://linkedin.com", "count": 410, "percentage": 30.4 },
+		{ "name": "Direct / None", "count": 220, "percentage": 16.3 }
+	]
 }
 ```
 
 ### 2. Query Dedicated 24H Hourly Time-Series (`GET /api/v1/analytics/{shortCode}/timeseries`)
+
 ```bash
 curl -X GET "http://localhost:8080/api/v1/analytics/xyz123/timeseries?days=1&interval=HOUR&timezone=Asia/Calcutta" \
   -H "Authorization: Bearer <YOUR_ACCESS_TOKEN>"
 ```
 
 **Expected JSON Response (`HTTP 200 OK`):**
+
 ```json
 [
-  { "timestamp": "2026-09-02T23:00:00+05:30", "clicks": 0 },
-  { "timestamp": "2026-09-03T00:00:00+05:30", "clicks": 4 },
-  { "timestamp": "2026-09-03T01:00:00+05:30", "clicks": 0 }
+	{ "timestamp": "2026-09-02T23:00:00+05:30", "clicks": 0 },
+	{ "timestamp": "2026-09-03T00:00:00+05:30", "clicks": 4 },
+	{ "timestamp": "2026-09-03T01:00:00+05:30", "clicks": 0 }
 ]
 ```
 
 ---
 
 ## Summary
+
 The Analytics Service provides:
+
 1. **High-Throughput Kafka Batch Ingestion (`url-clicks`)**: Consumes batches governed by dual thresholds (5,000 events or 5-second broker timeout) with zero-data-loss manual offset acknowledgment (`manual_immediate`).
 2. **True Single-Query Bulk Insert**: Employs `ClickAnalyticsBatchRepository` (`JdbcTemplate.batchUpdate`) with PostgreSQL's `reWriteBatchedInserts=true` to consolidate batches into single multi-row SQL queries, eliminating 99% of round-trip network and WAL sync overhead.
 3. **Metadata Extraction:** Device type, Browser, OS, Bot detection, and clean Referrer domain resolution with MaxMind GeoIP2.
 4. **High-Performance PostgreSQL Aggregation Queries** with native `date_trunc` time-series projections.
-5. **Rich Analytics Reporting API (`/api/v1/analytics/**`)** for rendering time-series graphs, world maps, donut charts, and audience quality breakdowns on port **8083**.
+5. **Rich Analytics Reporting API (`/api/v1/analytics/**`)** for rendering time-series graphs, world maps, donut charts, and audience quality breakdowns on port **8083\*\*.

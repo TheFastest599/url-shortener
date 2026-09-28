@@ -37,16 +37,34 @@ function CustomTooltip({ active, payload }) {
 	if (active && payload && payload.length) {
 		const pt = payload[0].payload;
 		return (
-			<div className="rounded-xl border border-border bg-card/95 p-3 shadow-xl backdrop-blur-md text-xs space-y-1">
-				<div className="font-semibold text-foreground font-mono">
+			<div className="rounded-xl border border-border bg-card/95 p-3 shadow-xl backdrop-blur-md text-xs space-y-1.5 min-w-[140px]">
+				<div className="font-semibold text-muted-foreground font-mono text-[11px]">
 					{pt.fullDate || pt.date}
 				</div>
-				<div className="flex items-center gap-2 text-primary">
-					<span className="size-2 rounded-full bg-primary" />
-					<span className="font-bold">
-						{payload[0].value}{" "}
-						{payload[0].value === 1 ? "click" : "clicks"}
-					</span>
+				<div className="space-y-1">
+					<div className="flex items-center justify-between gap-3 text-foreground font-semibold">
+						<span className="flex items-center gap-1.5 text-primary">
+							<span className="size-2 rounded-full bg-primary" />
+							Total:
+						</span>
+						<span>{pt.clicks}</span>
+					</div>
+					<div className="flex items-center justify-between gap-3 font-medium text-chart-1">
+						<span className="flex items-center gap-1.5">
+							<span className="size-2 rounded-full bg-chart-1" />
+							Humans:
+						</span>
+						<span>{pt.humanClicks ?? pt.clicks}</span>
+					</div>
+					{pt.botClicks > 0 && (
+						<div className="flex items-center justify-between gap-3 font-medium text-chart-3">
+							<span className="flex items-center gap-1.5">
+								<span className="size-2 rounded-full bg-chart-3" />
+								Bots:
+							</span>
+							<span>{pt.botClicks}</span>
+						</div>
+					)}
 				</div>
 			</div>
 		);
@@ -132,6 +150,8 @@ export function AnalyticsOverview({
 		date: formatChartDate(pt.timestamp),
 		fullDate: formatTooltipDate(pt.timestamp),
 		clicks: pt.clicks,
+		humanClicks: pt.humanClicks ?? pt.clicks,
+		botClicks: pt.botClicks ?? 0,
 	}));
 
 	const handleSimulateClick = async () => {
@@ -234,6 +254,7 @@ export function AnalyticsOverview({
 							</button>
 						))}
 					</div>
+
 
 					<Button
 						variant="outline"

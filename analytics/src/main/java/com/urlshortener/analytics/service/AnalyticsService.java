@@ -74,9 +74,9 @@ public class AnalyticsService {
         List<StatMetricDto> os = mapMetrics(repository.findTopOperatingSystems(shortCode, includeBots, 10), denominator);
         List<StatMetricDto> devices = mapMetrics(repository.findTopDeviceTypes(shortCode, includeBots, 10), denominator);
         List<StatMetricDto> referrers = mapMetrics(repository.findTopReferrers(shortCode, includeBots, 10), denominator);
-        List<StatMetricDto> variants = mapMetrics(repository.findVariantBreakdown(shortCode), denominator);
-        List<StatMetricDto> utmSources = mapMetrics(repository.findTopUtmSources(shortCode, 10), denominator);
-        List<StatMetricDto> utmCampaigns = mapMetrics(repository.findTopUtmCampaigns(shortCode, 10), denominator);
+        List<StatMetricDto> variants = mapMetrics(repository.findVariantBreakdown(shortCode, includeBots), denominator);
+        List<StatMetricDto> utmSources = mapMetrics(repository.findTopUtmSources(shortCode, includeBots, 10), denominator);
+        List<StatMetricDto> utmCampaigns = mapMetrics(repository.findTopUtmCampaigns(shortCode, includeBots, 10), denominator);
 
         return new AnalyticsOverviewDto(
                 shortCode,
@@ -114,19 +114,22 @@ public class AnalyticsService {
     public List<StatMetricDto> getCountries(String shortCode, boolean includeBots, int limit) {
         long total = repository.countByShortCode(shortCode);
         if (total == 0) return List.of();
-        return mapMetrics(repository.findTopCountries(shortCode, includeBots, limit), total);
+        long denominator = includeBots ? total : Math.max(repository.countHumanClicksByShortCode(shortCode), 1);
+        return mapMetrics(repository.findTopCountries(shortCode, includeBots, limit), denominator);
     }
 
     public List<StatMetricDto> getBrowsers(String shortCode, boolean includeBots, int limit) {
         long total = repository.countByShortCode(shortCode);
         if (total == 0) return List.of();
-        return mapMetrics(repository.findTopBrowsers(shortCode, includeBots, limit), total);
+        long denominator = includeBots ? total : Math.max(repository.countHumanClicksByShortCode(shortCode), 1);
+        return mapMetrics(repository.findTopBrowsers(shortCode, includeBots, limit), denominator);
     }
 
     public List<StatMetricDto> getReferrers(String shortCode, boolean includeBots, int limit) {
         long total = repository.countByShortCode(shortCode);
         if (total == 0) return List.of();
-        return mapMetrics(repository.findTopReferrers(shortCode, includeBots, limit), total);
+        long denominator = includeBots ? total : Math.max(repository.countHumanClicksByShortCode(shortCode), 1);
+        return mapMetrics(repository.findTopReferrers(shortCode, includeBots, limit), denominator);
     }
 
     // ==========================================
@@ -163,13 +166,13 @@ public class AnalyticsService {
         List<TimeSeriesProjection> rawHourly = repository.findHourlyTimeSeriesByCampaignId(campaignId, since);
         List<TimeSeriesPoint> timeSeries = buildTimeSeries(rawHourly, since, now, zone, isHourly);
 
-        List<StatMetricDto> linkBreakdown = mapMetrics(repository.findLinkBreakdownByCampaignId(campaignId), totalClicks);
+        List<StatMetricDto> linkBreakdown = mapMetrics(repository.findLinkBreakdownByCampaignId(campaignId, includeBots), denominator);
         List<StatMetricDto> countries = mapMetrics(repository.findTopCountriesByCampaignId(campaignId, includeBots, 10), denominator);
         List<CityStatDto> cities = mapCityMetrics(repository.findTopCitiesByCampaignId(campaignId, includeBots, 10), denominator);
         List<StatMetricDto> browsers = mapMetrics(repository.findTopBrowsersByCampaignId(campaignId, includeBots, 10), denominator);
         List<StatMetricDto> devices = mapMetrics(repository.findTopDeviceTypesByCampaignId(campaignId, includeBots, 10), denominator);
         List<StatMetricDto> referrers = mapMetrics(repository.findTopReferrersByCampaignId(campaignId, includeBots, 10), denominator);
-        List<StatMetricDto> utmSources = mapMetrics(repository.findTopUtmSourcesByCampaignId(campaignId, 10), denominator);
+        List<StatMetricDto> utmSources = mapMetrics(repository.findTopUtmSourcesByCampaignId(campaignId, includeBots, 10), denominator);
 
         return new CampaignAnalyticsDto(
                 campaignId.toString(),
@@ -222,7 +225,7 @@ public class AnalyticsService {
         List<TimeSeriesProjection> rawHourly = repository.findHourlyTimeSeriesByAbTestId(abTestId, since);
         List<TimeSeriesPoint> timeSeries = buildTimeSeries(rawHourly, since, now, zone, isHourly);
 
-        List<StatMetricDto> variants = mapMetrics(repository.findVariantBreakdownByAbTestId(abTestId), denominator);
+        List<StatMetricDto> variants = mapMetrics(repository.findVariantBreakdownByAbTestId(abTestId, includeBots), denominator);
         List<StatMetricDto> countries = mapMetrics(repository.findTopCountriesByAbTestId(abTestId, includeBots, 10), denominator);
         List<StatMetricDto> browsers = mapMetrics(repository.findTopBrowsersByAbTestId(abTestId, includeBots, 10), denominator);
         List<StatMetricDto> devices = mapMetrics(repository.findTopDeviceTypesByAbTestId(abTestId, includeBots, 10), denominator);
@@ -273,7 +276,7 @@ public class AnalyticsService {
         List<TimeSeriesProjection> rawHourly = repository.findHourlyTimeSeries(shortCode, since);
         List<TimeSeriesPoint> timeSeries = buildTimeSeries(rawHourly, since, now, zone, isHourly);
 
-        List<StatMetricDto> variants = mapMetrics(repository.findVariantBreakdown(shortCode), denominator);
+        List<StatMetricDto> variants = mapMetrics(repository.findVariantBreakdown(shortCode, includeBots), denominator);
         List<StatMetricDto> countries = mapMetrics(repository.findTopCountries(shortCode, includeBots, 10), denominator);
         List<StatMetricDto> browsers = mapMetrics(repository.findTopBrowsers(shortCode, includeBots, 10), denominator);
         List<StatMetricDto> devices = mapMetrics(repository.findTopDeviceTypes(shortCode, includeBots, 10), denominator);
@@ -335,9 +338,9 @@ public class AnalyticsService {
         List<StatMetricDto> os = mapMetrics(repository.findTopOperatingSystemsByUrlId(urlId, includeBots, 10), denominator);
         List<StatMetricDto> devices = mapMetrics(repository.findTopDeviceTypesByUrlId(urlId, includeBots, 10), denominator);
         List<StatMetricDto> referrers = mapMetrics(repository.findTopReferrersByUrlId(urlId, includeBots, 10), denominator);
-        List<StatMetricDto> variants = mapMetrics(repository.findVariantBreakdownByUrlId(urlId), denominator);
-        List<StatMetricDto> utmSources = mapMetrics(repository.findTopUtmSourcesByUrlId(urlId, 10), denominator);
-        List<StatMetricDto> utmCampaigns = mapMetrics(repository.findTopUtmCampaignsByUrlId(urlId, 10), denominator);
+        List<StatMetricDto> variants = mapMetrics(repository.findVariantBreakdownByUrlId(urlId, includeBots), denominator);
+        List<StatMetricDto> utmSources = mapMetrics(repository.findTopUtmSourcesByUrlId(urlId, includeBots, 10), denominator);
+        List<StatMetricDto> utmCampaigns = mapMetrics(repository.findTopUtmCampaignsByUrlId(urlId, includeBots, 10), denominator);
 
         return new AnalyticsOverviewDto(
                 urlId.toString(),
@@ -371,6 +374,12 @@ public class AnalyticsService {
         }
     }
 
+    private record HourCounts(long total, long human, long bot) {
+        HourCounts add(long t, long h, long b) {
+            return new HourCounts(this.total + t, this.human + h, this.bot + b);
+        }
+    }
+
     private List<TimeSeriesPoint> buildTimeSeries(
             List<TimeSeriesProjection> rawHourly,
             Instant since,
@@ -378,14 +387,15 @@ public class AnalyticsService {
             ZoneId zone,
             boolean isHourly
     ) {
-        Map<ZonedDateTime, Long> localHourMap = new HashMap<>();
+        Map<ZonedDateTime, HourCounts> localHourMap = new HashMap<>();
         if (rawHourly != null) {
             for (TimeSeriesProjection p : rawHourly) {
                 if (p != null && p.getLabel() != null) {
                     try {
                         Instant instant = Instant.parse(p.getLabel());
                         ZonedDateTime localHour = instant.atZone(zone).truncatedTo(ChronoUnit.HOURS);
-                        localHourMap.put(localHour, localHourMap.getOrDefault(localHour, 0L) + p.getCount());
+                        HourCounts current = localHourMap.getOrDefault(localHour, new HourCounts(0L, 0L, 0L));
+                        localHourMap.put(localHour, current.add(p.getCount(), p.getHumanCount(), p.getBotCount()));
                     } catch (Exception ignored) {
                     }
                 }
@@ -400,8 +410,8 @@ public class AnalyticsService {
             DateTimeFormatter formatter = DateTimeFormatter.ISO_OFFSET_DATE_TIME;
 
             while (!current.isAfter(end)) {
-                long count = localHourMap.getOrDefault(current, 0L);
-                result.add(new TimeSeriesPoint(current.format(formatter), count));
+                HourCounts counts = localHourMap.getOrDefault(current, new HourCounts(0L, 0L, 0L));
+                result.add(new TimeSeriesPoint(current.format(formatter), counts.total(), counts.human(), counts.bot()));
                 current = current.plusHours(1);
             }
         } else {
@@ -412,13 +422,17 @@ public class AnalyticsService {
             while (!currentDay.isAfter(endDay)) {
                 java.time.LocalDate targetDate = currentDay.toLocalDate();
 
-                long dayClicks = 0;
-                for (Map.Entry<ZonedDateTime, Long> entry : localHourMap.entrySet()) {
+                long dayTotal = 0;
+                long dayHuman = 0;
+                long dayBot = 0;
+                for (Map.Entry<ZonedDateTime, HourCounts> entry : localHourMap.entrySet()) {
                     if (entry.getKey().toLocalDate().equals(targetDate)) {
-                        dayClicks += entry.getValue();
+                        dayTotal += entry.getValue().total();
+                        dayHuman += entry.getValue().human();
+                        dayBot += entry.getValue().bot();
                     }
                 }
-                result.add(new TimeSeriesPoint(currentDay.format(formatter), dayClicks));
+                result.add(new TimeSeriesPoint(currentDay.format(formatter), dayTotal, dayHuman, dayBot));
                 currentDay = currentDay.plusDays(1);
             }
         }
