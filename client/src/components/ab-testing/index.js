@@ -8,3 +8,4 @@ export { EditAbTestModal } from "./EditAbTestModal";
 export { PromoteWinnerDialog } from "./PromoteWinnerDialog";
 export { DeleteAbTestDialog } from "./DeleteAbTestDialog";
 export { AbTestAnalyticsModal } from "./AbTestAnalyticsModal";
+export { AbTestVariantComparisonChart } from "./AbTestVariantComparisonChart";

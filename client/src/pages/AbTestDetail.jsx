@@ -17,6 +17,7 @@ import {
 	EditAbTestModal,
 	PromoteWinnerDialog,
 	DeleteAbTestDialog,
+	AbTestVariantComparisonChart,
 } from "@/components/ab-testing";
 import {
 	AnalyticsTimeSeriesChart,
@@ -42,6 +43,7 @@ import {
 	IconDeviceDesktop,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
+import { getVariantColor } from "@/lib/utils";
 
 /* Hallmark · page: Dedicated A/B Experiment Details & Telemetry Workbench */
 
@@ -50,7 +52,6 @@ export function AbTestDetailPage() {
 	const navigate = useNavigate();
 
 	const [days, setDays] = useState(30);
-	const [includeBots, setIncludeBots] = useState(false);
 	const [editModalOpen, setEditModalOpen] = useState(false);
 	const [promoteDialogOpen, setPromoteDialogOpen] = useState(false);
 	const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -69,7 +70,7 @@ export function AbTestDetailPage() {
 		isLoading: isAnalyticsLoading,
 	} = useAbTestAnalyticsQuery(
 		experiment?.id || id,
-		{ days, includeBots },
+		{ days, includeBots: true },
 		{ enabled: !!id }
 	);
 
@@ -356,16 +357,6 @@ export function AbTestDetailPage() {
 						))}
 					</div>
 				</div>
-
-				<label className="flex items-center gap-2 cursor-pointer text-xs text-muted-foreground hover:text-foreground select-none">
-					<input
-						type="checkbox"
-						checked={includeBots}
-						onChange={(e) => setIncludeBots(e.target.checked)}
-						className="rounded border-border text-primary size-3.5 cursor-pointer"
-					/>
-					<span>Include Bot Traffic</span>
-				</label>
 			</div>
 
 			{/* 3. Key Metrics HUD */}
@@ -458,49 +449,28 @@ export function AbTestDetailPage() {
 				</CardHeader>
 				<CardContent className="p-5 pt-0 space-y-3">
 					<div className="h-4 w-full rounded-full overflow-hidden flex bg-muted border border-border/50">
-						{variants.map((v, i) => {
-							const colorClass =
-								i === 0
-									? "bg-chart-1"
-									: i === 1
-									? "bg-chart-2"
-									: i === 2
-									? "bg-chart-3"
-									: i === 3
-									? "bg-chart-4"
-									: "bg-chart-5";
-							return (
-								<div
-									key={v.key}
-									style={{ width: `${v.weight}%` }}
-									className={`h-full ${colorClass} transition-all`}
-									title={`Variant ${v.key}: ${v.weight}%`}
-								/>
-							);
-						})}
+						{variants.map((v, i) => (
+							<div
+								key={v.key}
+								style={{ width: `${v.weight}%`, backgroundColor: getVariantColor(i) }}
+								className="h-full transition-all"
+								title={`Variant ${v.key}: ${v.weight}%`}
+							/>
+						))}
 					</div>
 
 					<div className="flex items-center justify-between text-xs pt-1 flex-wrap gap-2">
 						<div className="flex items-center gap-4 flex-wrap">
-							{variants.map((v, i) => {
-								const dotColor =
-									i === 0
-										? "bg-chart-1"
-										: i === 1
-										? "bg-chart-2"
-										: i === 2
-										? "bg-chart-3"
-										: i === 3
-										? "bg-chart-4"
-										: "bg-chart-5";
-								return (
-									<div key={v.key} className="flex items-center gap-1.5">
-										<span className={`size-2.5 rounded-full ${dotColor}`} />
-										<span className="font-semibold text-foreground">Variant {v.key}:</span>
-										<span className="font-mono text-muted-foreground">{v.weight}% configured</span>
-									</div>
-								);
-							})}
+							{variants.map((v, i) => (
+								<div key={v.key} className="flex items-center gap-1.5">
+									<span
+										className="size-2.5 rounded-full"
+										style={{ backgroundColor: getVariantColor(i) }}
+									/>
+									<span className="font-semibold text-foreground">Variant {v.key}:</span>
+									<span className="font-mono text-muted-foreground">{v.weight}% configured</span>
+								</div>
+							))}
 						</div>
 
 						<div className="text-xs font-mono text-muted-foreground">
@@ -515,14 +485,23 @@ export function AbTestDetailPage() {
 				</CardContent>
 			</Card>
 
-			{/* 5. Variants Breakdown Cards */}
+			{/* 5. Dedicated Variant Performance & Split Comparison Chart */}
+			<AbTestVariantComparisonChart
+				variants={variants}
+				variantStats={variantStats}
+				totalClicks={totalClicks}
+				isLoading={isAnalyticsLoading}
+				winningVariant={experiment?.winningVariant}
+			/>
+
+			{/* 6. Variants Breakdown Cards */}
 			<div className="space-y-4">
 				<h2 className="font-heading text-base font-bold text-foreground flex items-center gap-2">
 					<span>Configured Destinations & Variant Performance</span>
 				</h2>
 
 				<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-					{variants.map((v) => {
+					{variants.map((v, i) => {
 						const stat = variantStats[v.key] || variantStats[v.name] || variantStats[v.id];
 						const clicks = stat?.totalClicks ?? 0;
 						const conversionPct =
@@ -548,8 +527,12 @@ export function AbTestDetailPage() {
 									<div className="flex items-center gap-2">
 										<Badge
 											variant={isWinner ? "default" : "secondary"}
-											className={isWinner ? "bg-chart-3 text-primary-foreground font-bold" : ""}
+											className={isWinner ? "bg-chart-3 text-primary-foreground font-bold" : "gap-1.5"}
 										>
+											<span
+												className="size-2 rounded-full"
+												style={{ backgroundColor: getVariantColor(i) }}
+											/>
 											Variant {v.key}
 										</Badge>
 										{isWinner && (

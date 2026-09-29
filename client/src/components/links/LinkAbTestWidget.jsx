@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { IconFlask, IconArrowRight } from "@tabler/icons-react";
+import { getVariantColor } from "@/lib/utils";
 
 export function LinkAbTestWidget({ isAbTest = false, abTest = null }) {
 	return (
@@ -47,29 +48,30 @@ export function LinkAbTestWidget({ isAbTest = false, abTest = null }) {
 						{abTest.variants && (
 							<div className="space-y-1">
 								<div className="h-2.5 w-full rounded-full overflow-hidden flex bg-muted border border-border/50">
-									{abTest.variants.map((v, i) => {
-										const chartBg = ["bg-chart-1", "bg-chart-2", "bg-chart-3", "bg-chart-4", "bg-chart-5"][i % 5];
-										return (
-											<div
-												key={v.key}
-												style={{ width: `${v.weight}%` }}
-												className={`h-full ${chartBg}`}
-												title={`Variant ${v.key}: ${v.weight}%`}
-											/>
-										);
-									})}
+									{abTest.variants.map((v, i) => (
+										<div
+											key={v.key}
+											style={{ width: `${v.weight}%`, backgroundColor: getVariantColor(i) }}
+											className="h-full"
+											title={`Variant ${v.key}: ${v.weight}%`}
+										/>
+									))}
 								</div>
 							</div>
 						)}
 
 						<div className="space-y-1.5 pt-1">
-							{abTest.variants?.map((v) => (
+							{abTest.variants?.map((v, i) => (
 								<div
 									key={v.key}
 									className="flex items-center justify-between text-xs py-1 px-2.5 rounded-lg bg-muted/30 border border-border/40"
 								>
 									<div className="flex items-center gap-2 min-w-0">
-										<Badge variant={v.isControl ? "default" : "secondary"} className="text-[10px] font-mono">
+										<Badge variant={v.isControl ? "default" : "secondary"} className="text-[10px] font-mono gap-1">
+											<span
+												className="size-1.5 rounded-full"
+												style={{ backgroundColor: getVariantColor(i) }}
+											/>
 											{v.key} {v.isControl ? "(Control)" : ""}
 										</Badge>
 										<span
