@@ -111,24 +111,72 @@ Catch-all for the primary application domain (`yourdomain.com`), `localhost`, or
 
 ---
 
-## 5. Distributed IP Rate Limiting (Leaky Bucket)
+## 5. Client Identification & Rate Limiting (Real IP & Cookie-First)
 
-Nginx enforces high-performance, in-memory IP rate limiting using `limit_req_zone`. It rejects abusive traffic at the network edge before requests ever reach the JVM.
+Nginx enforces high-performance, in-memory rate limiting using `limit_req_zone`. It rejects abusive traffic at the network edge before requests ever reach the JVM, using a **production-grade hybrid identifier strategy**.
 
-### 5.1. Shared Memory Zones
+### 5.1. Real IP Resolution (`ngx_http_realip_module`)
+In containerized, cloud (AWS ALB), and CDN (Cloudflare) environments, TCP connections arrive from internal proxy gateways (e.g. `172.20.0.1`). Nginx trusts these subnets to extract the genuine client IP from `X-Forwarded-For`:
+
 ```nginx
-# API routes: 30 requests/second per IP
-limit_req_zone $binary_remote_addr zone=api_limit:10m rate=30r/s;
+# 1. Trust Localhost (loopback requests on the host machine)
+set_real_ip_from 127.0.0.1;
 
-# Redirection routes: 300 requests/second per IP
-limit_req_zone $binary_remote_addr zone=redirect_limit:10m rate=300r/s;
+# 2. Trust Enterprise LANs & Cloud VPCs (AWS VPC, GCP, and Kubernetes pod overlays)
+set_real_ip_from 10.0.0.0/8;
+
+# 3. Trust Docker Bridge Networks (Docker default container subnets, e.g. 172.18.x.x - 172.20.x.x)
+set_real_ip_from 172.16.0.0/12;
+
+# 4. Trust Local Home & Office Wi-Fi Networks (standard RFC 1918 private subnets)
+set_real_ip_from 192.168.0.0/16;
+
+# Extract original client IP from this proxy header
+real_ip_header X-Forwarded-For;
+
+# Recursively traverse multiple proxy hops to find the true original client IP
+real_ip_recursive on;
 ```
-- **`$binary_remote_addr`**: Stores client IPs in compact 4-byte binary form (IPv4) or 16-byte (IPv6) rather than strings.
-- **`10m` memory**: Holds ~160,000 active concurrent IP states in shared memory.
+- Overwrites `$remote_addr` and `$binary_remote_addr` with the real client IP on request arrival.
+- Prevents 1,000 distributed clients from colliding into a single Docker IP bucket during cold starts.
 
-### 5.2. Burst & Custom JSON 429 Responses
-- **`burst=150 nodelay`** (Redirection): Absorbs sudden bursts of legitimate redirection traffic without artificial queuing delay.
-- **`burst=50 nodelay`** (API Gateway): Accommodates initial dashboard loading bursts.
+### 5.2. Automatic Device/Visitor Cookie Tracking (`ngx_http_userid_module`)
+To avoid penalizing multiple legitimate users sharing the same public NAT/office/campus Wi-Fi, Nginx automatically issues a lightweight, persistent 1-year visitor cookie (`vid`):
+```nginx
+userid          on;
+userid_name     vid;
+userid_path     /;
+userid_expires  365d;
+```
+
+### 5.3. Identity Mapping & Shared Memory Zones
+```nginx
+# 1. Redirection: Unique browser cookie 'vid' if present, otherwise binary IP
+map $cookie_vid $redirect_rate_key {
+    default $cookie_vid;
+    ""      $binary_remote_addr;
+}
+
+# 2. API Gateway: User JWT/Bearer token if logged in, otherwise binary IP
+map $http_authorization $api_rate_key {
+    default $http_authorization;
+    ""      $binary_remote_addr;
+}
+
+# API routes: 15 requests/second per client (900 req/min)
+limit_req_zone $api_rate_key zone=api_limit:10m rate=15r/s;
+
+# Redirection routes: 50 requests/second per client (3,000 req/min)
+limit_req_zone $redirect_rate_key zone=redirect_limit:20m rate=50r/s;
+```
+- **Fair to Shared Networks**: Different devices on the same Wi-Fi receive their own distinct `vid` cookie and independent rate-limiting buckets.
+- **Fair to API Consumers**: Authenticated accounts are throttled by their token rather than their shared corporate IP.
+- **Bot/Scraper Protection**: Attackers who strip or clear cookies automatically fall back to `$binary_remote_addr` (IP address) and are blocked.
+- **`20m` memory**: Holds ~320,000 active concurrent client states in shared memory (with LRU eviction).
+
+### 5.3. Burst & Custom JSON 429 Responses
+- **`burst=50 nodelay`** (Redirection): Absorbs sudden bursts of legitimate redirection traffic without artificial queuing delay.
+- **`burst=20 nodelay`** (API Gateway): Accommodates initial dashboard loading bursts.
 - **Custom JSON Error Handler**: Returns structured JSON instead of default HTML when rate limits are exceeded:
 
 ```json

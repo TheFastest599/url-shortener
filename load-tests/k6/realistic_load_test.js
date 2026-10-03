@@ -179,8 +179,8 @@ const SHORT_CODES = ['launch-deal', 'youtube', 'promo-2026', 'spring-docs', 'git
 // ============================================================================
 const TARGET_RPS = parseInt(__ENV.TARGET_RPS || '100');
 const DURATION = __ENV.DURATION || '60s';
-const PRE_VUS = Math.max(10, Math.min(TARGET_RPS, 1000));
-const MAX_VUS = Math.max(30, Math.min(TARGET_RPS * 2.5, 5000));
+const PRE_VUS = Math.max(10, Math.min(TARGET_RPS, 500));
+const MAX_VUS = Math.max(30, Math.min(TARGET_RPS * 1.5, 1000));
 
 export const options = {
   discardResponseBodies: true,
@@ -193,6 +193,7 @@ export const options = {
       duration: DURATION,
       preAllocatedVUs: Math.floor(PRE_VUS),
       maxVUs: Math.floor(MAX_VUS),
+      gracefulStop: '3s', // Terminate promptly when duration ends instead of waiting 30s!
     },
   },
   thresholds: {
@@ -211,6 +212,7 @@ export default function () {
 
   const params = {
     redirects: 0,
+    timeout: '5s', // Don't let stalled connections hang for 60 seconds
     headers: {
       'User-Agent': ua,
       'X-Forwarded-For': ip,
@@ -227,21 +229,16 @@ export default function () {
     params.headers['Sec-CH-UA-Platform-Version'] = '"15.0.0"'; // Windows 11 (23H2 / 24H2)
   }
 
-  // 40% probability of returning visitor with sticky A/B cookie
-  let hasStickyCookie = false;
-  if (Math.random() < 0.40) {
-    if (code === 'launch-deal') {
-      const variants = ['A', 'B', 'C'];
-      params.headers['Cookie'] = `ab_launch-deal=${variants[Math.floor(Math.random() * variants.length)]}`;
-      hasStickyCookie = true;
-    } else if (code === 'youtube' || code === 'promo-2026') {
-      const variants = ['A', 'B'];
-      params.headers['Cookie'] = `ab_${code}=${variants[Math.floor(Math.random() * variants.length)]}`;
-      hasStickyCookie = true;
-    }
-  }
+  // --- Native Browser CookieJar Management ---
+  // k6 maintains an isolated, automatic CookieJar per Virtual User (VU).
+  // Real cookies returned in 'Set-Cookie' by Nginx ('vid') and redirect-service ('ab_*')
+  // are automatically captured and sent back on subsequent visits like a real browser.
+  const baseUrl = __ENV.BASE_URL || 'http://r.localhost';
+  const jar = http.cookieJar();
 
-  if (hasStickyCookie) {
+  // Track if this VU holds an active A/B cookie previously set by the server
+  const storedCookies = jar.cookiesForURL(baseUrl);
+  if (storedCookies[`ab_${code}`] && storedCookies[`ab_${code}`].length > 0) {
     stickyCookieHits.add(1);
   }
 
@@ -258,7 +255,6 @@ export default function () {
   }
 
   // Construct dynamic URL with realistic UTM parameters
-  const baseUrl = __ENV.BASE_URL || 'http://r.localhost';
   let url = `${baseUrl}/${code}`;
 
   // 60% of clicks have marketing UTM tags
