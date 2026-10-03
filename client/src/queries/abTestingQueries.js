@@ -44,7 +44,7 @@ export const useAbTestByIdQuery = (id, options = {}) => {
  */
 export const useAbTestAnalyticsQuery = (
 	identifier,
-	{ days = 30, includeBots = false } = {},
+	{ days = 30, includeBots = true } = {},
 	options = {}
 ) => {
 	return useQuery({

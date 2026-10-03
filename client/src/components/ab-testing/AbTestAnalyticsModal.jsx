@@ -31,13 +31,12 @@ export function AbTestAnalyticsModal({
 	experiment,
 }) {
 	const [days, setDays] = React.useState(30);
-	const [includeBots, setIncludeBots] = React.useState(false);
 
 	const identifier = experiment?.id || shortCode;
 
 	const { data: analytics, isLoading } = useAbTestAnalyticsQuery(
 		identifier,
-		{ days, includeBots },
+		{ days, includeBots: true },
 		{ enabled: !!identifier && open }
 	);
 
@@ -102,16 +101,6 @@ export function AbTestAnalyticsModal({
 							</button>
 						))}
 					</div>
-
-					<label className="flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground select-none">
-						<input
-							type="checkbox"
-							checked={includeBots}
-							onChange={(e) => setIncludeBots(e.target.checked)}
-							className="rounded border-border text-primary size-3.5"
-						/>
-						<span>Include Bot Traffic</span>
-					</label>
 				</div>
 
 				{isLoading ? (
