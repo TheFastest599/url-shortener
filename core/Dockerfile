@@ -6,7 +6,6 @@ COPY pom.xml .
 RUN mvn dependency:go-offline -B || true
 
 COPY src ./src
-COPY target/generated-sources ./target/generated-sources
 RUN mvn package -DskipTests -Djooq.codegen.skip=true -B
 
 # Runtime image

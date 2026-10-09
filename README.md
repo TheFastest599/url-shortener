@@ -188,6 +188,42 @@ The PostgreSQL container automatically runs [scripts/init.sql](scripts/init.sql)
 
 ---
 
+## ⚙️ jOOQ Code Generation Workflow
+
+Both the **`core`** and **`analytics`** services use **jOOQ** for compile-time type-safe SQL queries. To ensure 100% reproducible, offline builds across Docker, CI/CD, and fresh Git clones, the generated jOOQ classes are version-controlled directly in `src/main/java`:
+
+- **Core Service:** `core/src/main/java/com/urlshortener/core/jooq/`
+- **Analytics Service:** `analytics/src/main/java/com/urlshortener/analytics/jooq/`
+
+### Default Build Behavior
+By default, `<jooq.codegen.skip>true</jooq.codegen.skip>` is set in each service's `pom.xml`. Standard builds (`mvn compile`, `mvn package`, `docker compose build`) compile the tracked Java files **100% offline without connecting to PostgreSQL**.
+
+### Regenerating Code After Schema Migrations
+Whenever you modify database schemas or add new Flyway migrations:
+
+1. **Ensure PostgreSQL is running:**
+   ```bash
+   docker compose up postgres -d
+   ```
+
+2. **Run jOOQ generation for the service:**
+   ```bash
+   # Regenerate Core service jOOQ classes:
+   mvn generate-sources -Djooq.codegen.skip=false -f core/pom.xml
+
+   # Regenerate Analytics service jOOQ classes:
+   mvn generate-sources -Djooq.codegen.skip=false -f analytics/pom.xml
+   ```
+
+3. **Commit the generated classes to Git:**
+   ```bash
+   git add core/src/main/java/com/urlshortener/core/jooq/
+   git add analytics/src/main/java/com/urlshortener/analytics/jooq/
+   git commit -m "chore: regenerate jOOQ classes for schema updates"
+   ```
+
+---
+
 ## 📚 Deep-Dive Architecture & Component Guides
 
 - **[Docker Orchestration Guide](docs/docker.md)** — In-depth breakdown of multi-stage Maven builds, Spring profiles (`default` vs `docker`), dependency ordering, and volumes.
