@@ -15,6 +15,7 @@
 	<description>Kafka Click Consumer, GeoIP Resolution &amp; Analytics Service for HiClickMe</description>
 	<properties>
 		<java.version>17</java.version>
+		<jooq.codegen.skip>true</jooq.codegen.skip>
 	</properties>
 	<dependencies>
 		<!-- 1. Spring Boot Web & Validation -->
@@ -159,25 +160,6 @@
 				</executions>
 			</plugin>
 			<plugin>
-				<groupId>org.codehaus.mojo</groupId>
-				<artifactId>build-helper-maven-plugin</artifactId>
-				<version>3.5.0</version>
-				<executions>
-					<execution>
-						<id>add-source</id>
-						<phase>generate-sources</phase>
-						<goals>
-							<goal>add-source</goal>
-						</goals>
-						<configuration>
-							<sources>
-								<source>${project.build.directory}/generated-sources/jooq</source>
-							</sources>
-						</configuration>
-					</execution>
-				</executions>
-			</plugin>
-			<plugin>
 				<groupId>org.jooq</groupId>
 				<artifactId>jooq-codegen-maven</artifactId>
 				<executions>
@@ -197,6 +179,7 @@
 					</dependency>
 				</dependencies>
 				<configuration>
+					<skip>${jooq.codegen.skip}</skip>
 					<jdbc>
 						<driver>org.postgresql.Driver</driver>
 						<url>jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}?reWriteBatchedInserts=true</url>
@@ -213,7 +196,7 @@
 						</database>
 						<target>
 							<packageName>com.urlshortener.analytics.jooq</packageName>
-							<directory>target/generated-sources/jooq</directory>
+							<directory>src/main/java</directory>
 						</target>
 					</generator>
 				</configuration>
