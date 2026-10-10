@@ -7,14 +7,17 @@ The Core service manages URL persistence, Base62 shortcode generation, marketing
 > [!IMPORTANT]
 > **Write Path & Cache Invalidation Authority**:
 > The Core service is the **authoritative Write Path** for the platform.
-> The Redirect service resolves incoming clicks strictly from **Redis L1 memory in < 2ms** using **Strategy 1: Dedicated Dual-Keys (`MGET`)**:
-> 1. `url:redirect:{shortCode}` $\rightarrow$ Base Fallback URL
-> 2. `url:ab:{shortCode}` $\rightarrow$ In-memory A/B test variants JSON
-> 3. `url:rules:{shortCode}` $\rightarrow$ Device / Geo targeting rules JSON
+> The Redirect service resolves incoming clicks strictly from **Redis L1 memory in < 2ms** using the **Consolidated Single Redis Hash (`url:{shortCode}`)**:
+> 1. Field `targetUrl` $\rightarrow$ Base Fallback URL
+> 2. Field `urlId` $\rightarrow$ Persistent URL UUID
+> 3. Field `campaignId` $\rightarrow$ Marketing Campaign UUID (if assigned)
+> 4. Field `abTestId` $\rightarrow$ Active A/B Experiment UUID (if active)
+> 5. Field `smartRules` $\rightarrow$ Device OS deep-linking JSON
+> 6. Field `abConfig` $\rightarrow$ In-memory A/B test variants and weight configuration JSON
 >
 > **Lazy Cache-Aside Pattern with Adaptive TTL**:
 > - **Population**: Handled lazily by the **Redirect Service** upon first click using dynamic `calculateAdaptiveTtl(hits)`. This ensures that cold links ($\le 10$ hits) only live in Redis for 2 minutes, preventing unclicked links from wasting Redis RAM.
-> - **Eviction**: Handled immediately by the **Core Service** (`evictRedirectCache`) on update, deactivation, pause, or deletion to guarantee zero stale redirects.
+> - **Eviction**: Handled immediately by the **Core Service** (`evictRedirectCache`) via `redisTemplate.delete("url:" + shortCode)` on update, deactivation, pause, or deletion to guarantee zero stale redirects.
 
 ---
 
@@ -546,6 +549,15 @@ public interface AbVariantRepository extends JpaRepository<AbVariant, UUID> {
 
 While Spring Data JPA handles simple CRUD, the platform uses **jOOQ** for complex dynamic filtering and high-performance multi-table joins. This eliminates N+1 query latency and provides compile-time type safety.
 
+> [!TIP]
+> **jOOQ Code Generation Architecture**:
+> - **Direct Source Generation**: Generated jOOQ classes live directly inside `src/main/java/com/urlshortener/core/jooq/` and are committed to Git.
+> - **Skipped by Default**: `core/pom.xml` sets `<jooq.codegen.skip>true</jooq.codegen.skip>` by default. This ensures fast, zero-dependency builds during `mvn compile` and Docker container builds without requiring an active PostgreSQL instance.
+> - **Schema Regeneration Workflow**: Whenever Flyway database migrations change, regenerate sources with:
+>   ```bash
+>   mvn generate-sources -Djooq.codegen.skip=false
+>   ```
+
 ### 5.1 `UrlResolutionRecord.java`
 File: `core/src/main/java/com/urlshortener/core/repository/UrlResolutionRecord.java`
 
@@ -669,10 +681,10 @@ In our architecture, **Redis Population is Lazy**, while **Redis Eviction is Imm
 graph TB
     subgraph RedirectFlow ["1. Visitor Redirection & Lazy Cache Population (Redirect Service :8082)"]
         direction TB
-        Visitor(["Visitor HTTP GET /r/{code}"])
-        CheckCache{"Redis Cache Hit?<br/>(multiGet)"}
-        ComputeTTL["Calculate Adaptive TTL<br/>(2m, 15m, 1h, or 6h based on hits)"]
-        WriteKeys["Lazy Redis Population<br/>SETEX url:redirect:{code}<br/>SETEX url:ab:{code}<br/>SETEX url:rules:{code}"]
+        Visitor(["Visitor HTTP GET http://r.localhost/{code}"])
+        CheckCache{"Redis Hash Exists?<br/>(opsForHash.entries)"}
+        ComputeTTL["Calculate Adaptive TTL<br/>(2m, 30m, 2h, or 6h based on hits)"]
+        WriteHash["Lazy Redis Hash Population<br/>opsForHash.putAll('url:{code}', hash)<br/>expire(adaptiveTtl)"]
         Serve302(["HTTP 302 Redirect Found"])
     end
 
@@ -680,79 +692,62 @@ graph TB
         direction TB
         AdminClient(["Admin / Dashboard Client"])
         CoreRest["REST API (:8081)<br/>Update / Deactivate / Delete / Pause A/B"]
-        CoreGrpc["gRPC Server (:9090)<br/>UrlInternalServiceGrpc.ResolveShortUrl()"]
+        CoreGrpc["gRPC Server (:9090)<br/>UrlService.GetDestinationUrl()"]
         PostgresDB[("PostgreSQL 16 DB<br/>url_shortener_core")]
-        EvictLogic["Immediate Eviction Authority<br/>evictRedirectCache(code)<br/>evictAbCache(code)"]
+        EvictLogic["Immediate Eviction Authority<br/>evictRedirectCache(code)<br/>redisTemplate.delete('url:' + code)"]
     end
 
     subgraph RedisCluster ["3. Shared Redis 7.2 Key Store (:6379)"]
         direction TB
-        K_Base["url:redirect:{shortCode}"]
-        K_Ab["url:ab:{shortCode}"]
-        K_Rules["url:rules:{shortCode}"]
-        K_Hits["url:hits:{shortCode}"]
+        K_Hash[("Consolidated Hash: url:{shortCode}<br/>targetUrl, urlId, campaignId,<br/>abTestId, smartRules, abConfig")]
+        K_Hits[("Hits Counter: url:hits:{shortCode}")]
     end
 
     %% Visitor Path
     Visitor --> CheckCache
     CheckCache -->|"Cache Hit (Sub-2ms)"| Serve302
     CheckCache -->|"Cache Miss"| CoreGrpc
-    CoreGrpc -->|"SELECT via JPA"| PostgresDB
-    CoreGrpc -.->|"Protobuf UrlDetailsResponse"| ComputeTTL
-    ComputeTTL --> WriteKeys
-    WriteKeys -->|"SETEX (Lazy Population)"| K_Base
-    WriteKeys -->|"SETEX (Lazy Population)"| K_Ab
-    WriteKeys -->|"SETEX (Lazy Population)"| K_Rules
-    WriteKeys --> Serve302
+    CoreGrpc -->|"Single-Query jOOQ Join"| PostgresDB
+    CoreGrpc -.->|"gRPC UrlResponse Protobuf"| ComputeTTL
+    ComputeTTL --> WriteHash
+    WriteHash -->|"putAll (Lazy Population)"| K_Hash
+    WriteHash --> Serve302
 
     %% Admin Path
     AdminClient -->|"PUT / DELETE / PATCH"| CoreRest
     CoreRest -->|"ACID Update"| PostgresDB
     CoreRest -->|"Trigger Immediate Invalidation"| EvictLogic
-    EvictLogic ==>|"DEL url:redirect"| K_Base
-    EvictLogic ==>|"DEL url:ab"| K_Ab
-    EvictLogic ==>|"DEL url:rules"| K_Rules
-    EvictLogic ==>|"DEL url:hits"| K_Hits
+    EvictLogic ==>|"DEL url:{shortCode}"| K_Hash
 ```
 
 ### Why Core Does Not Pre-Warm on Creation
 1. **Memory Efficiency**: If `Core` pre-warmed every newly created link, links that are never clicked would consume Redis memory unnecessarily.
 2. **Adaptive TTL Harmony**: Cold links ($\le 10$ hits) belong in Redis for only **2 minutes**, while viral links stay for **up to 6 hours**. Since `RedirectService` tracks click popularity dynamically via `calculateAdaptiveTtl(hits)`, it is the sole authority on cache population.
-3. **Core's Responsibility is Eviction**: Core guarantees data consistency by immediately invalidating Redis keys whenever an admin changes destinations, pauses an A/B test, or deletes a URL.
+3. **Core's Responsibility is Eviction**: Core guarantees data consistency by immediately invalidating the consolidated Redis key whenever an admin changes destinations, pauses an A/B test, or deletes a URL.
 
-### Strategy 1 Cache Eviction Helper Methods in Core
-Add these methods to `UrlCoreService.java`:
+### Consolidated Redis Cache Eviction in Core
+Helper methods in `UrlCoreService.java`:
 
 ```java
 /**
- * Evicts all Strategy 1 keys for a short code across Redis.
+ * Evicts the consolidated Redis Hash for a short code.
  * Called whenever a link is updated, deactivated, or deleted.
  */
-public void evictRedirectCache(String shortCode) {
+private void evictRedirectCache(String shortCode) {
     try {
-        redisTemplate.delete(List.of(
-            "url:redirect:" + shortCode,
-            "url:ab:" + shortCode,
-            "url:rules:" + shortCode,
-            "url:hits:" + shortCode
-        ));
-        log.info("Evicted all Redis Strategy 1 keys for shortCode: {}", shortCode);
+        redisTemplate.delete("url:" + shortCode);
+        log.info("Evicted consolidated Redis key url:{} for shortCode", shortCode);
     } catch (Exception e) {
         log.warn("Failed to evict Redis cache for {}: {}", shortCode, e.getMessage());
     }
 }
 
 /**
- * Specifically evicts only the A/B test configuration key.
- * Called when an A/B test is paused or concluded without modifying the base URL.
+ * Evicts the consolidated routing cache for a short code when an A/B test changes.
+ * The next visitor triggers a fresh joint query reload over gRPC.
  */
 public void evictAbCache(String shortCode) {
-    try {
-        redisTemplate.delete("url:ab:" + shortCode);
-        log.info("Evicted Redis A/B test key for shortCode: {}", shortCode);
-    } catch (Exception e) {
-        log.warn("Failed to evict Redis A/B cache for {}: {}", shortCode, e.getMessage());
-    }
+    evictRedirectCache(shortCode);
 }
 ```
 

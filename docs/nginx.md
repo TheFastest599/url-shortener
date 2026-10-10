@@ -8,11 +8,16 @@ Architecture, configuration, and routing reference for the unified Nginx edge re
 
 Nginx serves as the **sole public-facing gateway** on port 80. By encapsulating both static frontend assets and reverse proxy routing into a single lightweight container, it enforces strict port isolation for the backend microservices.
 
-```text
-                                  ┌───► [Main Domain: yourdomain.com] ──► /     ──► [Static React SPA]
-🌐 Client Browser ──► :80 (Nginx) ├───► [Main Domain: yourdomain.com] ──► /api/ ──► [apigateway-service:8080]
-                                  │
-                                  └───► [Redirect: r.yourdomain.com]  ──► /*    ──► [redirect-service:8082]
+```mermaid
+flowchart TD
+    Client["🌐 Client Browser / HTTP Request"] --> Ingress["Nginx Edge Ingress (:80)"]
+    
+    subgraph Virtual Hosts Routing
+        Ingress -->|"Host: yourdomain.com / localhost<br/>Path: /"| SPA["Static React SPA Bundle<br/>/usr/share/nginx/html"]
+        Ingress -->|"Host: yourdomain.com / localhost<br/>Path: /api/*"| Gateway["API Gateway (:8080)<br/>Spring Cloud Gateway"]
+        Ingress -->|"Host: r.yourdomain.com / r.localhost<br/>Path: /{shortCode}"| Redirect["Redirect Service (:8082)<br/>Spring WebFlux Netty"]
+        Ingress -->|"Host: r.yourdomain.com / r.localhost<br/>Path: /"| RootRedirect["HTTP 302 Redirect<br/>to yourdomain.com /"]
+    end
 ```
 
 ### Key Architectural Benefits

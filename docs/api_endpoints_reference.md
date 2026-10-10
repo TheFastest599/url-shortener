@@ -6,18 +6,23 @@ This document is the complete, canonical API reference for all **4 microservices
 
 ## 1. System Architecture & Port Mapping
 
-All external client traffic (Web UI, Mobile, Third-party APIs) communicates strictly through the **API Gateway** (`http://localhost:8080`).
+In Docker environments, all external client traffic communicates strictly through the **Nginx Edge Ingress** on port 80:
+- **`http://localhost`**: Serves the compiled static React SPA and proxies API routes (`/api/v1/**`) to API Gateway (`:8080`).
+- **`http://r.localhost/{shortCode}`**: Dedicated high-throughput clean redirect edge directly proxying to the Redirect Service (`:8082`).
 
-| Service Name | Artifact / Directory | Protocol / Port | Internal Responsibilities |
+In local standalone development, services can also be reached on their direct ports:
+
+| Service Name | Artifact / Directory | Protocol / Port | External / Internal Role |
 | :--- | :--- | :--- | :--- |
-| **API Gateway** | `apigateway` | HTTP/WebFlux **`:8080`** | Central security perimeter, JWT auth, HttpOnly RTR cookies, OAuth2, and routing. |
+| **Nginx Edge Ingress** | `nginx` | HTTP **`:80`** | **Public Perimeter**. Serves React SPA, proxies `/api/*` to Gateway, routes `r.localhost` redirects, and executes edge rate limiting. |
+| **API Gateway** | `apigateway` | HTTP/WebFlux **`:8080`** | Central security perimeter, JWT auth, HttpOnly RTR cookies, OAuth2, and REST microservice routing. |
 | **Core Service** | `core` | HTTP **`:8081`**<br>gRPC **`:9090`** | URL CRUD, Base62 encoding, UTM profiles, tenant mapping, gRPC resolution server. |
-| **Redirect Service** | `redirect` | HTTP/WebFlux **`:8082`** | Sub-15ms HTTP 302 redirects, Redis cache-aside, Kafka click publishing. |
-| **Analytics Service** | `analytics` | HTTP **`:8083`**<br>gRPC **`:9091`** | Kafka `url-clicks` ingestion, MaxMind GeoIP2 resolution, UA/bot parsing, telemetry queries. |
+| **Redirect Service** | `redirect` | HTTP/WebFlux **`:8082`** | Sub-2ms HTTP 302 redirects, Consolidated Redis Hash cache, Kafka click publishing. |
+| **Analytics Service** | `analytics` | HTTP **`:8083`**<br>gRPC **`:9091`** | Kafka `url-clicks` ingestion, MaxMind GeoIP2 resolution, UA/bot parsing, jOOQ telemetry queries. |
 | **PostgreSQL** | Docker | TCP **`:5432`** | Databases: `url_shortener_auth`, `url_shortener_core`, `url_shortener_analytics`. |
-| **Redis** | Docker | TCP **`:6379`** | In-memory cache for hot URL mappings and adaptive hit counters. |
+| **Redis** | Docker | TCP **`:6379`** | In-memory cache for consolidated URL hashes (`url:{code}`) and hit counters (`url:hits:{code}`). |
 | **Apache Kafka** | Docker | TCP **`:9092`** | High-throughput event streaming broker (Topic: `url-clicks`). |
-| **React Frontend** | `client` | HTTP **`:5173`** | Single Page Application (SPA) built with React, Vite, and TanStack Query. |
+| **React Frontend** | `client` | HTTP **`:80`** (Prod) / **`:5173`** (Dev) | Single Page Application (SPA) built with React 19, Vite, Tailwind CSS v4, and shadcn UI. |
 
 ---
 
@@ -332,17 +337,18 @@ message UrlResponse {
 
 ## 4. High-Throughput Redirection Service (`redirect` :8082)
 
-Routed via Gateway at `http://localhost:8080/r/{shortCode}` or directly at `:8082/r/{shortCode}`.
+Routed through Nginx Edge Ingress on `http://r.localhost/{shortCode}` (clean redirect format), Gateway at `http://localhost/r/{shortCode}`, or directly at `:8082/r/{shortCode}`.
 
 ### 4.1 Execute URL Redirection
-- **Method / Path:** `GET /r/{shortCode}` (or `GET /s/{shortCode}`)
+- **Method / Path:** `GET /{shortCode}` (on `r.localhost`) or `GET /r/{shortCode}`
 - **Auth Required:** No (Public High-Throughput Endpoint)
 - **Execution Flow:**
-  1. Checks **Redis Cache** (`url:redirect:{shortCode}`).
-  2. If Cache Miss: Queries Core Service over **gRPC (`:9090`)** with a 5-second deadline and populates Redis with adaptive TTL.
-  3. **A/B Test Evaluation**: If A/B rules exist, checks for visitor cookie (`ab_{experimentId}` or `ab_{shortCode}`). If absent, evaluates weighted random distribution, selects variant, and returns `Set-Cookie` header.
-  4. Emits an asynchronous, non-blocking click event to Kafka (`url-clicks`) carrying IP, User-Agent, Referrer, UTM parameters, and selected variant.
-  5. Returns **`HTTP 302 Found`** with target `Location` header.
+  1. Concurrently checks **Consolidated Redis Hash** (`url:{shortCode}`) and increments popularity counter (`url:hits:{shortCode}`) via reactive `Mono.zip`.
+  2. If Cache Miss: Queries Core Service over **gRPC (`:9090`)** with a 5-second deadline and stores consolidated hash payload (`targetUrl`, `urlId`, `campaignId`, `abTestId`, `smartRules`, `abConfig`) with dynamic adaptive TTL.
+  3. **Device Deep-Link Evaluation**: If smart rules match incoming User-Agent (iOS / Android / Desktop), overrides target URL.
+  4. **A/B Test Evaluation**: If A/B rules exist, checks for sticky visitor cookie (`ab_{shortCode}`). If absent, evaluates cumulative weighted random distribution, selects variant, and attaches `Set-Cookie` header.
+  5. Emits an asynchronous, non-blocking click event to Kafka (`url-clicks`) carrying IP, User-Agent, Referrer, UTM parameters, and selected variant.
+  6. Returns **`HTTP 302 Found`** with target `Location` header.
 - **Response (`302 Found`):**
   `Location: https://spring.io/projects/spring-boot`
 - **Response on Inactive / Missing:** `404 Not Found`.

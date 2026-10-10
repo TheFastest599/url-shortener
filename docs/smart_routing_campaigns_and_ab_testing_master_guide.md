@@ -29,21 +29,25 @@ The system runs on a decoupled microservices architecture with a shared PostgreS
 
 ```mermaid
 graph TD
-    UserClient([Dashboard User Client]) -->|"REST API / Admin / Campaigns"| Gateway[API Gateway :8080]
-    PublicVisitor([Public Link Visitor]) -->|"GET /r/** or /slug"| Gateway
+    ClientBrowser(["🌐 Client / Browser"]) -->|Port 80| Nginx["Nginx Edge Ingress (Port 80)"]
+
+    subgraph Edge Ingress
+        Nginx -->|"Host: localhost (/)"| ReactSPA["React 19 SPA (Static Assets)"]
+        Nginx -->|"Host: localhost (/api/v1/*)"| Gateway[API Gateway :8080]
+        Nginx -->|"Host: r.localhost (/*)<br/>or localhost (/r/*)"| RedirectService[Redirect Service :8082]
+    end
 
     subgraph Microservices Cluster
         Gateway -->|"Auth Management"| DB_Auth[(PostgreSQL Auth DB: url_shortener_auth)]
         Gateway -->|"Rate Limit Checks"| RedisShared[(Redis Cache & Store :6379)]
-        Gateway -->|"Routes Redirects"| RedirectService[Redirect Service :8082]
         Gateway -.->|"REST Proxy: /api/v1/urls"| CoreService[Core Admin Service :8081]
         Gateway -.->|"REST Proxy: /api/v1/analytics"| AnalyticsService[Analytics Service :8083]
 
-        RedirectService -->|"1. Resolve URL & A/B Rules"| RedisShared
+        RedirectService -->|"1. Consolidated Hash: url:{code}"| RedisShared
         RedirectService -.->|"gRPC :9090 Fallback on Cache Miss"| CoreService
         RedirectService -->|"2. Async Publish Click Event"| KafkaBroker[Apache Kafka Broker :9092]
 
-        CoreService -->|"Cache Update & Invalidation"| RedisShared
+        CoreService -->|"Evict Hash on Update/Delete"| RedisShared
         KafkaBroker -->|"Topic: url-clicks"| AnalyticsService
     end
 
@@ -53,8 +57,8 @@ graph TD
         DB_Analytics[(PostgreSQL Analytics DB: url_shortener_analytics)]
     end
 
-    CoreService -->|"JPA / Flyway Migrations"| DB_Core
-    AnalyticsService -->|"Batch Inserts & Aggregations"| DB_Analytics
+    CoreService -->|"JPA / jOOQ Queries"| DB_Core
+    AnalyticsService -->|"Batch Inserts & jOOQ Aggregations"| DB_Analytics
 ```
 
 ### Key Performance Axioms
@@ -220,19 +224,18 @@ CREATE INDEX IF NOT EXISTS idx_click_analytics_utm_source ON click_analytics(sho
 
 ---
 
-## 3. Redis L1 Caching & Cache Synchronization (Strategy 1: Dual-Key Architecture)
+## 3. Redis L1 Caching & Cache Synchronization (Consolidated Hash Architecture)
 
-The `redirect` service employs **Strategy 1: Dedicated Dual-Key Architecture**. This separates the **Base Destination URL** from the **Active A/B Testing Configuration**, enabling instant test pausing and zero-downtime fallbacks.
+The `redirect` service employs a **Consolidated Single Redis Hash Architecture (`url:{shortCode}`)**. This bundles all routing metadata (base target URL, database IDs, device rules, and A/B configurations) into a single Hash key, eliminating multi-key fragmentation and multiple round trips.
 
 ### Redis Key Schema
 
-| Key Pattern | Redis Type | Value Content | Purpose | TTL |
+| Key Pattern | Redis Type | Fields / Content | Purpose | TTL |
 | :--- | :--- | :--- | :--- | :--- |
-| `url:redirect:{shortCode}` | `String` | `https://mysite.com/pricing` | **Base / Fallback Destination URL**. Guaranteed to exist for every valid link. | Adaptive (2m - 6h) |
-| `url:ab:{shortCode}` | `String` (JSON) | Array of variants, weights, status | **Active A/B Test Rules**. Only exists when an A/B test is active. | Adaptive (2m - 6h) |
+| `url:{shortCode}` | `Hash` | `targetUrl`, `urlId`, `campaignId`, `abTestId`, `smartRules`, `abConfig` | **Consolidated Routing Payload**. Holds all link, campaign, and A/B rules in one Hash. | Adaptive (2m - 6h) |
 | `url:hits:{shortCode}` | `Integer` | Rolling hit counter | Used to compute adaptive popularity TTL | 24 Hours |
 
-### JSON Format for `url:ab:{shortCode}`
+### JSON Content of Hash Field `abConfig`
 ```json
 {
   "status": "ACTIVE",
@@ -245,58 +248,63 @@ The `redirect` service employs **Strategy 1: Dedicated Dual-Key Architecture**. 
 }
 ```
 
-### Why Strategy 1 is Superior: The MGET Single Round-Trip Pattern
-Instead of issuing two sequential Redis calls, the redirect service issues a single **`MGET` (Multi-Get)** command:
-```redis
-MGET url:ab:promo url:redirect:promo
+### Hash Lookup via `opsForHash.entries`
+The redirect service executes:
+```java
+Mono<Long> hitCountMono = redisTemplate.opsForValue().increment("url:hits:" + shortCode).defaultIfEmpty(1L);
+Mono<Map<String, String>> hashMono = redisTemplate.opsForHash().entries("url:" + shortCode)
+        .collectMap(e -> (String) e.getKey(), e -> (String) e.getValue());
+
+return Mono.zip(hitCountMono, hashMono).flatMap(...);
 ```
-In a single **0.3ms** network round-trip, Redis returns both keys:
-1. `results[0]` &rarr; The A/B test configuration (or `null` if it's a normal URL).
-2. `results[1]` &rarr; The Base / Fallback destination URL.
+In a single **0.3ms** concurrent operation, Redis returns the complete structured payload:
+1. `hashMono` &rarr; Populates `ShortCodePayloadDto` (`targetUrl`, `smartRules`, `abConfig`, `campaignId`).
+2. `hitCountMono` &rarr; Drives the dynamic popularity TTL extension.
 
 #### Key Architectural Benefits:
-* **Instant Pause Without Mutation**: To pause an A/B test, `core` simply deletes `url:ab:promo`. Traffic **immediately and seamlessly falls back** to `url:redirect:promo` with zero downtime.
-* **Winner Finalization**: When an A/B test concludes with a winner, `core` updates `url:redirect:promo` to the winner's destination and deletes `url:ab:promo`.
-* **Zero Database Hits**: The redirect service never touches PostgreSQL.
-
-### Cache Synchronization & Invalidation
-When an A/B test or link is updated in `core`:
-1. **Starting a Test**: `UrlCoreService` writes the base URL to `url:redirect:{shortCode}` and the variants JSON to `url:ab:{shortCode}`.
-2. **Pausing a Test**: `core` deletes `url:ab:{shortCode}`. The base URL remains untouched.
-3. **Deleting a Link**: `core` deletes both keys atomically:
-   ```java
-   redisTemplate.delete(List.of("url:redirect:" + shortCode, "url:ab:" + shortCode));
-   ```
-4. **gRPC Fallback on Miss**: If both keys return `null`, `redirect` queries `UrlLookupService.GetUrlDestination` via gRPC, which queries PostgreSQL, builds both keys, and warms Redis.
+* **Instant Pause Without Mutation**: To pause an A/B test or conclude a winner in Core, `CoreService` simply deletes `url:{shortCode}`. The next visitor lazily reloads the updated rule over gRPC with zero downtime.
+* **Zero Database Hits on Hot Path**: The redirect service never touches PostgreSQL.
+* **Unified Eviction**: Core needs only delete a single key:
+  ```java
+  redisTemplate.delete("url:" + shortCode);
+  ```
 
 ---
 
 ## 4. Redirect Engine: High-Throughput Smart Routing
 
-### Request Execution Flow (Strategy 1 with MGET)
+### Request Execution Flow
 
 ```mermaid
 flowchart TD
-    Start["Visitor clicks: GET /slug"] --> MGET["1. Redis MGET: url:ab:slug and url:redirect:slug"]
-    MGET --> CheckAB{"Does url:ab exist<br/>and status == 'ACTIVE'?"}
+    Start["Visitor clicks: GET http://r.localhost/{slug}"] --> GetHash["1. Redis Concurrent Lookup:<br/>entries('url:{slug}') & increment('url:hits:{slug}')"]
+    GetHash --> CheckEmpty{"Is Hash empty?<br/>(Cache Miss)"}
 
-    %% Active A/B Test Path
-    CheckAB -- "YES" --> CheckCookie{"Does visitor have cookie:<br/>ab_slug?"}
+    %% Cache Miss
+    CheckEmpty -- "YES (Miss)" --> gRPCFallback["Call Core Service via gRPC (:9090)<br/>UrlService.GetDestinationUrl()<br/>Pre-warm Redis Hash & Hits"]
+    gRPCFallback --> CheckRules
+
+    %% Cache Hit
+    CheckEmpty -- "NO (Hit)" --> CheckRules{"Evaluate Routing Priority"}
+
+    %% Priority 1: Device Override
+    CheckRules -->|"1. Device Match (iOS/Android)"| DeviceMatch["Return Deep Link Destination URL"]
+
+    %% Priority 2: A/B Testing
+    CheckRules -->|"2. Active A/B Test"| CheckCookie{"Visitor has cookie:<br/>ab_{slug}?"}
     CheckCookie -- "Valid Cookie Found" --> StickyChoice["Select Sticky Variant directly<br/>(e.g. Variant B)"]
     CheckCookie -- "No Cookie" --> RollWeights["Roll Weighted Random (1 to 100)<br/>Select Variant (e.g. Variant A)"]
-    RollWeights --> SetCookieHeader["Attach Response Header:<br/>Set-Cookie: ab_slug=A"]
-    SetCookieHeader --> Send302_AB["HTTP 302 to Chosen Variant URL"]
-    StickyChoice --> Send302_AB
-    Send302_AB -.-> Kafka_AB["Kafka: ClickEvent(shortCode, variant='A')"]
+    RollWeights --> SetCookieHeader["Attach Header: Set-Cookie: ab_{slug}=A"]
+    SetCookieHeader --> MergeUTM
+    StickyChoice --> MergeUTM
 
-    %% Normal / Fallback Path
-    CheckAB -- "NO (null or PAUSED)" --> CheckBase{"Does url:redirect exist?"}
-    CheckBase -- "YES" --> NormalDestination["NORMAL / FALLBACK ROUTE<br/>Destination = url:redirect<br/>Variant = null"]
-    NormalDestination --> Send302_Normal["HTTP 302 to Base Destination URL"]
-    Send302_Normal -.-> Kafka_Normal["Kafka: ClickEvent(shortCode, variant=null)"]
+    %% Priority 3: Base Fallback
+    CheckRules -->|"3. Standard Link / No A/B"| BaseDest["Base Destination URL"]
+    BaseDest --> MergeUTM
+    DeviceMatch --> MergeUTM
 
-    %% Cache Miss Fallback
-    CheckBase -- "NO (Both Null)" --> gRPCFallback["Cache Miss: Call Core via gRPC (:9090)<br/>Warm Redis & Re-evaluate"]
+    MergeUTM["Merge Inbound Query / UTM Parameters"] --> Send302["HTTP 302 Found Redirect"]
+    Send302 -.->|"Async Fire-and-Forget"| KafkaEvent["Kafka: ClickEvent(shortCode, variant, utms)"]
 ```
 
 ### Complete Reactive Implementation in `RedirectService.java`

@@ -10,27 +10,29 @@ The entire platform runs as an isolated microservices mesh inside a single user-
 
 ```mermaid
 graph TD
-    User["🌐 User / Browser"] -->|Port 80| NGINX["nginx-ingress (Port 80)"]
+    ClientBrowser["🌐 Client / Browser"] -->|Port 80| NGINX["nginx-ingress (Port 80)"]
+
+    subgraph External Ingress Routing
+        NGINX -->|"Host: localhost (/)"| ReactSPA["React Vite SPA (Static HTML/JS)"]
+        NGINX -->|"Host: localhost (/api/v1/*)"| GATEWAY["apigateway-service:8080"]
+        NGINX -->|"Host: r.localhost (/*)<br/>or localhost (/r/*)"| REDIRECT["redirect-service:8082"]
+    end
 
     subgraph Internal Docker Network [url-shortener-net]
-        NGINX -->|/| ReactSPA["React Vite SPA (Static HTML/JS)"]
-        NGINX -->|/r/*, /s/*| REDIRECT["redirect-service:8082"]
-        NGINX -->|/api/*| GATEWAY["apigateway-service:8080"]
-
         GATEWAY -->|HTTP REST| CORE["core-service:8081"]
         GATEWAY -->|HTTP REST| ANALYTICS["analytics-service:8083"]
-        GATEWAY -->|R2DBC / JDBC| POSTGRES[("postgres-db:5432")]
+        GATEWAY -->|R2DBC / JDBC| POSTGRES[("postgres-db:5432<br/>url_shortener_auth")]
         GATEWAY -->|Reactive Redis| REDIS[("redis-cache:6379")]
 
-        REDIRECT -->|Cache Lookup| REDIS
-        REDIRECT -->|gRPC Channel :9090| CORE
-        REDIRECT -->|Async Event Stream| KAFKA{{"kafka-broker:29092"}}
+        REDIRECT -->|"Consolidated Hash url:{code}"| REDIS
+        REDIRECT -->|"gRPC Channel :9090 Fallback"| CORE
+        REDIRECT -->|"Async Event Stream"| KAFKA{{"kafka-broker:29092"}}
 
-        ANALYTICS -->|Consumer Batch| KAFKA
-        ANALYTICS -->|TimescaleDB JDBC| POSTGRES
+        ANALYTICS -->|"Consumer Batch (5k/5s)"| KAFKA
+        ANALYTICS -->|"reWriteBatchedInserts"| POSTGRES
 
-        CORE -->|JPA / JDBC| POSTGRES
-        CORE -->|Cache Sync| REDIS
+        CORE -->|"JPA / Flyway / jOOQ"| POSTGRES
+        CORE -->|"Hash Eviction (DEL url:{code})"| REDIS
     end
 ```
 
@@ -74,52 +76,80 @@ Because networking targets and callback URIs are baked into their respective pro
 
 ---
 
-## 4. Multi-Stage Dockerfile Strategy (gRPC & Protoc Compatibility)
+## 4. Multi-Stage Dockerfile Strategy & JVM Memory Capping
 
-All microservices utilizing gRPC (`core`, `redirect`, `analytics`, `apigateway`) use a dual-stage Docker build:
+All microservices utilize a dual-stage Docker build with Debian glibc for `protobuf-maven-plugin` compatibility and Alpine for lightweight runtime:
 
 ```dockerfile
 # Stage 1: Build stage with Debian glibc for protobuf-maven-plugin
 FROM maven:3.9-eclipse-temurin-17 AS builder
-WORKDIR /app
-COPY pom.xml ./
-RUN mvn dependency:go-offline -B
+WORKDIR /build
+
+COPY pom.xml .
+RUN mvn dependency:go-offline -B || true
+
 COPY src ./src
-RUN mvn clean package -DskipTests
+RUN mvn package -DskipTests -Djooq.codegen.skip=true -B
 
 # Stage 2: Minimal runtime image
 FROM eclipse-temurin:17-jre-alpine
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 WORKDIR /app
-COPY --from=builder /app/target/*.jar app.jar
+
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+COPY --from=builder /build/target/*.jar app.jar
+
 USER appuser
 EXPOSE 8080
-ENTRYPOINT ["java", "-XX:+UseG1GC", "-jar", "app.jar"]
+
+# Cap JVM heap to prevent out-of-memory thrashing on cloud VMs (e.g. GitHub Codespaces)
+ENV JAVA_OPTS="-XX:+UseG1GC -Xms256m -Xmx512m"
+
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar app.jar"]
 ```
 
 > [!NOTE]
-> **Why Debian for builder?**
-> The precompiled `protoc` compiler binary downloaded by Maven requires `glibc`. Building on Alpine (`musl libc`) causes `protoc did not exit cleanly (exit code 1)`. Debian provides the necessary `glibc` build environment, while the final runtime stage remains lightweight Alpine.
+> **Why Cap Heap with `JAVA_OPTS`?**
+> In containers without explicit Docker memory limits, the JVM defaults to sizing heap relative to the host machine's total RAM. On a 2-core / 8 GB cloud VM (like GitHub Codespaces), 4 unconstrained Spring Boot JVMs + Kafka spike memory to 100% and cause CPU thrashing. Explicitly setting `-Xms256m -Xmx512m` caps total heap across all 4 services to ~2 GB, guaranteeing deterministic stability.
 
 ---
 
 ## 5. Startup Dependency Tree & Healthchecks
 
-Docker Compose orchestrates container startup based on healthchecks:
+Docker Compose orchestrates deterministic container startup using comprehensive health probes:
 
 ```text
-postgres (healthy) ──┐
-                    ├──► core (service_started) ───────┐
-redis (healthy) ────┤                                  ├──► redirect (service_started) ──┐
-                    ├──► apigateway (service_started) ─┤                                 ├──► nginx (Port 80)
-kafka (healthy) ────┴──► analytics (service_started) ──┘                                 │
-                                                                                         │
-React SPA (compiled into nginx image) ───────────────────────────────────────────────────┘
+postgres (healthy: checks 3 DBs) ──┐
+                                  ├──► core (service_started) ───────┐
+redis (healthy: ping) ────────────┤                                  ├──► redirect (service_started) ──┐
+                                  ├──► apigateway (service_started) ─┤                                 ├──► nginx (Port 80)
+kafka (healthy: start_period 25s)─┴──► analytics (service_started) ──┘                                 │
+                                                                                                       │
+React SPA (compiled into nginx image) ─────────────────────────────────────────────────────────────────┘
 ```
 
-1. **`postgres`**, **`redis`**, and **`kafka`** start first and report healthy via native probes (`pg_isready`, `redis-cli ping`, `kafka-broker-api-versions`).
-2. **`core`**, **`analytics`**, **`redirect`**, and **`apigateway`** launch once their dependencies are healthy.
-3. **`nginx`** launches once `apigateway` and `redirect` are started, immediately serving traffic.
+### Cold-Boot Resilience in Cloud Environments
+1. **PostgreSQL Multi-Database Healthcheck**:
+   On initial volume boot, PostgreSQL creates a temporary internal server to execute [scripts/init.sql](../scripts/init.sql). A basic `pg_isready -U postgres` check would declare healthy prematurely while the temporary server is shutting down. The Docker Compose healthcheck verifies that all three target databases actually exist and accept connections:
+   ```yaml
+   healthcheck:
+       test: ["CMD-SHELL", "pg_isready -U postgres -d url_shortener_core && pg_isready -U postgres -d url_shortener_analytics && pg_isready -U postgres -d url_shortener_auth"]
+       interval: 5s
+       timeout: 5s
+       retries: 10
+       start_period: 25s
+   ```
+2. **Flyway Connection Retries**:
+   All three database-backed services (`core`, `analytics`, `apigateway`) configure:
+   ```yaml
+   spring:
+     flyway:
+       connect-retries: 20
+       connect-retries-interval: 2s
+   ```
+   This provides a 40-second connection retry buffer during heavy I/O cold boots.
+3. **Kafka KRaft Initialization**:
+   Kafka's healthcheck includes a `start_period: 25s` to allow cluster quorum voting to settle before health polling begins.
 
 ---
 

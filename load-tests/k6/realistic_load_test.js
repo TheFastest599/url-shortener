@@ -167,20 +167,100 @@ const REFERRERS = [
   'https://outlook.live.com/'
 ];
 
-// Marketing campaign tags
-const UTM_SOURCES = ['google', 'twitter', 'linkedin', 'newsletter', 'reddit', 'youtube', 'facebook', 'slack', 'direct'];
-const UTM_MEDIUMS = ['cpc', 'social', 'referral', 'email', 'organic', 'display'];
-const UTM_CAMPAIGNS = ['summer-launch', 'developer-advocacy', 'q3-growth', 'promo-2026', 'black-friday', 'tech-conf'];
+// ============================================================================
+// 4. SEEDED TARGET SHORT LINKS & MARKETING CAMPAIGNS CATALOG
+// ============================================================================
+// Full catalog of all 8 seeded links created via `load-tests/cli.js seed`:
+// - Black Friday Flash Sale: launch-deal (A/B Test), promo-2026
+// - Global Launch 2026: youtube (A/B Test), careless-whisper
+// - Developer Community Outreach: github-repo, spring-docs, hacker-news, tech-blog
+const TARGET_LINKS = [
+  // Campaign 1: Black Friday Flash Sale
+  {
+    code: 'launch-deal',
+    campaign: 'black-friday-flash-sale',
+    isAbTest: true,
+    weight: 22, // 22% traffic (tests 3 A/B variants: A=25%, B=25%, C=50%)
+  },
+  {
+    code: 'promo-2026',
+    campaign: 'black-friday-flash-sale',
+    isAbTest: false,
+    weight: 12,
+  },
 
-const SHORT_CODES = ['launch-deal', 'youtube', 'promo-2026', 'spring-docs', 'github-repo'];
+  // Campaign 2: Global Launch 2026
+  {
+    code: 'youtube',
+    campaign: 'global-launch-2026',
+    isAbTest: true,
+    weight: 20, // 20% traffic (tests 2 A/B variants: A=50%, B=50%)
+  },
+  {
+    code: 'careless-whisper',
+    campaign: 'global-launch-2026',
+    isAbTest: false,
+    weight: 10,
+  },
+
+  // Campaign 3: Developer Community Outreach
+  {
+    code: 'github-repo',
+    campaign: 'developer-community-outreach',
+    isAbTest: false,
+    weight: 11,
+  },
+  {
+    code: 'spring-docs',
+    campaign: 'developer-community-outreach',
+    isAbTest: false,
+    weight: 9,
+  },
+  {
+    code: 'hacker-news',
+    campaign: 'developer-community-outreach',
+    isAbTest: false,
+    weight: 8,
+  },
+  {
+    code: 'tech-blog',
+    campaign: 'developer-community-outreach',
+    isAbTest: false,
+    weight: 8,
+  },
+];
+
+const TOTAL_LINK_WEIGHT = TARGET_LINKS.reduce((acc, l) => acc + l.weight, 0);
+
+function pickTargetLink() {
+  let r = Math.random() * TOTAL_LINK_WEIGHT;
+  for (const item of TARGET_LINKS) {
+    if (r < item.weight) {
+      return item;
+    }
+    r -= item.weight;
+  }
+  return TARGET_LINKS[0];
+}
+
+// Marketing UTM sources and mediums
+const UTM_SOURCES = [
+  'google', 'twitter', 'linkedin', 'newsletter', 'reddit',
+  'youtube', 'facebook', 'hacker-news', 'github', 'product-hunt', 'threads'
+];
+const UTM_MEDIUMS = ['cpc', 'social', 'referral', 'email', 'organic', 'display', 'affiliate'];
+const SUPPLEMENTAL_CAMPAIGNS = [
+  'summer-launch', 'developer-advocacy', 'q3-growth',
+  'promo-2026', 'black-friday', 'tech-conf', 'open-source-push'
+];
 
 // ============================================================================
-// 4. DYNAMIC STAGE PROFILE (Configured via __ENV)
+// 5. DYNAMIC STAGE PROFILE (Configured via __ENV)
 // ============================================================================
 const TARGET_RPS = parseInt(__ENV.TARGET_RPS || '100');
 const DURATION = __ENV.DURATION || '60s';
-const PRE_VUS = Math.max(10, Math.min(TARGET_RPS, 500));
-const MAX_VUS = Math.max(30, Math.min(TARGET_RPS * 1.5, 1000));
+const PRE_VUS = __ENV.PRE_VUS ? parseInt(__ENV.PRE_VUS, 10) : Math.max(20, Math.min(TARGET_RPS, 2000));
+const MAX_VUS = __ENV.MAX_VUS ? parseInt(__ENV.MAX_VUS, 10) : Math.max(100, Math.floor(TARGET_RPS * 3));
 
 export const options = {
   discardResponseBodies: true,
@@ -204,8 +284,9 @@ export const options = {
 };
 
 export default function () {
-  // Zipfian distribution: 70% to primary viral link ('launch-deal')
-  const code = (Math.random() < 0.70) ? SHORT_CODES[0] : SHORT_CODES[Math.floor(Math.random() * SHORT_CODES.length)];
+  // Balanced weighted selection across all 8 seeded links & campaigns
+  const targetLink = pickTargetLink();
+  const code = targetLink.code;
   const ip = getRealisticClientIp();
   const ua = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
   const ref = REFERRERS[Math.floor(Math.random() * REFERRERS.length)];
@@ -257,11 +338,14 @@ export default function () {
   // Construct dynamic URL with realistic UTM parameters
   let url = `${baseUrl}/${code}`;
 
-  // 60% of clicks have marketing UTM tags
-  if (Math.random() < 0.60) {
+  // 65% of clicks carry marketing UTM tags
+  if (Math.random() < 0.65) {
     const src = UTM_SOURCES[Math.floor(Math.random() * UTM_SOURCES.length)];
     const med = UTM_MEDIUMS[Math.floor(Math.random() * UTM_MEDIUMS.length)];
-    const cmp = UTM_CAMPAIGNS[Math.floor(Math.random() * UTM_CAMPAIGNS.length)];
+    // 75% use the link's specific campaign slug, 25% use supplemental campaign angles
+    const cmp = (Math.random() < 0.75)
+      ? targetLink.campaign
+      : SUPPLEMENTAL_CAMPAIGNS[Math.floor(Math.random() * SUPPLEMENTAL_CAMPAIGNS.length)];
     url += `?utm_source=${src}&utm_medium=${med}&utm_campaign=${cmp}`;
   }
 

@@ -2,7 +2,7 @@
 
 Welcome! This document is a complete, step-by-step hands-on guide for building the high-throughput **Redirect Microservice** (`url-redirect-service`).
 
-The Redirect service handles sub-2ms HTTP `302 Found` redirects for short URLs (`GET /r/{shortCode}`) on port **8082**. It uses **Reactive WebFlux**, **Strategy 1 Dual-Key Redis Caching** (`url:redirect:{code}` and `url:ab:{code}`), **In-Memory A/B/n Traffic Splitting**, **Lazy Geo/Device Routing**, a **gRPC Client** fallback to Core Service (port 9090), and an **Apache Kafka Producer** for asynchronous click tracking.
+The Redirect service handles sub-2ms HTTP `302 Found` redirects for short URLs (`GET /r/{shortCode}` or clean vanity URLs via `http://r.localhost/{shortCode}`) on port **8082**. It uses **Reactive WebFlux (Netty)**, **Consolidated Redis Hash Caching** (`url:{shortCode}` and `url:hits:{shortCode}`), **In-Memory A/B/n Traffic Splitting**, **Device OS Smart Routing**, a **Single-Query gRPC Client** fallback to Core Service (port 9090), and an **Apache Kafka Producer** for asynchronous click tracking.
 
 ---
 
@@ -18,28 +18,41 @@ The Redirect service handles sub-2ms HTTP `302 Found` redirects for short URLs (
 
 ## 1. Key Concepts & Architecture
 
-```text
-Visitor Request: GET /r/promo (Port 8082)
-                    │
-                    ▼
-     [ Redis MGET: url:ab:promo & url:redirect:promo (< 0.5ms) ]
-     ├──► ACTIVE A/B TEST ──► Sticky Cookie Match OR Weighted Random Roll
-     │                          ├──► Set-Cookie: ab_promo=B
-     │                          └──► Return 302 Found to Variant B URL!
-     │
-     ├──► STANDARD / FALLBACK ──► Return 302 Found to Base Destination URL!
-     │
-     └──► CACHE MISS (Both null) ──► Call Core gRPC (:9090) ──► Warm Redis Keys
-                    │
-                    ▼ (Async Non-Blocking Fire-and-Forget)
-     [ Publish Enriched ClickEvent to Kafka ("url-clicks") ]
-       (shortCode, ip, userAgent, variant="B", utmSource="twitter", ...)
+```mermaid
+flowchart TD
+    Visitor(["🌐 Visitor Request: GET /r/{code}"]) --> NGINX["Nginx Edge Ingress (Port 80)"]
+    NGINX -->|"Keepalive Proxy (:8082)"| REDIRECT["Spring WebFlux Netty (RedirectService)"]
+
+    subgraph RedisCaching ["Consolidated Redis Storage"]
+        REDIRECT -->|"Parallel Mono.zip"| REDIS_HASH[("Consolidated Hash: url:{code}<br/>targetUrl, urlId, campaignId,<br/>abTestId, smartRules, abConfig")]
+        REDIRECT -->|"Parallel Mono.zip"| REDIS_HITS[("Hits Counter: url:hits:{code}<br/>Calculates Adaptive TTL")]
+    end
+
+    REDIS_HASH -->|"Cache Hit (< 0.4ms)"| ROUTER{"Routing Decision"}
+    ROUTER -->|"1. Device Override"| DEV_URL["iOS / Android Deep Link URL"]
+    ROUTER -->|"2. Active A/B Split"| AB_LOGIC["Sticky Cookie ab_{code}<br/>or Weighted Variant Roll"]
+    ROUTER -->|"3. Default Fallback"| BASE_URL["Base Destination URL"]
+
+    REDIS_HASH -->|"Cache Miss"| GRPC_CORE["Core Service gRPC (:9090)<br/>UrlService.GetDestinationUrl()"]
+    GRPC_CORE -->|"Pre-warm Hash & Hits"| REDIS_HASH
+    GRPC_CORE --> ROUTER
+
+    DEV_URL --> MERGE_QUERY["Merge Inbound UTM Query Params"]
+    AB_LOGIC --> MERGE_QUERY
+    BASE_URL --> MERGE_QUERY
+
+    MERGE_QUERY --> HTTP_302(["HTTP 302 Found<br/>Location + Set-Cookie: ab_{code}"])
+    MERGE_QUERY -.->|"Async Fire-and-Forget"| KAFKA_EVENT["Publish ClickEvent to Kafka<br/>Topic: 'url-clicks'"]
 ```
 
-* **Reactive WebFlux (Netty):** Handles 50,000+ concurrent redirect requests with minimal thread/memory overhead.
-* **Strategy 1 Dual-Key Redis (`MGET`):** Resolves both base destination and experimental A/B split rules in a single 0.3ms round-trip.
-* **Zero Downtime Fallback:** If an A/B test is paused or deleted, traffic automatically falls back to `url:redirect:{shortCode}`.
-* **Lazy Geo & Device Detection:** Inspects `User-Agent` in 0.005ms; resolves IP-to-Country lazily only if country rules are configured.
+* **Reactive WebFlux (Netty):** Handles 50,000+ concurrent redirect requests with minimal thread and memory overhead.
+* **Consolidated Single Redis Hash (`url:{code}`):** Eliminates multi-key fragmentation and network round-trips by bundling the base target URL, IDs, device rules, and A/B configurations into a single Hash entry.
+* **Adaptive TTL Retention:** Dynamically scales Redis retention based on link popularity:
+  - Cold ($\le 10$ hits): **2 minutes** (minimizes idle Redis RAM usage).
+  - Warm ($\le 100$ hits): **30 minutes**.
+  - Hot ($\le 1,000$ hits): **2 hours**.
+  - Viral ($> 1,000$ hits): **6 hours**.
+* **Zero Downtime Fallback:** If an A/B test is paused or removed in Core, the next cache reload or eviction falls back to the base destination URL with zero downtime.
 * **Async Kafka Event Emission:** Fire-and-forget click log publishing so analytics ingestion **never delays the HTTP 302 redirect**.
 
 ---
@@ -210,8 +223,14 @@ File: `redirect/src/main/java/com/urlshortener/redirect/service/RedirectService.
 ```java
 package com.urlshortener.redirect.service;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.urlshortener.redirect.dto.ClickEvent;
+import com.urlshortener.redirect.dto.ShortCodePayloadDto;
+import com.urlshortener.redirect.dto.ShortCodePayloadDto.AbConfig;
+import com.urlshortener.redirect.dto.ShortCodePayloadDto.SmartRules;
+import com.urlshortener.redirect.dto.ShortCodePayloadDto.Variant;
+import com.urlshortener.redirect.dto.ShortCodePayloadDto.VariantResolution;
 import com.urlshortener.redirect.grpc.CoreGrpcClient;
 import com.urlshortener.redirect.kafka.ClickEventProducer;
 import lombok.RequiredArgsConstructor;
@@ -223,12 +242,10 @@ import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.util.UriComponentsBuilder;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
@@ -241,109 +258,78 @@ public class RedirectService {
     private final ReactiveStringRedisTemplate redisTemplate;
     private final CoreGrpcClient coreGrpcClient;
     private final ClickEventProducer clickEventProducer;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     public Mono<String> resolveAndTrackUrl(String shortCode, ServerHttpRequest request, ServerHttpResponse response) {
-        String abKey = "url:ab:" + shortCode;
-        String redirectKey = "url:redirect:" + shortCode;
-        String rulesKey = "url:rules:" + shortCode;
         String hitsKey = "url:hits:" + shortCode;
+        String routeKey = "url:" + shortCode;
 
-        // 1. Concurrently INCR popularity counter and MGET Strategy 1 keys in parallel
-        Mono<Long> hitCountMono = redisTemplate.opsForValue().increment(hitsKey);
-        Mono<List<String>> cacheLookupMono = redisTemplate.opsForValue().multiGet(List.of(abKey, redirectKey, rulesKey));
+        // Concurrently increment dedicated hits counter and fetch consolidated metadata Hash
+        Mono<Long> hitCountMono = redisTemplate.opsForValue().increment(hitsKey).defaultIfEmpty(1L);
+        Mono<Map<String, String>> hashMono = redisTemplate.opsForHash().entries(routeKey)
+                .collectMap(e -> (String) e.getKey(), e -> (String) e.getValue());
 
-        return Mono.zip(hitCountMono, cacheLookupMono)
-            .flatMap(tuple -> {
-                Long hits = tuple.getT1();
-                Duration adaptiveTtl = calculateAdaptiveTtl(hits != null ? hits : 1L);
+        return Mono.zip(hitCountMono, hashMono)
+                .flatMap(tuple -> {
+                    long hits = tuple.getT1();
+                    Duration adaptiveTtl = calculateAdaptiveTtl(hits);
 
-                List<String> results = tuple.getT2();
-                String abJson = results.size() > 0 ? results.get(0) : null;
-                String fallbackUrl = results.size() > 1 ? results.get(1) : null;
-                String rulesJson = results.size() > 2 ? results.get(2) : null;
+                    ShortCodePayloadDto payload = ShortCodePayloadDto.fromHash(shortCode, tuple.getT2(), hits, objectMapper);
 
-                String destinationUrl = null;
-                String selectedVariant = null;
-
-                // Step A: Check Device OS Override (Highest Priority)
-                if (rulesJson != null) {
-                    destinationUrl = checkDeviceOverride(rulesJson, request);
-                }
-
-                // Step B: Check A/B Test Variants (if no device override)
-                if (destinationUrl == null && abJson != null) {
-                    VariantResolution resolution = resolveAbVariant(shortCode, abJson, request, response);
-                    if (resolution != null) {
-                        destinationUrl = resolution.url();
-                        selectedVariant = resolution.variantKey();
+                    // Cache Miss -> Fallback to Core Service single-query gRPC
+                    if (payload.isEmpty()) {
+                        return resolveFromGrpc(shortCode, routeKey, hitsKey, adaptiveTtl, hits, request, response);
                     }
-                }
 
-                // Step C: Fallback to Base Destination
-                if (destinationUrl == null) {
-                    destinationUrl = fallbackUrl;
-                }
+                    // Cache Hit: Resolve routing from structured DTO
+                    String destinationUrl = null;
+                    String selectedVariant = null;
 
-                // Step D: Cache Miss -> Fallback to Core Service over gRPC
-                if (destinationUrl == null) {
-                    return resolveFromGrpc(shortCode, adaptiveTtl, hitsKey, request, response);
-                }
+                    // Priority 1: Device OS Override (iOS/Android deep linking)
+                    if (payload.hasSmartRules()) {
+                        destinationUrl = checkDeviceOverride(payload.getSmartRules(), request);
+                    }
 
-                // Cache Hit: Non-blocking background TTL refresh across all active Strategy 1 keys
-                extendAdaptiveTtl(shortCode, abJson != null, rulesJson != null, adaptiveTtl);
+                    // Priority 2: Active A/B Test Variant
+                    if (destinationUrl == null && payload.hasAbConfig()) {
+                        VariantResolution resolution = resolveAbVariant(shortCode, payload.getAbConfig(), request, response);
+                        if (resolution != null) {
+                            destinationUrl = resolution.url();
+                            selectedVariant = resolution.variantKey();
+                        }
+                    }
 
-                // Merge visitor's inbound query parameters
-                String finalUrl = mergeQueryParams(destinationUrl, request.getQueryParams());
+                    // Priority 3: Fallback to Base Destination URL
+                    if (destinationUrl == null) {
+                        destinationUrl = payload.getTargetUrl();
+                    }
 
-                // Async fire-and-forget Kafka telemetry
-                emitTelemetry(shortCode, selectedVariant, request);
+                    // Cache Hit: Extend adaptive TTL on single consolidated key
+                    redisTemplate.expire(routeKey, adaptiveTtl).subscribe();
 
-                return Mono.just(finalUrl);
-            });
+                    // Merge visitor's inbound query parameters
+                    String finalUrl = mergeQueryParams(destinationUrl, request.getQueryParams());
+
+                    // Async fire-and-forget Kafka telemetry
+                    emitTelemetry(shortCode, selectedVariant, payload, request);
+
+                    return Mono.just(finalUrl);
+                });
     }
 
-    /**
-     * Dynamically scales cache retention based on rolling link popularity:
-     * - Cold (<= 10 hits): 2 mins (minimizes Redis memory footprint)
-     * - Warm (<= 100 hits): 30 mins
-     * - Hot (<= 1000 hits): 2 hours
-     * - Viral (> 1000 hits): 6 hours
-     */
     private Duration calculateAdaptiveTtl(long hits) {
-        if (hits <= 10) {
-            return Duration.ofMinutes(2);
-        } else if (hits <= 100) {
-            return Duration.ofMinutes(30);
-        } else if (hits <= 1000) {
-            return Duration.ofHours(2);
-        } else {
-            return Duration.ofHours(6);
-        }
+        if (hits <= 10) return Duration.ofMinutes(2);
+        if (hits <= 100) return Duration.ofMinutes(30);
+        if (hits <= 1000) return Duration.ofHours(2);
+        return Duration.ofHours(6);
     }
 
-    /**
-     * Non-blocking background TTL refresh. Keeps all Strategy 1 keys synchronized.
-     */
-    private void extendAdaptiveTtl(String shortCode, boolean hasAb, boolean hasRules, Duration adaptiveTtl) {
-        List<String> keys = new ArrayList<>();
-        keys.add("url:redirect:" + shortCode);
-        if (hasAb) keys.add("url:ab:" + shortCode);
-        if (hasRules) keys.add("url:rules:" + shortCode);
-
-        Flux.fromIterable(keys)
-            .flatMap(key -> redisTemplate.expire(key, adaptiveTtl))
-            .subscribe(); // Executes asynchronously without delaying HTTP redirect response
-    }
-
-    private VariantResolution resolveAbVariant(String shortCode, String abJson, ServerHttpRequest request, ServerHttpResponse response) {
+    private VariantResolution resolveAbVariant(String shortCode, AbConfig config, ServerHttpRequest request, ServerHttpResponse response) {
         try {
-            AbConfig config = objectMapper.readValue(abJson, AbConfig.class);
-            if (!"ACTIVE".equalsIgnoreCase(config.status())) {
-                return null;
-            }
+            if (!"ACTIVE".equalsIgnoreCase(config.status())) return null;
 
-            // 1. Check for sticky session cookie
+            // 1. Sticky session cookie check
             HttpCookie cookie = request.getCookies().getFirst("ab_" + shortCode);
             if (cookie != null) {
                 for (Variant v : config.variants()) {
@@ -356,12 +342,11 @@ public class RedirectService {
             // 2. Cumulative Weighted Random Selection
             Variant chosen = selectWeightedVariant(config.variants());
             if (chosen != null) {
-                // Attach sticky cookie for 30 days
                 response.getHeaders().add("Set-Cookie", "ab_" + shortCode + "=" + chosen.key() + "; Path=/; Max-Age=2592000; SameSite=Lax");
                 return new VariantResolution(chosen.url(), chosen.key());
             }
         } catch (Exception e) {
-            log.error("Failed to parse A/B config for [{}]: {}", shortCode, e.getMessage());
+            log.error("Failed to resolve A/B variant for [{}]: {}", shortCode, e.getMessage());
         }
         return null;
     }
@@ -379,51 +364,70 @@ public class RedirectService {
         return variants.get(0);
     }
 
-    private String checkDeviceOverride(String rulesJson, ServerHttpRequest request) {
+    private String checkDeviceOverride(SmartRules rules, ServerHttpRequest request) {
         String ua = request.getHeaders().getFirst("User-Agent");
-        if (ua == null) return null;
+        if (ua == null || rules.devices() == null) return null;
         String uaLower = ua.toLowerCase();
 
-        try {
-            SmartRules rules = objectMapper.readValue(rulesJson, SmartRules.class);
-            if (rules.devices() != null) {
-                if ((uaLower.contains("iphone") || uaLower.contains("ipad")) && rules.devices().containsKey("iOS")) {
-                    return rules.devices().get("iOS");
-                }
-                if (uaLower.contains("android") && rules.devices().containsKey("Android")) {
-                    return rules.devices().get("Android");
-                }
-            }
-        } catch (Exception ignored) {}
+        if ((uaLower.contains("iphone") || uaLower.contains("ipad")) && rules.devices().containsKey("iOS")) {
+            return rules.devices().get("iOS");
+        }
+        if (uaLower.contains("android") && rules.devices().containsKey("Android")) {
+            return rules.devices().get("Android");
+        }
         return null;
     }
 
-    private Mono<String> resolveFromGrpc(String shortCode, Duration adaptiveTtl, String hitsKey,
+    private Mono<String> resolveFromGrpc(String shortCode, String routeKey, String hitsKey,
+                                         Duration adaptiveTtl, long hits,
                                          ServerHttpRequest request, ServerHttpResponse response) {
         return coreGrpcClient.getDestinationUrl(shortCode)
-            .flatMap(grpcResponse -> {
-                if (!grpcResponse.getIsFound() || !grpcResponse.getIsActive()) {
-                    return Mono.empty();
-                }
-                String dest = grpcResponse.getDestinationUrl();
-                // Pre-warm Redis with Adaptive TTL
-                redisTemplate.opsForValue().set("url:redirect:" + shortCode, dest, adaptiveTtl).subscribe();
-                if (!grpcResponse.getAbRulesJson().isEmpty()) {
-                    redisTemplate.opsForValue().set("url:ab:" + shortCode, grpcResponse.getAbRulesJson(), adaptiveTtl).subscribe();
-                }
-                if (!grpcResponse.getSmartRulesJson().isEmpty()) {
-                    redisTemplate.opsForValue().set("url:rules:" + shortCode, grpcResponse.getSmartRulesJson(), adaptiveTtl).subscribe();
-                }
-                // Keep hits counter alive for 24h
-                redisTemplate.expire(hitsKey, Duration.ofDays(1)).subscribe();
+                .flatMap(grpcResponse -> {
+                    if (!grpcResponse.getIsFound() || !grpcResponse.getIsActive()) {
+                        return Mono.empty();
+                    }
 
-                emitTelemetry(shortCode, null, request);
-                return Mono.just(mergeQueryParams(dest, request.getQueryParams()));
-            });
+                    ShortCodePayloadDto payload = ShortCodePayloadDto.fromGrpc(shortCode, grpcResponse, hits, objectMapper);
+
+                    // Pre-warm consolidated Redis Hash in one operation
+                    Map<String, String> hash = payload.toHash(objectMapper);
+                    if (!hash.isEmpty()) {
+                        redisTemplate.opsForHash().putAll(routeKey, hash)
+                                .then(redisTemplate.expire(routeKey, adaptiveTtl))
+                                .subscribe();
+                    }
+
+                    // Keep hits counter alive for 24h
+                    redisTemplate.expire(hitsKey, Duration.ofDays(1)).subscribe();
+
+                    String dest = null;
+                    String selectedVariant = null;
+
+                    if (payload.hasSmartRules()) {
+                        dest = checkDeviceOverride(payload.getSmartRules(), request);
+                    }
+                    if (dest == null && payload.hasAbConfig()) {
+                        VariantResolution res = resolveAbVariant(shortCode, payload.getAbConfig(), request, response);
+                        if (res != null) {
+                            dest = res.url();
+                            selectedVariant = res.variantKey();
+                        }
+                    }
+                    if (dest == null) {
+                        dest = payload.getTargetUrl();
+                    }
+
+                    emitTelemetry(shortCode, selectedVariant, payload, request);
+                    return Mono.just(mergeQueryParams(dest, request.getQueryParams()));
+                })
+                .onErrorResume(e -> {
+                    log.error("Failed to resolve URL via gRPC for shortCode [{}]: {}", shortCode, e.getMessage());
+                    return Mono.empty();
+                });
     }
 
     private String mergeQueryParams(String url, MultiValueMap<String, String> queryParams) {
-        if (queryParams == null || queryParams.isEmpty()) return url;
+        if (queryParams == null || queryParams.isEmpty() || url == null) return url != null ? url : "";
         UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(url);
         queryParams.forEach((key, values) -> {
             for (String val : values) builder.replaceQueryParam(key, val);
@@ -431,9 +435,11 @@ public class RedirectService {
         return builder.build().toUriString();
     }
 
-    private void emitTelemetry(String shortCode, String variant, ServerHttpRequest request) {
+    private void emitTelemetry(String shortCode, String variant, ShortCodePayloadDto payload, ServerHttpRequest request) {
         String ip = request.getHeaders().getFirst("X-Forwarded-For");
-        if (ip == null && request.getRemoteAddress() != null) {
+        if (ip != null && ip.contains(",")) ip = ip.split(",")[0].trim();
+        if (ip == null || ip.isBlank()) ip = request.getHeaders().getFirst("X-Real-IP");
+        if ((ip == null || ip.isBlank()) && request.getRemoteAddress() != null) {
             ip = request.getRemoteAddress().getAddress().getHostAddress();
         }
         String ua = request.getHeaders().getFirst("User-Agent");
@@ -441,24 +447,21 @@ public class RedirectService {
         MultiValueMap<String, String> params = request.getQueryParams();
 
         ClickEvent event = new ClickEvent(
-            shortCode,
-            Instant.now(),
-            ip != null ? ip : "127.0.0.1",
-            ua != null ? ua : "",
-            referrer != null ? referrer : "Direct",
-            variant,
-            params.getFirst("utm_source"),
-            params.getFirst("utm_medium"),
-            params.getFirst("utm_campaign")
+                shortCode,
+                Instant.now(),
+                ip != null && !ip.isBlank() ? ip : "127.0.0.1",
+                ua != null ? ua : "",
+                referrer != null ? referrer : "Direct",
+                variant,
+                params.getFirst("utm_source"),
+                params.getFirst("utm_medium"),
+                params.getFirst("utm_campaign"),
+                payload != null ? payload.getUrlId() : null,
+                payload != null ? payload.getCampaignId() : null,
+                payload != null ? payload.getAbTestId() : null
         );
         clickEventProducer.publishClickEvent(event);
     }
-
-    // Helper records for JSON parsing
-    record AbConfig(String status, String winningVariant, List<Variant> variants) {}
-    record Variant(String key, String url, int weight) {}
-    record SmartRules(Map<String, String> devices, Map<String, String> countries) {}
-    record VariantResolution(String url, String variantKey) {}
 }
 ```
 

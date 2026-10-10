@@ -19,23 +19,15 @@ The Analytics service listens asynchronously to click events published on the Ap
 
 ### 1. Key Concepts & Architecture
 
-```text
-Kafka Topic ("url-clicks") ──► [ Kafka Batch Listener: List<ClickEvent> ]
-                                             │  (Wait 5s OR 5,000 events)
-                                             ▼
-                               [ Stream GeoIP & UA Parsing ]
-                                             │
-                                             ▼
-                               [ ClickAnalyticsBatchRepository ]
-                                             │  (JdbcTemplate + reWriteBatchedInserts)
-                                             ▼
-                               [ PostgreSQL: url_shortener_analytics ]
-                                             │  (1 single multi-row INSERT query)
-                                             ▼
-                               [ Acknowledgment: ack.acknowledge() ]
-                                             │  (Committed only AFTER DB write succeeds)
-                                             ▼
-                               [ GET /api/v1/analytics/** Endpoints ]
+```mermaid
+flowchart TD
+    Kafka["Apache Kafka Topic: url-clicks"] -->|"Micro-Batch Listener<br/>(Up to 5,000 events or 5s timeout)"| Consumer["Analytics Kafka Batch Listener"]
+    Consumer -->|"Extract IP, GeoIP Country/City,<br/>User-Agent, Device, OS, Browser"| Parser["Metadata & GeoIP Parser"]
+    Parser -->|"reWriteBatchedInserts=true<br/>Consolidated multi-row INSERT"| BatchRepo["ClickAnalyticsBatchRepository<br/>(JdbcTemplate)"]
+    BatchRepo -->|"Single Atomic Batch Write"| PG[("PostgreSQL Database<br/>url_shortener_analytics")]
+    PG -->|"Write Transaction Committed"| Ack["Offset Acknowledgment<br/>ack.acknowledge()"]
+    PG -.->|"Type-Safe Projections & TimeSeries"| jOOQ["jOOQ Analytics Query Engine"]
+    jOOQ -->|"REST Telemetry Responses"| Controller["GET /api/v1/analytics/**"]
 ```
 
 - **High-Throughput Batch Ingestion:** Consumes click events off Kafka in batches (up to 5,000 records or 5-second broker timeout, whichever comes first).

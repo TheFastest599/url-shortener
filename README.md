@@ -1,50 +1,44 @@
-# HiClickMe — Enterprise Multi-Tenant URL Shortener Platform 🚀
+# urlShortener — Enterprise Multi-Tenant URL Shortener Platform
 
 A high-throughput, event-driven URL shortening and analytics platform built with **Java 17, Spring Boot 3, Spring Cloud Gateway, Reactive WebFlux, gRPC, jOOQ, PostgreSQL, Redis, Apache Kafka (KRaft), Nginx, and React 19 (Vite)**.
 
+![urlShortener Platform Landing Page](assets/landing.png)
+
 ---
 
-## 🏛️ System Architecture & Ingress Matrix
+## System Architecture & Ingress Matrix
 
-```text
-                      [ Browser / Client ]
-                                │
-        ┌───────────────────────┴───────────────────────┐
-        ▼ (http://localhost)                            ▼ (http://r.localhost)
- ┌──────────────┐                                ┌──────────────┐
- │ React SPA &  │                                │ Clean Links  │
- │ /api/**      │                                │ /*           │
- └──────┬───────┘                                └──────┬───────┘
-        │                                               │
-        └───────────────────────┬───────────────────────┘
-                                ▼
-                 ┌─────────────────────────────┐
-                 │   nginx-ingress (Port 80)   │
-                 └──────────────┬──────────────┘
-                                │ (url-shortener-net)
-        ┌───────────────────────┴───────────────────────┐
-        ▼ (Subdomain Proxy: /*)                         ▼ (Path Proxy: /api/**)
- ┌───────────────┐                             ┌────────────────┐
- │ redirect:8082 │                             │ apigateway:8080│
- │ (Fast Engine) │                             │ (Cloud Gateway)│
- └───────┬───────┘                             └───┬────────┬───┘
-         │                                         │        │
-         ├──────────────────────────┐              │        │
-         │                          │              ▼        ▼
-         ▼ (gRPC:9090)              ▼        ┌──────────┐ ┌───────────────┐
- ┌───────────────┐            ┌───────────┐  │ core:8081│ │ analytics:8083│
- │   core:9090   │            │   redis   │  └────┬─────┘ └───────┬───────┘
- └───────┬───────┘            └───────────┘       │               │
-         │                          ▲             │               │
-         └──────────────────────────┼─────────────┘               │
-                                    │                             ▼
-                                    │                     ┌───────────────┐
-                                    └──────► [ Kafka ] ──►│ postgres:5432 │
-                                             ("url-clicks")│ (analytics)   │
-                                                          └───────────────┘
-```
+![System Architecture Diagram](assets/diagram.png)
 
-### 🔒 Host Port Exposure & Isolation Matrix
+### Application UI & Operations Hub
+
+|       Growth Mission Control       |  Telemetry & Traffic Attribution   |
+| :--------------------------------: | :--------------------------------: |
+| ![Dashboard](assets/dashboard.png) | ![Analytics](assets/analytics.png) |
+
+| Authentication & Security  |               Mobile Responsive View               |
+| :------------------------: | :------------------------------------------------: |
+| ![Login](assets/login.png) | ![Mobile Landing](assets/smartphone%20landing.png) |
+
+---
+
+## What is urlShortener?
+
+**urlShortener** is an enterprise-grade URL shortening, intelligent traffic routing, and real-time marketing analytics platform engineered for modern growth teams. It decouples high-velocity edge redirection from asynchronous analytics ingestion and relational data stores, delivering sub-2ms response times under heavy load.
+
+### Key Capabilities & Highlights
+
+- **Sub-2ms Redirection Engine**: Reactive Spring WebFlux Netty runtime (`url-redirect-service`) using a **Consolidated Single Redis Hash** (`url:<shortCode>`), adaptive TTL caching, and Nginx HTTP/1.1 keep-alive connection pooling. Delivers clean URLs on `http://r.localhost/{shortCode}` with zero path-prefix overhead.
+- **Smart Device Routing & Deep-Linking**: Inspects User-Agent headers to dynamically route visitors to native mobile destinations (iOS App Store, Android Google Play) or desktop fallbacks.
+- **Multivariate A/B Testing**: Configurable weighted traffic splits with 30-day sticky visitor cookies (`ab_<shortCode>`) for consistent user journeys and zero client-side flicker.
+- **Marketing Campaigns & Multi-Touch UTM Tracking**: Organizes short links into relational campaigns with predefined UTM parameters (`source`, `medium`, `campaign`, `term`, `content`) for full attribution modeling.
+- **Event-Driven Click Telemetry**: Non-blocking Kafka click stream (`url-clicks`) consumed in micro-batches (500 items / 50ms) by `url-analytics-service`, with MaxMind GeoIP country/city resolution, automated bot filtering, and PostgreSQL bulk writes (`reWriteBatchedInserts=true`).
+- **Enterprise Security Perimeter**: Spring Cloud Gateway with stateless JWT verification, R2DBC reactive database access, Refresh Token Rotation (RTR) via secure `HttpOnly` cookies, OAuth2 (Google & GitHub), and Token Bucket rate limiting.
+- **Decoupled Database Isolation**: Zero cross-database queries across 3 logically isolated PostgreSQL databases (`url_shortener_auth`, `url_shortener_core`, `url_shortener_analytics`), connected internally via strongly-typed gRPC channels.
+
+---
+
+### Host Port Exposure & Isolation Matrix
 
 Only **Nginx Ingress** publishes a port (`80`) to the host machine. All databases, message brokers, and internal microservices run isolated inside the private Docker bridge network (`url-shortener-net`):
 
@@ -62,7 +56,7 @@ Only **Nginx Ingress** publishes a port (`80`) to the host machine. All database
 
 ---
 
-## 🐳 Running with Docker Compose (Production End-to-End)
+## Running with Docker Compose (Production End-to-End)
 
 The entire platform—including in-Docker Maven compilation for all 4 Spring Boot microservices, Node.js compilation for the React frontend, database initialization, and Nginx reverse proxying—builds and boots with a single command.
 
@@ -103,7 +97,7 @@ docker compose logs -f nginx
 
 - **Web UI (React SPA):** [http://localhost](http://localhost)
 - **Clean Short Link Redirection:** `http://r.localhost/{shortCode}` (e.g., `http://r.localhost/spring-launch` or `http://r.localhost/xyz789`)
-    > **💡 How `r.localhost` Redirection Works:**
+    > **How `r.localhost` Redirection Works:**
     >
     > - **Zero Path Prefix:** Ingress matches the `r.*` subdomain regex (`~^r\.(?<main_domain>.+)$`) and proxies `/{shortCode}` directly to `redirect:8082/r/{shortCode}` without requiring ugly `/r/` or `/s/` path prefixes.
     > - **Root Fallback:** Visiting root `http://r.localhost/` bounces back to the parent web app `http://localhost/` via HTTP 302.
@@ -140,7 +134,7 @@ docker compose down -v
 
 ---
 
-## 💻 Local Hybrid Development (Optional for Hot-Reloading)
+## Local Hybrid Development (Optional for Hot-Reloading)
 
 If you are developing locally and prefer hot-reloading in your IDE and Vite dev server:
 
@@ -178,7 +172,7 @@ Access the dev server at `http://localhost:5173`.
 
 ---
 
-## 🗄️ Database Initialization
+## Database Initialization
 
 The PostgreSQL container automatically runs [scripts/init.sql](scripts/init.sql) on its first boot to create the isolated databases:
 
@@ -188,7 +182,7 @@ The PostgreSQL container automatically runs [scripts/init.sql](scripts/init.sql)
 
 ---
 
-## ⚙️ jOOQ Code Generation Workflow
+## jOOQ Code Generation Workflow
 
 Both the **`core`** and **`analytics`** services use **jOOQ** for compile-time type-safe SQL queries. To ensure 100% reproducible, offline builds across Docker, CI/CD, and fresh Git clones, the generated jOOQ classes are version-controlled directly in `src/main/java`:
 
@@ -196,42 +190,57 @@ Both the **`core`** and **`analytics`** services use **jOOQ** for compile-time t
 - **Analytics Service:** `analytics/src/main/java/com/urlshortener/analytics/jooq/`
 
 ### Default Build Behavior
+
 By default, `<jooq.codegen.skip>true</jooq.codegen.skip>` is set in each service's `pom.xml`. Standard builds (`mvn compile`, `mvn package`, `docker compose build`) compile the tracked Java files **100% offline without connecting to PostgreSQL**.
 
 ### Regenerating Code After Schema Migrations
+
 Whenever you modify database schemas or add new Flyway migrations:
 
 1. **Ensure PostgreSQL is running:**
-   ```bash
-   docker compose up postgres -d
-   ```
+
+    ```bash
+    docker compose up postgres -d
+    ```
 
 2. **Run jOOQ generation for the service:**
-   ```bash
-   # Regenerate Core service jOOQ classes:
-   mvn generate-sources -Djooq.codegen.skip=false -f core/pom.xml
 
-   # Regenerate Analytics service jOOQ classes:
-   mvn generate-sources -Djooq.codegen.skip=false -f analytics/pom.xml
-   ```
+    ```bash
+    # Regenerate Core service jOOQ classes:
+    mvn generate-sources -Djooq.codegen.skip=false -f core/pom.xml
+
+    # Regenerate Analytics service jOOQ classes:
+    mvn generate-sources -Djooq.codegen.skip=false -f analytics/pom.xml
+    ```
 
 3. **Commit the generated classes to Git:**
-   ```bash
-   git add core/src/main/java/com/urlshortener/core/jooq/
-   git add analytics/src/main/java/com/urlshortener/analytics/jooq/
-   git commit -m "chore: regenerate jOOQ classes for schema updates"
-   ```
+    ```bash
+    git add core/src/main/java/com/urlshortener/core/jooq/
+    git add analytics/src/main/java/com/urlshortener/analytics/jooq/
+    git commit -m "chore: regenerate jOOQ classes for schema updates"
+    ```
 
 ---
 
-## 📚 Deep-Dive Architecture & Component Guides
+## Architecture & Component Guides
 
-- **[Docker Orchestration Guide](docs/docker.md)** — In-depth breakdown of multi-stage Maven builds, Spring profiles (`default` vs `docker`), dependency ordering, and volumes.
-- **[Nginx Ingress & Reverse Proxy Guide](docs/nginx.md)** — Complete reference for reverse proxy routing, React SPA compilation, caching, and security headers.
-- **[API Endpoints Reference & Service Catalog](docs/api_endpoints_reference.md)** — Complete catalog of all HTTP REST endpoints, gRPC methods, Kafka events, and cURL cheat sheets.
-- **[Master Architecture & Design Doc](docs/url_shortener_design_doc.md)** — High-level distributed systems design, data models, and caching strategies.
-- **[Smart Routing, Campaigns & A/B Testing Master Guide](docs/smart_routing_campaigns_and_ab_testing_master_guide.md)** — Comprehensive architecture, ER models, deterministic hashing, and rollout engine for smart link routing.
-- **[API Gateway & Security Guide](docs/api_gateway_security_guide.md)** — JWT authentication filter chain, BCrypt, reactive security, and rate limiting.
-- **[Core Service Guide](docs/core_service_guide.md)** — Base62 generation, smart routing, UTM templates, campaigns, jOOQ query acceleration, and gRPC server.
-- **[Redirect Service Guide](docs/redirect_service_guide.md)** — Sub-5ms reactive redirects, adaptive TTL caching, and asynchronous Kafka click tracking.
-- **[Analytics Service Guide](docs/analytics_service_guide.md)** — Kafka batch ingestion, MaxMind GeoIP resolution, bot detection, and jOOQ time-series projections.
+The repository documentation in [`docs/`](docs/) provides comprehensive architectural specifications, step-by-step module implementations, and benchmark results:
+
+### Core Architecture & Platform Ingress
+
+- **[Master Architecture & Design Doc](docs/url_shortener_design_doc.md)** — High-level distributed systems design, data models, consolidated single Redis Hash caching, gRPC protocol buffers, and Kafka topology.
+- **[Nginx Ingress & Reverse Proxy Guide](docs/nginx.md)** — Single Port 80 ingress architecture, multi-stage Vite bundle compilation, sub-3ms keep-alive connection pooling, and real-IP/cookie rate limiting.
+- **[Docker Containerization & Health Architecture Guide](docs/docker.md)** — Multi-stage Maven builds, offline jOOQ compilation, container dependency ordering, PostgreSQL multi-database health checks, and JVM memory bounds (`-Xms256m -Xmx512m`).
+- **[API Endpoints Reference & Service Catalog](docs/api_endpoints_reference.md)** — Canonical catalog of all HTTP REST endpoints across all services, gRPC methods, Kafka events, validation rules, and cURL examples.
+
+### Microservices Engineering Guides
+
+- **[Redirect Service Guide](docs/redirect_service_guide.md)** — Reactive WebFlux Netty engine, Consolidated Single Redis Hash (`url:<shortCode>`), parallel `Mono.zip` hit counting, adaptive TTL, and gRPC fallback.
+- **[Core Admin Service Guide](docs/core_service_guide.md)** — Base62 Bijective encoding, campaign rollups, A/B configuration, committed jOOQ query layer, and single-key Redis cache invalidation.
+- **[API Gateway & Security Guide](docs/api_gateway_security_guide.md)** — Stateless JWT verification filter chain, R2DBC non-blocking database queries, Refresh Token Rotation (RTR), and token-bucket rate limiting.
+- **[Analytics Service Guide](docs/analytics_service_guide.md)** — Kafka micro-batch ingestion (500 records / 50ms), MaxMind GeoIP2 resolution, bot classification, and `reWriteBatchedInserts` bulk PostgreSQL writes.
+- **[Smart Routing, Campaigns & A/B Testing Master Guide](docs/smart_routing_campaigns_and_ab_testing_master_guide.md)** — Device deep-linking rules (iOS / Android / Desktop), cumulative weighted random variant selection, and sticky visitor cookies.
+
+### Benchmarks & Performance
+
+- **[Redirect Load Testing & Production Scale Plan](docs/redirect_load_testing_and_scale_plan.md)** — Verified 800 RPS soak test benchmark results (1.84ms P50 latency, 0.000% error rate, 0 Kafka lag), unified `load-tests/cli.js` operations tool, and 10,000+ RPS horizontal scaling plan.

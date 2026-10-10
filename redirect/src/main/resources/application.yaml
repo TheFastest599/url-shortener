@@ -23,6 +23,9 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      batch-size: 65536
+      properties:
+        linger.ms: 10
 
 grpc:
   client:

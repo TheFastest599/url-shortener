@@ -14,11 +14,11 @@ services:
             - pg_data:/var/lib/postgresql/data
             - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
         healthcheck:
-            test: ["CMD-SHELL", "pg_isready -U postgres"]
+            test: ["CMD-SHELL", "pg_isready -U postgres -d url_shortener_core && pg_isready -U postgres -d url_shortener_analytics && pg_isready -U postgres -d url_shortener_auth"]
             interval: 5s
             timeout: 5s
-            retries: 5
-            start_period: 10s
+            retries: 10
+            start_period: 25s
         networks:
             - url-shortener-net
 
@@ -75,7 +75,7 @@ services:
             interval: 10s
             timeout: 10s
             retries: 5
-            start_period: 15s
+            start_period: 25s
         networks:
             - url-shortener-net
 
@@ -136,6 +136,8 @@ services:
             - ./redirect/.env
         environment:
             SPRING_PROFILES_ACTIVE: docker
+            SPRING_KAFKA_PRODUCER_PROPERTIES_LINGER_MS: 10
+            SPRING_KAFKA_PRODUCER_BATCH_SIZE: 65536
         depends_on:
             redis:
                 condition: service_healthy

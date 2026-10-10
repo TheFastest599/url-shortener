@@ -26,8 +26,22 @@ By following this guide, you will learn how to build a modern, high-performance 
 
 ## 1. Key Concepts & Architecture
 
+```mermaid
+flowchart TD
+    Client["🌐 Client Browser / SPA"] --> Ingress["Nginx Edge Ingress (:80)"]
+    Ingress -->|"Proxy /api/v1/auth/*"| Gateway["API Gateway (:8080)<br/>Spring WebFlux + Spring Security"]
+    
+    subgraph Gateway Security Engine
+        Gateway -->|"Stateless JWT Verification<br/>(In-Memory Microsecond Check)"| JwtFilter["JwtAuthenticationFilter"]
+        Gateway -->|"Rate Limit Check"| RedisCache[("Redis Rate Store :6379<br/>Token Bucket")]
+        Gateway -->|"Non-blocking CRUD<br/>(R2DBC Connection Pool)"| AuthDB[("PostgreSQL Auth DB<br/>url_shortener_auth")]
+        Gateway -->|"Forward Authenticated<br/>(Inject X-User-Id header)"| Downstream["Core / Analytics Microservices"]
+    end
+```
+
 Before writing code, let's understand why we use these specific components:
 
+- **Edge Ingress Integration (Nginx):** In production/Docker stacks, requests arrive at Nginx on Port 80 (`http://localhost/api/v1/**`) and are reverse-proxied to `apigateway:8080`. In local development, the Gateway is directly accessible at `http://localhost:8080`.
 - **Reactive I/O (Spring WebFlux):** Unlike standard Spring MVC which uses one thread per request (blocking Tomcat), WebFlux runs on an event loop (Netty). It can process thousands of concurrent requests with very small memory usage.
 - **Non-Blocking Database Access (R2DBC):** JDBC is blocking, which defeats the purpose of WebFlux. R2DBC (Reactive Relational Database Connectivity) allows PostgreSQL queries to run asynchronously via reactive `Mono` and `Flux` streams.
 - **Stateless JWT Authentication:** The Gateway signs a short-lived **Access Token** (e.g. 15 mins). On every request, the Gateway verifies the token signature locally in memory **without querying PostgreSQL**, making API verification microsecond-fast.

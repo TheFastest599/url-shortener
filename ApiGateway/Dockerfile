@@ -21,4 +21,7 @@ COPY --from=builder /build/target/apigateway-*.jar app.jar
 USER appuser
 EXPOSE 8080
 
-ENTRYPOINT ["java", "-XX:+UseG1GC", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]
+ENV JAVA_OPTS="-XX:+UseG1GC -Xms256m -Xmx512m"
+
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar app.jar"]
+

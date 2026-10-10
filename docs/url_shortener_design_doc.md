@@ -48,48 +48,54 @@ An **API Gateway** acts as the single entrypoint for all external client request
 
 ```mermaid
 graph TD
-    User([User Client]) -->|1. REST / Auth / Short Links /r/**| API_Gateway[API Gateway :8080]
+    Client(["🌐 Client Browser / Visitor"]) --> Ingress["Nginx Edge Ingress (:80)"]
+    
+    subgraph Edge Ingress Routing
+        Ingress -->|"Main Domain (localhost): /"| ReactSPA["Static React SPA Bundle<br/>/usr/share/nginx/html"]
+        Ingress -->|"Main Domain (localhost): /api/*"| API_Gateway["API Gateway :8080<br/>Spring Cloud Gateway"]
+        Ingress -->|"Redirect Domain (r.localhost): /*"| MS_Redirect["Redirect Service :8082<br/>Spring WebFlux Netty"]
+    end
 
     subgraph Microservices Cluster
         %% API Gateway & Auth
-        API_Gateway -->|Reads/Writes Auth| DB_Auth[(PostgreSQL Auth DB: url_shortener_auth)]
-        API_Gateway -->|Rate Limit Checks| Redis_Shared[(Redis Cache & Rate Store :6379)]
-        API_Gateway -->|Routes /r/** Redirects| MS_Redirect[Redirect Service :8082]
+        API_Gateway -->|Reads/Writes Auth| DB_Auth[("PostgreSQL Auth DB<br/>url_shortener_auth")]
+        API_Gateway -->|Rate Limit Checks| Redis_Shared[("Redis Cache & Rate Store :6379")]
 
         %% gRPC Channels
-        API_Gateway -.->|gRPC :9090| MS_Core[Core Admin Service :8081]
-        API_Gateway -.->|gRPC :9091| MS_Analytics[Analytics Service :8083]
+        API_Gateway -.->|"gRPC :9090"| MS_Core["Core Admin Service :8081"]
+        API_Gateway -.->|"gRPC :9091"| MS_Analytics["Analytics Service :8083"]
 
         %% Redirect Service
-        MS_Redirect -->|Checks Cache| Redis_Shared
-        MS_Redirect -.->|gRPC: URL Resolution| MS_Core
-        MS_Redirect -->|Publish Click Event| KafkaBroker[Apache Kafka Broker :9092]
+        MS_Redirect -->|"Consolidated Hash url:{code}<br/>INCR url:hits:{code}"| Redis_Shared
+        MS_Redirect -.->|"gRPC :9090 Fallback (5s deadline)"| MS_Core
+        MS_Redirect -->|"Publish Click Event (Fire-and-Forget)"| KafkaBroker["Apache Kafka Broker :9092<br/>Topic: url-clicks"]
     end
 
     subgraph Shared PostgreSQL Instance :5432
         DB_Auth
-        DB_Core[(PostgreSQL Core DB: url_shortener_core)]
-        DB_Analytics[(PostgreSQL Analytics DB: url_shortener_analytics)]
+        DB_Core[("PostgreSQL Core DB<br/>url_shortener_core")]
+        DB_Analytics[("PostgreSQL Analytics DB<br/>url_shortener_analytics")]
     end
 
     %% Core & Analytics DBs
     MS_Core -->|Reads/Writes Core| DB_Core
-    KafkaBroker -->|Async Ingest| MS_Analytics
-    MS_Analytics -->|Bulk Inserts| DB_Analytics
+    KafkaBroker -->|"Async Ingestion (Batch Listener)"| MS_Analytics
+    MS_Analytics -->|"Batch Inserts (JdbcTemplate)"| DB_Analytics
 ```
 
 ### 3.2 Component Directory & Ports
 
 | Service / Component | Public Port | gRPC Port | Technology | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
-| **API Gateway** | `8080` | N/A | Spring Cloud Gateway, Reactive Security | Central entrypoint, routing, rate limiting, OAuth2 Client, token rotation, and REST proxying. |
-| **Core Admin Service** | `8081` | `9090` | Spring Boot, gRPC Server, JPA / Hibernate, jOOQ DSL | Manages URL mappings, marketing campaigns, A/B/n tests, Base62 encoding, Redis Strategy 1 cache warming/eviction, and gRPC resolution. |
-| **Redirect Service** | `8082` | N/A | Spring WebFlux, Redis Reactive, gRPC Client | Resolves short URLs via Strategy 1 Redis (or gRPC Core fallback with 5s deadline and keepalive), executes in-memory A/B splits, and publishes click events to Apache Kafka. |
-| **Analytics Service** | `8083` | `9091` | Spring Boot, Spring Kafka, MaxMind GeoIP, jOOQ DSL, JdbcTemplate Batch | Consumes Kafka click streams in batches, resolves geographic locations, detects bots, multi-row bulk-writes logs, and serves telemetry reports. |
-| **Frontend Client** | `5173` | N/A | React 19, Vite, Tailwind CSS v4, shadcn UI, TanStack Query | Single Page Application dashboard with UTM builder, Campaign management, A/B testing controls, and telemetry charts. |
-| **PostgreSQL Shared Instance** | `5432` | N/A | PostgreSQL 16 | Single database container hosting 3 logically isolated databases: `url_shortener_auth`, `url_shortener_core`, and `url_shortener_analytics`. |
-| **Redis Cache & Rate Store**| `6379` | N/A | Redis 7.2 | Shares rate limit statistics, Strategy 1 dual-key redirect caches (`url:redirect`, `url:ab`, `url:rules`), and hit counters. |
-| **Apache Kafka Broker** | `9092` | N/A | Confluent Kafka / KRaft Mode | High-throughput streaming buffer decoupling redirection handling from analytics logging. |
+| **Nginx Edge Ingress** | `80` | N/A | Nginx 1.25 Alpine | Sole public perimeter entrypoint. Serves static React SPA, proxies `/api/*` to Gateway, routes clean short URLs on `r.localhost`, and enforces edge rate limiting. |
+| **API Gateway** | `8080` (Internal) | N/A | Spring Cloud Gateway, Reactive Security | Central API routing, authentication, OAuth2 Client, token rotation, and REST orchestration. |
+| **Core Admin Service** | `8081` (Internal) | `9090` | Spring Boot, gRPC Server, JPA / Hibernate, jOOQ DSL | Manages URL mappings, marketing campaigns, A/B/n tests, Base62 encoding, Redis single-key cache eviction (`url:{code}`), and gRPC resolution. |
+| **Redirect Service** | `8082` (Internal) | N/A | Spring WebFlux, Redis Reactive, gRPC Client | Resolves short URLs via Consolidated Redis Hash `url:{code}` (or gRPC Core fallback with 5s deadline), executes device rules & A/B splits, and publishes click events to Kafka. |
+| **Analytics Service** | `8083` (Internal) | `9091` | Spring Boot, Spring Kafka, MaxMind GeoIP, jOOQ DSL, JdbcTemplate Batch | Consumes Kafka click streams in micro-batches (500 items / 50ms), resolves geographic locations, detects bots, multi-row bulk-writes logs, and serves telemetry reports. |
+| **Frontend Client** | `80` (Production) / `5173` (Dev) | N/A | React 19, Vite, Tailwind CSS v4, shadcn UI, TanStack Query | Single Page Application dashboard compiled into Nginx static web root `/usr/share/nginx/html`. Standalone Vite dev server runs at `5173` during local dev. |
+| **PostgreSQL Shared Instance** | `5432` | N/A | PostgreSQL 16 Alpine | Single database container hosting 3 logically isolated databases: `url_shortener_auth`, `url_shortener_core`, and `url_shortener_analytics`. |
+| **Redis Cache & Rate Store**| `6379` | N/A | Redis 7.2 Alpine | Token-bucket rate limit statistics, Consolidated Hash redirect cache (`url:{shortCode}`), and popularity counters (`url:hits:{shortCode}`). |
+| **Apache Kafka Broker** | `9092` | N/A | Confluent Kafka / KRaft Mode | High-throughput streaming buffer (`url-clicks` topic) decoupling redirection handling from analytics database writes. |
 
 ---
 
@@ -833,39 +839,21 @@ public class UrlCoreController {
 }
 ```
 
-#### 3. Strategy 1 Redis Cache Eviction & Invalidation (`UrlCoreService.java`)
+#### 3. Consolidated Redis Cache Eviction & Invalidation (`UrlCoreService.java`)
 
-Redis population is handled lazily by `url-redirect-service` upon first click using dynamic `calculateAdaptiveTtl(hits)`. `UrlCoreService` is strictly responsible for immediate cache eviction on updates, deactivations, pauses, and deletions:
+Redis population is handled lazily by `url-redirect-service` upon first click using dynamic `calculateAdaptiveTtl(hits)`. `UrlCoreService` is strictly responsible for immediate cache eviction on updates, deactivations, pauses, and deletions using single-key atomic invalidation:
 
 ```java
 /**
- * Evicts all Strategy 1 keys for a short code across Redis.
- * Called whenever a link is updated, deactivated, or deleted.
+ * Evicts the consolidated Redis Hash for a short code.
+ * Called whenever a link is updated, deactivated, paused, or deleted.
  */
 public void evictRedirectCache(String shortCode) {
     try {
-        redisTemplate.delete(List.of(
-            "url:redirect:" + shortCode,
-            "url:ab:" + shortCode,
-            "url:rules:" + shortCode,
-            "url:hits:" + shortCode
-        ));
-        log.info("Evicted all Redis Strategy 1 keys for shortCode: {}", shortCode);
+        redisTemplate.delete("url:" + shortCode);
+        log.info("Evicted consolidated Redis Hash for shortCode: {}", shortCode);
     } catch (Exception e) {
         log.warn("Failed to evict Redis cache for {}: {}", shortCode, e.getMessage());
-    }
-}
-
-/**
- * Specifically evicts only the A/B test configuration key.
- * Called when an A/B test is paused, concluded, or removed without changing the base URL.
- */
-public void evictAbCache(String shortCode) {
-    try {
-        redisTemplate.delete("url:ab:" + shortCode);
-        log.info("Evicted Redis A/B test key for shortCode: {}", shortCode);
-    } catch (Exception e) {
-        log.warn("Failed to evict Redis A/B cache for {}: {}", shortCode, e.getMessage());
     }
 }
 ```
@@ -875,9 +863,9 @@ public void evictAbCache(String shortCode) {
 
 A high-performance reactive WebFlux application executing sub-2ms HTTP `302 Found` redirections. It does not establish direct relational database pools.
 
-#### 1. Strategy 1 Dual-Key Redirection Service (`RedirectService.java`)
+#### 1. Consolidated Single Redis Hash Redirection Service (`RedirectService.java`)
 
-Evaluates Redis `MGET` across `url:ab:{shortCode}`, `url:redirect:{shortCode}`, and `url:rules:{shortCode}` in a single 0.3ms round-trip.
+Evaluates a single Redis Hash `HGETALL url:{shortCode}` alongside atomic hit counting `INCR url:hits:{shortCode}` in parallel via `Mono.zip`:
 
 ```java
 @Slf4j
@@ -891,63 +879,70 @@ public class RedirectService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public Mono<String> resolveAndTrackUrl(String shortCode, ServerHttpRequest request, ServerHttpResponse response) {
-        String abKey = "url:ab:" + shortCode;
-        String redirectKey = "url:redirect:" + shortCode;
-        String rulesKey = "url:rules:" + shortCode;
+        String hashKey = "url:" + shortCode;
         String hitsKey = "url:hits:" + shortCode;
 
-        // 1. Concurrently INCR popularity counter and MGET Strategy 1 keys in parallel
+        // 1. Concurrently INCR hit counter and fetch consolidated Redis Hash in parallel
         Mono<Long> hitCountMono = redisTemplate.opsForValue().increment(hitsKey);
-        Mono<List<String>> cacheLookupMono = redisTemplate.opsForValue().multiGet(List.of(abKey, redirectKey, rulesKey));
+        Mono<Map<String, String>> hashMono = redisTemplate.opsForHash().entries(hashKey).collectMap(
+            e -> e.getKey().toString(),
+            e -> e.getValue().toString()
+        );
 
-        return Mono.zip(hitCountMono, cacheLookupMono)
+        return Mono.zip(hitCountMono, hashMono)
             .flatMap(tuple -> {
                 Long hits = tuple.getT1();
+                Map<String, String> cachedData = tuple.getT2();
                 Duration adaptiveTtl = calculateAdaptiveTtl(hits != null ? hits : 1L);
 
-                List<String> results = tuple.getT2();
-                String abJson = results.size() > 0 ? results.get(0) : null;
-                String fallbackUrl = results.size() > 1 ? results.get(1) : null;
-                String rulesJson = results.size() > 2 ? results.get(2) : null;
+                if (!cachedData.isEmpty()) {
+                    ShortCodePayloadDto payload = ShortCodePayloadDto.fromMap(cachedData);
 
-                String destinationUrl = null;
-                String selectedVariant = null;
+                    // Extend adaptive TTL asynchronously
+                    redisTemplate.expire(hashKey, adaptiveTtl).subscribe();
 
-                // Step A: Device Deep-Link Override (Highest Priority)
-                if (rulesJson != null) {
-                    destinationUrl = checkDeviceOverride(rulesJson, request);
+                    return resolveDestination(shortCode, payload, request, response);
                 }
 
-                // Step B: Active A/B Testing Split
-                if (destinationUrl == null && abJson != null) {
-                    VariantResolution res = resolveAbVariant(shortCode, abJson, request, response);
-                    if (res != null) {
-                        destinationUrl = res.url();
-                        selectedVariant = res.variantKey();
-                    }
-                }
-
-                // Step C: Base Fallback Destination
-                if (destinationUrl == null) {
-                    destinationUrl = fallbackUrl;
-                }
-
-                // Step D: Cache Miss -> Fallback to Core Service via gRPC (:9090)
-                if (destinationUrl == null) {
-                    return resolveFromGrpc(shortCode, adaptiveTtl, hitsKey, request, response);
-                }
-
-                // Cache Hit: Non-blocking background TTL refresh across all active Strategy 1 keys
-                extendAdaptiveTtl(shortCode, abJson != null, rulesJson != null, adaptiveTtl);
-
-                // Forward visitor's inbound UTM & query parameters
-                String finalUrl = mergeQueryParams(destinationUrl, request.getQueryParams());
-
-                // Async fire-and-forget Kafka telemetry (never blocks redirect)
-                emitTelemetry(shortCode, selectedVariant, request);
-
-                return Mono.just(finalUrl);
+                // Cache Miss -> Fallback to Core Service via gRPC (:9090)
+                return resolveFromGrpc(shortCode, adaptiveTtl, hitsKey, request, response);
             });
+    }
+
+    /**
+     * Resolves target destination: Device Rules -> A/B Split -> Base Target URL.
+     */
+    private Mono<String> resolveDestination(String shortCode, ShortCodePayloadDto payload,
+                                           ServerHttpRequest request, ServerHttpResponse response) {
+        String destinationUrl = null;
+        String selectedVariant = null;
+
+        // Step A: Device Deep-Link Override (Highest Priority)
+        if (payload.smartRules() != null && !payload.smartRules().isBlank()) {
+            destinationUrl = checkDeviceOverride(payload.smartRules(), request);
+        }
+
+        // Step B: Active A/B Testing Split
+        if (destinationUrl == null && payload.abConfig() != null && !payload.abConfig().isBlank()) {
+            VariantResolution res = resolveAbVariant(shortCode, payload.abConfig(), request, response);
+            if (res != null) {
+                destinationUrl = res.url();
+                selectedVariant = res.variantKey();
+            }
+        }
+
+        // Step C: Base Fallback Destination
+        if (destinationUrl == null) {
+            destinationUrl = payload.targetUrl();
+        }
+
+        // Forward visitor's inbound UTM & query parameters
+        String finalUrl = mergeQueryParams(destinationUrl, request.getQueryParams());
+
+        // Async fire-and-forget Kafka telemetry (never blocks redirect response)
+        emitTelemetry(shortCode, payload.urlId(), payload.campaignId(), payload.abTestId(), selectedVariant, request);
+
+        return Mono.just(finalUrl);
     }
 
     /**
@@ -969,20 +964,6 @@ public class RedirectService {
         }
     }
 
-    /**
-     * Non-blocking background TTL refresh. Keeps all Strategy 1 keys synchronized.
-     */
-    private void extendAdaptiveTtl(String shortCode, boolean hasAb, boolean hasRules, Duration adaptiveTtl) {
-        List<String> keys = new ArrayList<>();
-        keys.add("url:redirect:" + shortCode);
-        if (hasAb) keys.add("url:ab:" + shortCode);
-        if (hasRules) keys.add("url:rules:" + shortCode);
-
-        Flux.fromIterable(keys)
-            .flatMap(key -> redisTemplate.expire(key, adaptiveTtl))
-            .subscribe(); // Executes asynchronously without delaying HTTP redirect response
-    }
-
     private Mono<String> resolveFromGrpc(String shortCode, Duration adaptiveTtl, String hitsKey,
                                          ServerHttpRequest request, ServerHttpResponse response) {
         return coreGrpcClient.getDestinationUrl(shortCode)
@@ -990,18 +971,24 @@ public class RedirectService {
                 if (!grpcResponse.getIsFound() || !grpcResponse.getIsActive()) {
                     return Mono.empty();
                 }
-                String dest = grpcResponse.getDestinationUrl();
-                redisTemplate.opsForValue().set("url:redirect:" + shortCode, dest, adaptiveTtl).subscribe();
-                if (!grpcResponse.getAbRulesJson().isEmpty()) {
-                    redisTemplate.opsForValue().set("url:ab:" + shortCode, grpcResponse.getAbRulesJson(), adaptiveTtl).subscribe();
-                }
-                if (!grpcResponse.getSmartRulesJson().isEmpty()) {
-                    redisTemplate.opsForValue().set("url:rules:" + shortCode, grpcResponse.getSmartRulesJson(), adaptiveTtl).subscribe();
-                }
+
+                ShortCodePayloadDto payload = new ShortCodePayloadDto(
+                    grpcResponse.getDestinationUrl(),
+                    grpcResponse.getUrlId(),
+                    grpcResponse.getCampaignId(),
+                    grpcResponse.getAbTestId(),
+                    grpcResponse.getSmartRulesJson(),
+                    grpcResponse.getAbRulesJson()
+                );
+
+                String hashKey = "url:" + shortCode;
+                redisTemplate.opsForHash().putAll(hashKey, payload.toMap())
+                    .then(redisTemplate.expire(hashKey, adaptiveTtl))
+                    .subscribe();
+
                 redisTemplate.expire(hitsKey, Duration.ofDays(1)).subscribe();
 
-                emitTelemetry(shortCode, null, request);
-                return Mono.just(mergeQueryParams(dest, request.getQueryParams()));
+                return resolveDestination(shortCode, payload, request, response);
             });
     }
 
@@ -1218,6 +1205,10 @@ public class ClickEventConsumer {
 #### 3. Query Engine Acceleration: jOOQ Layer
 `ClickAnalyticsQueryRepository` provides type-safe SQL projections (`StatRecord`, `CityStatRecord`, `TimeSeriesRecord`) using native PostgreSQL `date_trunc`, dynamic intervals, and timezone offsets.
 
+> [!NOTE]
+> **Committed jOOQ Code Generation Architecture**:
+> Generated jOOQ classes are version-controlled in `src/main/java/com/urlshortener/analytics/jooq/` (and Core). The Maven build property `<jooq.codegen.skip>true</jooq.codegen.skip>` ensures `mvn package` and Docker multi-stage builds execute offline without requiring an active PostgreSQL instance. Re-generation is triggered intentionally via `mvn jooq-codegen:generate -Djooq.codegen.skip=false` against active schema migrations.
+
 ---
 
 ### 6.5 Frontend Client Architecture (`client`)
@@ -1242,23 +1233,23 @@ The web client is a single-page application built with React 19, Vite, and Tailw
 
 ## 7. Multi-Container Orchestration (`docker-compose.yml`)
 
-Coordinates local startup of databases, brokers, caches, and the microservices stack.
+Coordinates local startup of databases, brokers, caches, and the microservices stack with enterprise health checks, ordered startup conditions, and bounded JVM memory.
 
 ### Local Development CLI Command (Memory-Optimized):
 ```powershell
-$env:MAVEN_OPTS="-Xmx256m"; mvn spring-boot:run -DskipTests
+$env:MAVEN_OPTS="-Xms256m -Xmx512m"; mvn spring-boot:run -DskipTests
 ```
 
-### Full Stack Docker Orchestration (`docker-compose.yml`):
+### Full Stack Docker Orchestration ([docker-compose.yml](../docker-compose.yml)):
 
 ```yaml
 version: "3.8"
 
 services:
-  # 1. Shared PostgreSQL DB Instance (Hosts 3 logical databases: url_shortener_auth, url_shortener_core, url_shortener_analytics)
+  # 1. Shared PostgreSQL DB Instance (Multi-database readiness health check)
   postgres:
     image: postgres:16-alpine
-    container_name: postgres-db
+    container_name: postgres
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: postgres
@@ -1266,20 +1257,31 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pg_data:/var/lib/postgresql/data
-      - ./scripts/init-dbs.sql:/docker-entrypoint-initdb.d/init-dbs.sql
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d url_shortener_auth && pg_isready -U postgres -d url_shortener_core && pg_isready -U postgres -d url_shortener_analytics"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   # 2. Redis Cache & Limit Store
   redis:
     image: redis:7.2-alpine
-    container_name: redis-cache
+    container_name: redis
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
-  # 3. Apache Kafka (KRaft mode)
+  # 3. Apache Kafka (KRaft mode with topic auto-provisioning)
   kafka:
     image: confluentinc/cp-kafka:7.6.0
-    container_name: kafka-broker
+    container_name: kafka
     ports:
       - "9092:9092"
     environment:
@@ -1293,74 +1295,138 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
-      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      CLUSTER_ID: "4L622nShTWWkrFuTGgfPpA"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 25s
 
-  # 4. API Gateway Microservice
-  url-gateway-service:
-    build: ./apigateway
-    container_name: url-gateway
-    ports:
-      - "8080:8080"
-    environment:
-      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/url_shortener_auth
-      SPRING_REDIS_HOST: redis
+  # 4. Kafka Topic Initializer
+  init-kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: init-kafka
     depends_on:
-      - postgres
-      - redis
+      kafka:
+        condition: service_healthy
+    entrypoint: [ "sh", "-c" ]
+    command: |
+      "kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic url-clicks --partitions 3 --replication-factor 1"
 
   # 5. Core Admin Microservice
-  url-core-service:
-    build: ./core
-    container_name: url-core
+  core:
+    build:
+      context: .
+      dockerfile: core/Dockerfile
+    container_name: core-service
     ports:
       - "8081:8081"
       - "9090:9090"
-    environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/url_shortener_core
-      SPRING_REDIS_HOST: redis
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8081/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
 
   # 6. Redirection Microservice
-  url-redirect-service:
-    build: ./redirect
-    container_name: url-redirect
+  redirect:
+    build:
+      context: .
+      dockerfile: redirect/Dockerfile
+    container_name: redirect-service
     ports:
       - "8082:8082"
-    environment:
-      SPRING_REDIS_HOST: redis
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
     depends_on:
-      - redis
-      - kafka
+      redis:
+        condition: service_healthy
+      core:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8082/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
-  # 7. Analytics Ingestion & Reporting Microservice
-  url-analytics-service:
-    build: ./analytics
-    container_name: url-analytics
+  # 7. Analytics Microservice
+  analytics:
+    build:
+      context: .
+      dockerfile: analytics/Dockerfile
+    container_name: analytics-service
     ports:
       - "8083:8083"
       - "9091:9091"
-    environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/url_shortener_analytics
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
     depends_on:
-      - postgres
-      - kafka
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8083/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
 
-  # 8. Frontend Dashboard Client (Vite SPA)
-  url-client:
-    build: ./client
-    container_name: url-client
+  # 8. API Gateway Microservice
+  apigateway:
+    build:
+      context: .
+      dockerfile: apigateway/Dockerfile
+    container_name: apigateway-service
     ports:
-      - "5173:5173"
+      - "8080:8080"
     depends_on:
-      - url-gateway-service
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      core:
+        condition: service_healthy
+      redirect:
+        condition: service_healthy
+      analytics:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  # 9. Unified Nginx Ingress & Static SPA Host
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    container_name: nginx-ingress
+    ports:
+      - "80:80"
+    depends_on:
+      apigateway:
+        condition: service_healthy
+      redirect:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost/ || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
 
 volumes:
-  pg_data:
+  pgdata:
 ```
 
 ---

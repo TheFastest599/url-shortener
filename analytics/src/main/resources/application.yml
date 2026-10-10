@@ -29,6 +29,8 @@ spring:
     password: ${DB_PASSWORD:1234}
     baseline-on-migrate: true
     locations: classpath:db/migration
+    connect-retries: 20
+    connect-retries-interval: 2s
   jpa:
     hibernate:
       ddl-auto: validate
