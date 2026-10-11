@@ -442,6 +442,7 @@ async function runTest(options) {
 	console.log(` Target Ingress : ${baseUrl}`);
 	console.log(` Duration       : ${duration}`);
 	console.log(` Target Rate    : ${rps} req/sec`);
+	console.log(` Warm-up Ramp   : ${options.ramp || "10s (Gradual)"}`);
 	console.log("=".repeat(60) + "\x1b[0m\n");
 
 	// Clean up any stray shell artifacts
@@ -483,8 +484,9 @@ async function runTest(options) {
 	// Run k6 inside Docker (exporting telemetry directly to results folder)
 	console.log("\x1b[36m[Launching k6 in Docker Container...]\x1b[0m");
 	const netFlags = resolveDockerNetworkFlags();
+	const rampEnv = options.ramp ? `-e RAMP_TIME="${options.ramp}"` : "";
 	const vusEnv = options.vus ? `-e MAX_VUS=${options.vus}` : "";
-	const k6Cmd = `docker run --rm ${netFlags} -v "${K6_DIR}:/scripts" -v "${RESULTS_DIR}:/results" -e BASE_URL="${baseUrl}" -e TARGET_RPS=${rps} -e DURATION="${duration}" ${vusEnv} grafana/k6:latest run --summary-export=/results/latest_results.json /scripts/realistic_load_test.js`;
+	const k6Cmd = `docker run --rm ${netFlags} -v "${K6_DIR}:/scripts" -v "${RESULTS_DIR}:/results" -e BASE_URL="${baseUrl}" -e TARGET_RPS=${rps} -e DURATION="${duration}" ${rampEnv} ${vusEnv} grafana/k6:latest run --summary-export=/results/latest_results.json /scripts/realistic_load_test.js`;
 
 	const k6Res = exec(k6Cmd);
 
@@ -568,7 +570,7 @@ async function runTest(options) {
 
 - **Timestamp**: ${timestamp}
 - **Target Ingress**: ${baseUrl}
-- **Target RPS**: ${rps} req/s | **Duration**: ${duration}
+- **Target RPS**: ${rps} req/s (Warm-up Ramp: ${options.ramp || "None"}) | **Duration**: ${duration}
 - **Achieved RPS**: ${achievedRate} req/s
 - **Total Requests**: ${totalReqs.toLocaleString()}
 - **Error Rate**: ${failRate}%
@@ -630,6 +632,7 @@ Single entrypoint for load testing, data seeding, and database purging.
 \x1b[33mTEST OPTIONS:\x1b[0m
   -d, --duration <time>   Duration of the test (default: "1m", e.g. 30s, 1m, 3m, 5m)
   -r, --rps <rate>        Target arrival rate in req/sec (default: 100)
+  -m, --ramp <time>       Warm-up ramp duration to target rate (default: "10s", e.g. 5s, 10s, 0s)
   -v, --vus <count>       Max virtual users allocated (default: auto-scaled 3x RPS)
   -u, --url <url>         Target ingress base URL (default: "http://r.localhost")
   --clean                 Auto-purge database and Kafka before running the test
@@ -672,6 +675,7 @@ async function main() {
 		const options = {
 			duration: "1m",
 			rps: 100,
+			ramp: "10s",
 			vus: null,
 			baseUrl: "http://r.localhost",
 			clean: false,
@@ -684,6 +688,8 @@ async function main() {
 				options.duration = args[++i];
 			} else if (arg === "-r" || arg === "--rps") {
 				options.rps = parseInt(args[++i], 10) || 100;
+			} else if (arg === "-m" || arg === "--ramp") {
+				options.ramp = args[++i];
 			} else if (arg === "-v" || arg === "--vus") {
 				options.vus = parseInt(args[++i], 10);
 			} else if (

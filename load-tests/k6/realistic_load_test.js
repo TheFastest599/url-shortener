@@ -257,24 +257,40 @@ const SUPPLEMENTAL_CAMPAIGNS = [
 // ============================================================================
 // 5. DYNAMIC STAGE PROFILE (Configured via __ENV)
 // ============================================================================
-const TARGET_RPS = parseInt(__ENV.TARGET_RPS || '100');
+const TARGET_RPS = parseInt(__ENV.TARGET_RPS || '100', 10);
 const DURATION = __ENV.DURATION || '60s';
+const RAMP_TIME = __ENV.RAMP_TIME || '10s';
 const PRE_VUS = __ENV.PRE_VUS ? parseInt(__ENV.PRE_VUS, 10) : Math.max(20, Math.min(TARGET_RPS, 2000));
 const MAX_VUS = __ENV.MAX_VUS ? parseInt(__ENV.MAX_VUS, 10) : Math.max(100, Math.floor(TARGET_RPS * 3));
+
+const hasRamp = RAMP_TIME && RAMP_TIME !== '0s' && RAMP_TIME !== '0';
 
 export const options = {
   discardResponseBodies: true,
   summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'p(99.9)', 'max'],
   scenarios: {
-    constant_rate_test: {
-      executor: 'constant-arrival-rate',
-      rate: TARGET_RPS,
-      timeUnit: '1s',
-      duration: DURATION,
-      preAllocatedVUs: Math.floor(PRE_VUS),
-      maxVUs: Math.floor(MAX_VUS),
-      gracefulStop: '3s', // Terminate promptly when duration ends instead of waiting 30s!
-    },
+    arrival_rate_test: hasRamp
+      ? {
+          executor: 'ramping-arrival-rate',
+          startRate: Math.max(10, Math.floor(TARGET_RPS * 0.05)),
+          timeUnit: '1s',
+          stages: [
+            { target: TARGET_RPS, duration: RAMP_TIME }, // Gradually reach TARGET_RPS over RAMP_TIME (e.g. 10s)
+            { target: TARGET_RPS, duration: DURATION },  // Maintain TARGET_RPS steady-state
+          ],
+          preAllocatedVUs: Math.floor(PRE_VUS),
+          maxVUs: Math.floor(MAX_VUS),
+          gracefulStop: '3s',
+        }
+      : {
+          executor: 'constant-arrival-rate',
+          rate: TARGET_RPS,
+          timeUnit: '1s',
+          duration: DURATION,
+          preAllocatedVUs: Math.floor(PRE_VUS),
+          maxVUs: Math.floor(MAX_VUS),
+          gracefulStop: '3s',
+        },
   },
   thresholds: {
     http_req_failed: ['rate<0.001'],
