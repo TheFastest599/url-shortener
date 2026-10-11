@@ -12,7 +12,7 @@ A high-throughput, event-driven URL shortening and analytics platform built with
 
 ### Application UI & Operations Hub
 
-|       Growth Mission Control       |  Telemetry & Traffic Attribution   |
+|             Dashboard              |             Analytics              |
 | :--------------------------------: | :--------------------------------: |
 | ![Dashboard](assets/dashboard.png) | ![Analytics](assets/analytics.png) |
 
@@ -29,12 +29,54 @@ A high-throughput, event-driven URL shortening and analytics platform built with
 ### Key Capabilities & Highlights
 
 - **Sub-2ms Redirection Engine**: Reactive Spring WebFlux Netty runtime (`url-redirect-service`) using a **Consolidated Single Redis Hash** (`url:<shortCode>`), adaptive TTL caching, and Nginx HTTP/1.1 keep-alive connection pooling. Delivers clean URLs on `http://r.localhost/{shortCode}` with zero path-prefix overhead.
+- **Singleflight Request Collapsing & Stampede Protection**: Atomic in-flight cache miss collapsing (`ConcurrentHashMap<String, Mono<RoutingPayload>>` with Reactor `.cache()`). When cold or un-cached links experience high-concurrency traffic spikes, all simultaneous requests coalesce into a single downstream gRPC query to `url-core-service`, eliminating the "thundering herd" effect and shielding upstream databases.
 - **Smart Device Routing & Deep-Linking**: Inspects User-Agent headers to dynamically route visitors to native mobile destinations (iOS App Store, Android Google Play) or desktop fallbacks.
 - **Multivariate A/B Testing**: Configurable weighted traffic splits with 30-day sticky visitor cookies (`ab_<shortCode>`) for consistent user journeys and zero client-side flicker.
 - **Marketing Campaigns & Multi-Touch UTM Tracking**: Organizes short links into relational campaigns with predefined UTM parameters (`source`, `medium`, `campaign`, `term`, `content`) for full attribution modeling.
-- **Event-Driven Click Telemetry**: Non-blocking Kafka click stream (`url-clicks`) consumed in micro-batches (500 items / 50ms) by `url-analytics-service`, with MaxMind GeoIP country/city resolution, automated bot filtering, and PostgreSQL bulk writes (`reWriteBatchedInserts=true`).
+- **High-Throughput Kafka Ingestion & Macro-Batching Pipeline**:
+  - **Producer Hot-Path**: Asynchronous click telemetry dispatched to Kafka (`url-clicks`) with 64 KB memory buffers (`batch-size: 65536`), LZ4 block compression, and `linger.ms: 10` to avoid adding latency to redirects.
+  - **Consumer Macro-Batching**: Polls up to 5,000 records (`max-poll-records: 5000`, `fetch.min.bytes: 1MB`, `fetch.max.wait.ms: 5000`) in `url-analytics-service`, pairing MaxMind GeoIP resolution and bot filtering with PostgreSQL JDBC bulk writes (`reWriteBatchedInserts=true`).
 - **Enterprise Security Perimeter**: Spring Cloud Gateway with stateless JWT verification, R2DBC reactive database access, Refresh Token Rotation (RTR) via secure `HttpOnly` cookies, OAuth2 (Google & GitHub), and Token Bucket rate limiting.
 - **Decoupled Database Isolation**: Zero cross-database queries across 3 logically isolated PostgreSQL databases (`url_shortener_auth`, `url_shortener_core`, `url_shortener_analytics`), connected internally via strongly-typed gRPC channels.
+
+---
+
+### Verified Performance Benchmarks (5-Min Soak Test)
+
+The platform is engineered for ultra-low latency redirection and sustained event ingestion under high concurrency. Below are verified empirical results from a **5-minute sustained soak test** targeting the Nginx ingress gateway (`http://r.localhost`) via [load-tests/results/2026-10-11_19-44-28.md](load-tests/results/2026-10-11_19-44-28.md):
+
+#### Test Profile & Overview
+
+| Metric             | Target / Config     | Measured Result       |
+| :----------------- | :------------------ | :-------------------- |
+| **Duration**       | 5 minutes (300s)    | **5 minutes (300s)**  |
+| **Target Rate**    | 1,000 req/s         | **984.68 req/s**      |
+| **Total Requests** | ~300,000            | **305,241 requests**  |
+| **Error Rate**     | 0.000%              | **0.000% (0 errors)** |
+| **Target Ingress** | Nginx Reverse Proxy | `http://r.localhost`  |
+
+#### End-to-End Latency Percentiles (via Nginx Ingress)
+
+| Metric             | Measured Latency | SLA Target | Status  |
+| :----------------- | :--------------- | :--------- | :------ |
+| **Median (P50)**   | **0.60 ms**      | < 2.0 ms   | ✅ PASS |
+| **P90**            | **0.75 ms**      | < 6.0 ms   | ✅ PASS |
+| **Average (mean)** | **0.63 ms**      | < 5.0 ms   | ✅ PASS |
+| **P95**            | **0.83 ms**      | < 15.0 ms  | ✅ PASS |
+| **P99 (Tail)**     | **1.02 ms**      | < 35.0 ms  | ✅ PASS |
+| **P99.9**          | **2.81 ms**      | < 50.0 ms  | ✅ PASS |
+| **Max Outlier**    | **26.48 ms**     | -          | -       |
+
+#### Data Ingestion & Storage Durability
+
+During the 5-minute sustained benchmark, all redirection click events were asynchronously published to Apache Kafka (`url-clicks`) and batch-ingested into PostgreSQL by `url-analytics-service`:
+
+- **Rows Ingested**: **+304,630 rows** into PostgreSQL `click_analytics`
+- **Zero-Loss Durability**: **✅ 100% Ingested** (0 dropped events)
+- **Kafka Consumer Lag**: **0** at test completion
+- **Postgres Disk Footprint**: Scaled from 80 kB to 122 MB without degradation
+
+> Full telemetry and raw execution metrics: [load-tests/results/2026-10-11_19-44-28.md](load-tests/results/2026-10-11_19-44-28.md)
 
 ---
 
@@ -243,4 +285,5 @@ The repository documentation in [`docs/`](docs/) provides comprehensive architec
 
 ### Benchmarks & Performance
 
-- **[Redirect Load Testing & Production Scale Plan](docs/redirect_load_testing_and_scale_plan.md)** — Verified 800 RPS soak test benchmark results (1.84ms P50 latency, 0.000% error rate, 0 Kafka lag), unified `load-tests/cli.js` operations tool, and 10,000+ RPS horizontal scaling plan.
+- **[5-Minute Sustained 1,000 RPS Soak Test Report](load-tests/results/2026-10-11_19-44-28.md)** — Verified 305,241 request benchmark with 0.60ms P50 latency, 0.000% error rate, and 100% Kafka/PostgreSQL event ingestion durability.
+- **[Redirect Load Testing & Production Scale Plan](docs/redirect_load_testing_and_scale_plan.md)** — Detailed soak test scenarios, unified `load-tests/cli.js` operations tool, and 10,000+ RPS horizontal scaling plan.

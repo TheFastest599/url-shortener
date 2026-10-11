@@ -61,9 +61,9 @@ graph TD
         API_Gateway -->|Reads/Writes Auth| DB_Auth[("PostgreSQL Auth DB<br/>url_shortener_auth")]
         API_Gateway -->|Rate Limit Checks| Redis_Shared[("Redis Cache & Rate Store :6379")]
 
-        %% gRPC Channels
-        API_Gateway -.->|"gRPC :9090"| MS_Core["Core Admin Service :8081"]
-        API_Gateway -.->|"gRPC :9091"| MS_Analytics["Analytics Service :8083"]
+        %% Downstream HTTP REST Routing & Header/Query Transformation
+        API_Gateway -->|"HTTP REST :8081<br/>/api/v1/urls, campaigns, ab-tests<br/>(Header Enrichment: X-User-Id, Roles)"| MS_Core["Core Admin Service :8081"]
+        API_Gateway -->|"HTTP REST :8083<br/>/api/v1/analytics/**<br/>(Query & Header Forwarding)"| MS_Analytics["Analytics Service :8083"]
 
         %% Redirect Service
         MS_Redirect -->|"Consolidated Hash url:{code}<br/>INCR url:hits:{code}"| Redis_Shared

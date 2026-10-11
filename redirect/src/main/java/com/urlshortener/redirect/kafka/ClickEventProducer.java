@@ -6,6 +6,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
+/**
+ * ClickEventProducer
+ * Dispatches click telemetry events asynchronously to the 'url-clicks' Kafka topic.
+ * Uses client-side memory batching (64 KB buffer / linger 10ms) and non-blocking
+ * whenComplete callbacks to keep telemetry completely decoupled from the HTTP 302
+ * redirect critical path.
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor

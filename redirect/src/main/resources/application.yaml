@@ -23,6 +23,9 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      # High-throughput batching on redirect hot-path:
+      # - batch-size: 64 KB memory buffer to accumulate click events before sending
+      # - linger.ms: 10 ms wait window allows micro-batching without blocking HTTP 302 responses
       batch-size: 65536
       properties:
         linger.ms: 10

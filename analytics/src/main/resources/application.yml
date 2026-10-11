@@ -46,6 +46,8 @@ spring:
     consumer:
       group-id: ${KAFKA_CONSUMER_GROUP:analytics-ingest-group}
       auto-offset-reset: earliest
+      # Macro-batch consumption: Polling up to 5,000 records maximizes PostgreSQL JDBC bulk writes
+      # and ensures click analytics keep pace with 1,000+ RPS sustained redirect throughput
       max-poll-records: ${ANALYTICS_BATCH_SIZE:5000}
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
@@ -53,6 +55,8 @@ spring:
         spring.json.trusted.packages: "com.urlshortener.*"
         spring.json.value.default.type: "com.urlshortener.analytics.dto.ClickEvent"
         spring.json.use.type.headers: false
+        # Coalesce smaller event streams into large I/O payloads:
+        # wait up to 5000ms or until at least 1 MB of payload is ready in the broker
         fetch.max.wait.ms: ${ANALYTICS_BATCH_TIMEOUT_MS:5000}
         fetch.min.bytes: ${ANALYTICS_BATCH_FETCH_MIN_BYTES:1048576}
 

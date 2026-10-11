@@ -38,6 +38,12 @@ public class RedirectService {
     private final ClickEventProducer clickEventProducer;
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+    /**
+     * Singleflight concurrency collapsing table to prevent Cache Stampedes ("Thundering Herd").
+     * When an un-cached or cold shortCode experiences a sudden burst of concurrent requests,
+     * they coalesce into a single upstream gRPC query to core-service. All concurrent subscribers
+     * share the cached Mono response, and the entry is evicted from this map upon completion via doFinally().
+     */
     private final ConcurrentHashMap<String, Mono<ShortCodePayloadDto>> inFlightMisses = new ConcurrentHashMap<>();
 
     public Mono<String> resolveAndTrackUrl(String shortCode, ServerHttpRequest request, ServerHttpResponse response) {
@@ -195,6 +201,13 @@ public class RedirectService {
         return null;
     }
 
+    /**
+     * Singleflight Request Collapsing:
+     * 1. computeIfAbsent: Ensures only ONE upstream gRPC call is dispatched per shortCode simultaneously.
+     * 2. .cache(): Multicasts the resolved payload to all concurrent subscribers awaiting the response.
+     * 3. .doFinally(): Unregisters the in-flight Mono so subsequent calls fetch fresh state or read the warm Redis cache.
+     * 4. Pre-warms the Redis Hash in a single pipelined HSET/EXPIRE operation to serve future requests with sub-millisecond latency.
+     */
     private Mono<ShortCodePayloadDto> fetchPayloadWithSingleflight(String shortCode, String routeKey, String hitsKey,
                                                                   Duration adaptiveTtl, long hits) {
         return inFlightMisses.computeIfAbsent(shortCode, code -> {

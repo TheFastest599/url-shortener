@@ -260,6 +260,7 @@ public class RedirectService {
     private final ClickEventProducer clickEventProducer;
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+    private final ConcurrentHashMap<String, Mono<ShortCodePayloadDto>> inFlightMisses = new ConcurrentHashMap<>();
 
     public Mono<String> resolveAndTrackUrl(String shortCode, ServerHttpRequest request, ServerHttpResponse response) {
         String hitsKey = "url:hits:" + shortCode;
@@ -378,28 +379,42 @@ public class RedirectService {
         return null;
     }
 
+    private Mono<ShortCodePayloadDto> fetchPayloadWithSingleflight(String shortCode, String routeKey, String hitsKey,
+                                                                  Duration adaptiveTtl, long hits) {
+        return inFlightMisses.computeIfAbsent(shortCode, code -> {
+            return coreGrpcClient.getDestinationUrl(code)
+                    .flatMap(grpcResponse -> {
+                        // Guard Clause: Link not found or disabled
+                        if (!grpcResponse.getIsFound() || !grpcResponse.getIsActive()) {
+                            return Mono.empty();
+                        }
+
+                        // Build standardized DTO from gRPC single-query response
+                        ShortCodePayloadDto payload = ShortCodePayloadDto.fromGrpc(code, grpcResponse, hits, objectMapper);
+
+                        // Pre-warm consolidated Redis Hash in one operation
+                        Map<String, String> hash = payload.toHash(objectMapper);
+                        if (!hash.isEmpty()) {
+                            redisTemplate.opsForHash().putAll(routeKey, hash)
+                                    .then(redisTemplate.expire(routeKey, adaptiveTtl))
+                                    .subscribe();
+                        }
+
+                        // Keep hits counter alive for 24h
+                        redisTemplate.expire(hitsKey, Duration.ofDays(1)).subscribe();
+
+                        return Mono.just(payload);
+                    })
+                    .cache()
+                    .doFinally(signalType -> inFlightMisses.remove(code));
+        });
+    }
+
     private Mono<String> resolveFromGrpc(String shortCode, String routeKey, String hitsKey,
                                          Duration adaptiveTtl, long hits,
                                          ServerHttpRequest request, ServerHttpResponse response) {
-        return coreGrpcClient.getDestinationUrl(shortCode)
-                .flatMap(grpcResponse -> {
-                    if (!grpcResponse.getIsFound() || !grpcResponse.getIsActive()) {
-                        return Mono.empty();
-                    }
-
-                    ShortCodePayloadDto payload = ShortCodePayloadDto.fromGrpc(shortCode, grpcResponse, hits, objectMapper);
-
-                    // Pre-warm consolidated Redis Hash in one operation
-                    Map<String, String> hash = payload.toHash(objectMapper);
-                    if (!hash.isEmpty()) {
-                        redisTemplate.opsForHash().putAll(routeKey, hash)
-                                .then(redisTemplate.expire(routeKey, adaptiveTtl))
-                                .subscribe();
-                    }
-
-                    // Keep hits counter alive for 24h
-                    redisTemplate.expire(hitsKey, Duration.ofDays(1)).subscribe();
-
+        return fetchPayloadWithSingleflight(shortCode, routeKey, hitsKey, adaptiveTtl, hits)
+                .map(payload -> {
                     String dest = null;
                     String selectedVariant = null;
 
@@ -418,7 +433,7 @@ public class RedirectService {
                     }
 
                     emitTelemetry(shortCode, selectedVariant, payload, request);
-                    return Mono.just(mergeQueryParams(dest, request.getQueryParams()));
+                    return mergeQueryParams(dest, request.getQueryParams());
                 })
                 .onErrorResume(e -> {
                     log.error("Failed to resolve URL via gRPC for shortCode [{}]: {}", shortCode, e.getMessage());
