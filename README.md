@@ -26,18 +26,45 @@ A high-throughput, event-driven URL shortening and analytics platform built with
 
 **urlShortener** is an enterprise-grade URL shortening, intelligent traffic routing, and real-time marketing analytics platform engineered for modern growth teams. It decouples high-velocity edge redirection from asynchronous analytics ingestion and relational data stores, delivering sub-2ms response times under heavy load.
 
-### Key Capabilities & Highlights
+### Key Capabilities & Highlights (Technical Architecture)
 
-- **Sub-2ms Redirection Engine**: Reactive Spring WebFlux Netty runtime (`url-redirect-service`) using a **Consolidated Single Redis Hash** (`url:<shortCode>`), adaptive TTL caching, and Nginx HTTP/1.1 keep-alive connection pooling. Delivers clean URLs on `http://r.localhost/{shortCode}` with zero path-prefix overhead.
+- **Sub-2ms Redirection Engine**: Reactive Spring WebFlux Netty runtime (`url-redirect-service`) using a **Consolidated Single Redis Hash** (`url:<shortCode>`), adaptive TTL caching, and Nginx HTTP/1.1 keep-alive connection pooling (`keepalive 2048`). Delivers clean URLs on `http://r.localhost/{shortCode}` with zero path-prefix overhead.
 - **Singleflight Request Collapsing & Stampede Protection**: Atomic in-flight cache miss collapsing (`ConcurrentHashMap<String, Mono<ShortCodePayloadDto>>` with Reactor `.cache()`). When cold or un-cached links experience high-concurrency traffic spikes, all simultaneous requests coalesce into a single downstream gRPC query to `url-core-service`, eliminating the "thundering herd" effect and shielding upstream databases.
-- **Smart Device Routing & Deep-Linking**: Inspects User-Agent headers to dynamically route visitors to native mobile destinations (iOS App Store, Android Google Play) or desktop fallbacks.
-- **Multivariate A/B Testing**: Configurable weighted traffic splits with 30-day sticky visitor cookies (`ab_<shortCode>`) for consistent user journeys and zero client-side flicker.
-- **Marketing Campaigns & Multi-Touch UTM Tracking**: Organizes short links into relational campaigns with predefined UTM parameters (`source`, `medium`, `campaign`, `term`, `content`) for full attribution modeling.
 - **High-Throughput Kafka Ingestion & Macro-Batching Pipeline**:
   - **Producer Hot-Path**: Asynchronous click telemetry dispatched to Kafka (`url-clicks`) with 64 KB memory buffers (`batch-size: 65536`), LZ4 block compression, and `linger.ms: 10` to avoid adding latency to redirects.
   - **Consumer Macro-Batching**: Polls up to 5,000 records (`max-poll-records: 5000`, `fetch.min.bytes: 1MB`, `fetch.max.wait.ms: 5000`) in `url-analytics-service`, pairing MaxMind GeoIP resolution and bot filtering with PostgreSQL JDBC bulk writes (`reWriteBatchedInserts=true`).
 - **Enterprise Security Perimeter**: Spring Cloud Gateway with stateless JWT verification, R2DBC reactive database access, Refresh Token Rotation (RTR) via secure `HttpOnly` cookies, OAuth2 (Google & GitHub), and Token Bucket rate limiting.
 - **Decoupled Database Isolation**: Zero cross-database queries across 3 logically isolated PostgreSQL databases (`url_shortener_auth`, `url_shortener_core`, `url_shortener_analytics`), connected internally via strongly-typed gRPC channels.
+
+---
+
+### Core Platform Features & Growth Suite
+
+#### 1. Ultra-Low Latency Redirection
+- **Clean Root Short URLs:** Direct root short code resolution (`http://r.localhost/{shortCode}`) without ugly `/r/` or `/s/` path prefixes.
+- **Adaptive TTL Caching:** Frequently accessed links automatically have their Redis cache TTL extended based on real-time traffic volume.
+- **Root Fallback:** Visiting root `http://r.localhost/` bounces back to the parent web application `http://localhost/` via HTTP 302.
+
+#### 2. Real-Time Analytics & Deep Monitoring
+- **Geographic Intelligence (Country & City):** Integrated **MaxMind GeoIP2** database automatically resolves incoming IP addresses into visitor **Country** (with ISO flag mapping) and **City**.
+- **Device & Client Breakdown:** Real-time User-Agent classification across **Mobile** (iPhone, Android), **Tablet** (iPad), **Desktop** (Windows, macOS, Linux), and **Smart TV**.
+- **Browser & OS Distribution:** Continuous tracking of Chrome, Safari, Firefox, Edge, Opera, and operating system distributions.
+- **Automated Bot & Crawler Filtering:** Automatically detects and tags search engines, link preview scrapers (Slack, Twitter/X, LinkedIn, WhatsApp), and automated scripts (`is_bot = true`) to keep analytics pristine.
+- **Referrer Attribution:** Tracks incoming traffic sources (Twitter/X, Reddit, LinkedIn, Hacker News, Google Search, Direct).
+
+#### 3. Marketing Campaigns & Multi-Touch UTM Tracking
+- **Relational Campaign Groups:** Group and manage thousands of links under marketing campaigns (e.g., *Black Friday Flash Sale*, *Global Launch 2026*).
+- **UTM Parameter Management:** Predefine and dynamically append Google Analytics standard tags (`utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`).
+- **Campaign-Level Performance Rollups:** Measure aggregate clicks, unique visitors, and top-performing assets across whole campaigns.
+
+#### 4. Multivariate A/B Testing & Smart Split Routing
+- **Configurable Weighted Variants:** Define custom percentage splits across landing page destinations (e.g., Variant A: 25%, Variant B: 25%, Variant C: 50%).
+- **30-Day Sticky Visitor Cookies (`ab_<shortCode>`):** Visitors remain locked to their assigned variant across repeat visits for consistent user journeys and zero client-side flicker.
+- **Live Variant Telemetry:** Monitor engagement and conversion rates per variant in real time on the operations dashboard.
+
+#### 5. Smart Device Routing & Mobile Deep-Linking
+- **Dynamic Device Detection:** Route iOS users directly to the Apple App Store, Android users to Google Play, and desktop users to fallback landing pages.
+- **Universal Reachability:** Ensure links work seamlessly across every mobile browser and native app wrapper.
 
 ---
 
@@ -53,23 +80,23 @@ The platform is engineered for ultra-low latency redirection and sustained event
 | :--- | :--- | :--- | :--- | :--- |
 | **Duration** | 5 minutes (300s) | 5 minutes (300s) | - | - |
 | **Target Rate** | 1,000 req/s | 5,000 req/s | - | - |
-| **Achieved Throughput** | **984.68 req/s** | **4,923.14 req/s** | > 95% target | ✅ PASS |
+| **Achieved Throughput** | **984.68 req/s** | **4,923.14 req/s** | > 95% target | PASS |
 | **Total Requests** | **305,241 requests** | **1,526,133 requests** | - | - |
-| **Error Rate** | **0.000% (0 errors)** | **0.000% (0 errors)** | < 0.01% | ✅ PASS |
-| **Postgres Rows Ingested** | **+304,630 rows** | **+1,525,940 rows** | 100% | ✅ PASS |
-| **Postgres Disk Footprint** | 80 kB $\rightarrow$ **122 MB** | 80 kB $\rightarrow$ **615 MB** | Zero loss | ✅ PASS |
-| **Kafka Consumer Lag** | **0** (fully drained) | **0** (fully drained) | 0 lag | ✅ PASS |
+| **Error Rate** | **0.000% (0 errors)** | **0.000% (0 errors)** | < 0.01% | PASS |
+| **Postgres Rows Ingested** | **+304,630 rows** | **+1,525,940 rows** | 100% | PASS |
+| **Postgres Disk Footprint** | 80 kB $\rightarrow$ **122 MB** | 80 kB $\rightarrow$ **615 MB** | Zero loss | PASS |
+| **Kafka Consumer Lag** | **0** (fully drained) | **0** (fully drained) | 0 lag | PASS |
 
 #### End-to-End Latency Percentiles (via Nginx Ingress)
 
 | Latency Percentile | 1,000 RPS Soak | 5,000 RPS Stress Soak | SLA Target | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| **Median (P50)** | **0.60 ms** | **0.70 ms** | < 2.0 ms | ✅ Sub-millisecond |
-| **P90** | **0.75 ms** | **3.02 ms** | < 6.0 ms | ✅ PASS |
-| **Average (mean)** | **0.63 ms** | **2.71 ms** | < 5.0 ms | ✅ PASS |
-| **P95** | **0.83 ms** | **7.66 ms** | < 15.0 ms | ✅ PASS |
-| **P99 (Tail)** | **1.02 ms** | **44.11 ms** | < 35.0 ms | ✅ PASS (< 1.5ms steady) |
-| **P99.9** | **2.81 ms** | **175.28 ms** | < 50.0 ms | ✅ PASS |
+| **Median (P50)** | **0.60 ms** | **0.70 ms** | < 2.0 ms | Sub-millisecond |
+| **P90** | **0.75 ms** | **3.02 ms** | < 6.0 ms | PASS |
+| **Average (mean)** | **0.63 ms** | **2.71 ms** | < 5.0 ms | PASS |
+| **P95** | **0.83 ms** | **7.66 ms** | < 15.0 ms | PASS |
+| **P99 (Tail)** | **1.02 ms** | **44.11 ms** | < 35.0 ms | PASS (< 1.5ms steady) |
+| **P99.9** | **2.81 ms** | **175.28 ms** | < 50.0 ms | PASS |
 | **Max Outlier** | **26.48 ms** | **494.71 ms** | - | - |
 
 > Full telemetry and raw execution metrics:
