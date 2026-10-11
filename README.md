@@ -29,7 +29,7 @@ A high-throughput, event-driven URL shortening and analytics platform built with
 ### Key Capabilities & Highlights
 
 - **Sub-2ms Redirection Engine**: Reactive Spring WebFlux Netty runtime (`url-redirect-service`) using a **Consolidated Single Redis Hash** (`url:<shortCode>`), adaptive TTL caching, and Nginx HTTP/1.1 keep-alive connection pooling. Delivers clean URLs on `http://r.localhost/{shortCode}` with zero path-prefix overhead.
-- **Singleflight Request Collapsing & Stampede Protection**: Atomic in-flight cache miss collapsing (`ConcurrentHashMap<String, Mono<RoutingPayload>>` with Reactor `.cache()`). When cold or un-cached links experience high-concurrency traffic spikes, all simultaneous requests coalesce into a single downstream gRPC query to `url-core-service`, eliminating the "thundering herd" effect and shielding upstream databases.
+- **Singleflight Request Collapsing & Stampede Protection**: Atomic in-flight cache miss collapsing (`ConcurrentHashMap<String, Mono<ShortCodePayloadDto>>` with Reactor `.cache()`). When cold or un-cached links experience high-concurrency traffic spikes, all simultaneous requests coalesce into a single downstream gRPC query to `url-core-service`, eliminating the "thundering herd" effect and shielding upstream databases.
 - **Smart Device Routing & Deep-Linking**: Inspects User-Agent headers to dynamically route visitors to native mobile destinations (iOS App Store, Android Google Play) or desktop fallbacks.
 - **Multivariate A/B Testing**: Configurable weighted traffic splits with 30-day sticky visitor cookies (`ab_<shortCode>`) for consistent user journeys and zero client-side flicker.
 - **Marketing Campaigns & Multi-Touch UTM Tracking**: Organizes short links into relational campaigns with predefined UTM parameters (`source`, `medium`, `campaign`, `term`, `content`) for full attribution modeling.
@@ -41,48 +41,46 @@ A high-throughput, event-driven URL shortening and analytics platform built with
 
 ---
 
-### Verified Performance Benchmarks (5-Min Soak Test)
+### Verified Performance Benchmarks (5-Min Soak Tests)
 
-The platform is engineered for ultra-low latency redirection and sustained event ingestion under high concurrency. Below are verified empirical results from a **5-minute sustained soak test** targeting the Nginx ingress gateway (`http://r.localhost`) via [load-tests/results/2026-10-11_19-44-28.md](load-tests/results/2026-10-11_19-44-28.md):
+The platform is engineered for ultra-low latency redirection and sustained event ingestion under high concurrency. Below are verified empirical results from two consecutive **5-minute sustained soak tests** targeting the Nginx ingress gateway (`http://r.localhost`):
+- **1,000 RPS Soak Test**: [load-tests/results/2026-10-11_19-44-28.md](load-tests/results/2026-10-11_19-44-28.md)
+- **5,000 RPS Soak Test**: [load-tests/results/2026-10-12_01-12-00.md](load-tests/results/2026-10-12_01-12-00.md)
 
-#### Test Profile & Overview
+#### Comparative Test Profile & Data Ingestion
 
-| Metric             | Target / Config     | Measured Result       |
-| :----------------- | :------------------ | :-------------------- |
-| **Duration**       | 5 minutes (300s)    | **5 minutes (300s)**  |
-| **Target Rate**    | 1,000 req/s         | **984.68 req/s**      |
-| **Total Requests** | ~300,000            | **305,241 requests**  |
-| **Error Rate**     | 0.000%              | **0.000% (0 errors)** |
-| **Target Ingress** | Nginx Reverse Proxy | `http://r.localhost`  |
+| Metric / Profile | 1,000 RPS Soak Test | 5,000 RPS Stress Soak | SLA Target | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **Duration** | 5 minutes (300s) | 5 minutes (300s) | - | - |
+| **Target Rate** | 1,000 req/s | 5,000 req/s | - | - |
+| **Achieved Throughput** | **984.68 req/s** | **4,923.14 req/s** | > 95% target | ✅ PASS |
+| **Total Requests** | **305,241 requests** | **1,526,133 requests** | - | - |
+| **Error Rate** | **0.000% (0 errors)** | **0.000% (0 errors)** | < 0.01% | ✅ PASS |
+| **Postgres Rows Ingested** | **+304,630 rows** | **+1,525,940 rows** | 100% | ✅ PASS |
+| **Postgres Disk Footprint** | 80 kB $\rightarrow$ **122 MB** | 80 kB $\rightarrow$ **615 MB** | Zero loss | ✅ PASS |
+| **Kafka Consumer Lag** | **0** (fully drained) | **0** (fully drained) | 0 lag | ✅ PASS |
 
 #### End-to-End Latency Percentiles (via Nginx Ingress)
 
-| Metric             | Measured Latency | SLA Target | Status  |
-| :----------------- | :--------------- | :--------- | :------ |
-| **Median (P50)**   | **0.60 ms**      | < 2.0 ms   | ✅ PASS |
-| **P90**            | **0.75 ms**      | < 6.0 ms   | ✅ PASS |
-| **Average (mean)** | **0.63 ms**      | < 5.0 ms   | ✅ PASS |
-| **P95**            | **0.83 ms**      | < 15.0 ms  | ✅ PASS |
-| **P99 (Tail)**     | **1.02 ms**      | < 35.0 ms  | ✅ PASS |
-| **P99.9**          | **2.81 ms**      | < 50.0 ms  | ✅ PASS |
-| **Max Outlier**    | **26.48 ms**     | -          | -       |
+| Latency Percentile | 1,000 RPS Soak | 5,000 RPS Stress Soak | SLA Target | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **Median (P50)** | **0.60 ms** | **0.70 ms** | < 2.0 ms | ✅ Sub-millisecond |
+| **P90** | **0.75 ms** | **3.02 ms** | < 6.0 ms | ✅ PASS |
+| **Average (mean)** | **0.63 ms** | **2.71 ms** | < 5.0 ms | ✅ PASS |
+| **P95** | **0.83 ms** | **7.66 ms** | < 15.0 ms | ✅ PASS |
+| **P99 (Tail)** | **1.02 ms** | **44.11 ms** | < 35.0 ms | ✅ PASS (< 1.5ms steady) |
+| **P99.9** | **2.81 ms** | **175.28 ms** | < 50.0 ms | ✅ PASS |
+| **Max Outlier** | **26.48 ms** | **494.71 ms** | - | - |
 
-#### Data Ingestion & Storage Durability
-
-During the 5-minute sustained benchmark, all redirection click events were asynchronously published to Apache Kafka (`url-clicks`) and batch-ingested into PostgreSQL by `url-analytics-service`:
-
-- **Rows Ingested**: **+304,630 rows** into PostgreSQL `click_analytics`
-- **Zero-Loss Durability**: **✅ 100% Ingested** (0 dropped events)
-- **Kafka Consumer Lag**: **0** at test completion
-- **Postgres Disk Footprint**: Scaled from 80 kB to 122 MB without degradation
-
-> Full telemetry and raw execution metrics: [load-tests/results/2026-10-11_19-44-28.md](load-tests/results/2026-10-11_19-44-28.md)
+> Full telemetry and raw execution metrics:
+> - **1,000 req/s Run**: [Report](load-tests/results/2026-10-11_19-44-28.md) & [Telemetry JSON](load-tests/results/2026-10-11_19-44-28.json)
+> - **5,000 req/s Run**: [Report](load-tests/results/2026-10-12_01-12-00.md) & [Telemetry JSON](load-tests/results/2026-10-12_01-12-00.json)
 
 ---
 
 ### Host Port Exposure & Isolation Matrix
 
-Only **Nginx Ingress** publishes a port (`80`) to the host machine. All databases, message brokers, and internal microservices run isolated inside the private Docker bridge network (`url-shortener-net`):
+Only **Nginx Ingress** publishes a public web port (`80`) to the host machine. All microservices and databases communicate over the private Docker bridge network (`url-shortener-net`). Redis (`6379`) and Kafka (`9092`) publish ports strictly for local development and CLI operations tooling:
 
 | Service           | Internal Port                | Host Port Exposed  | Role & Routing                                                                                                                                        |
 | :---------------- | :--------------------------- | :----------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -93,8 +91,8 @@ Only **Nginx Ingress** publishes a port (`80`) to the host machine. All database
 | **`core`**        | `8081` (REST), `9090` (gRPC) | _Internal only_    | URL & UTM management, campaigns, A/B testing, gRPC resolution engine.                                                                                 |
 | **`analytics`**   | `8083` (REST), `9091` (gRPC) | _Internal only_    | Kafka batch consumer, MaxMind GeoIP resolution, time-series aggregations.                                                                             |
 | **PostgreSQL**    | `5432`                       | _Internal only_    | Multi-database instance (`url_shortener_auth`, `url_shortener_core`, `url_shortener_analytics`).                                                      |
-| **Redis**         | `6379`                       | _Internal only_    | In-memory cache for fast link lookup & distributed rate limiting.                                                                                     |
-| **Kafka (KRaft)** | `29092`                      | _Internal only_    | High-throughput event stream for click tracking (`url-clicks` topic).                                                                                 |
+| **Redis**         | `6379`                       | `6379:6379`        | In-memory cache for fast link lookup & distributed rate limiting (exposed for local CLI operations & hybrid dev).                                   |
+| **Kafka (KRaft)** | `29092`                      | `9092:9092`        | High-throughput event stream for click tracking (internal: `29092`, host: `9092` for local hybrid dev).                                              |
 
 ---
 
@@ -280,10 +278,11 @@ The repository documentation in [`docs/`](docs/) provides comprehensive architec
 - **[Redirect Service Guide](docs/redirect_service_guide.md)** — Reactive WebFlux Netty engine, Consolidated Single Redis Hash (`url:<shortCode>`), parallel `Mono.zip` hit counting, adaptive TTL, and gRPC fallback.
 - **[Core Admin Service Guide](docs/core_service_guide.md)** — Base62 Bijective encoding, campaign rollups, A/B configuration, committed jOOQ query layer, and single-key Redis cache invalidation.
 - **[API Gateway & Security Guide](docs/api_gateway_security_guide.md)** — Stateless JWT verification filter chain, R2DBC non-blocking database queries, Refresh Token Rotation (RTR), and token-bucket rate limiting.
-- **[Analytics Service Guide](docs/analytics_service_guide.md)** — Kafka micro-batch ingestion (500 records / 50ms), MaxMind GeoIP2 resolution, bot classification, and `reWriteBatchedInserts` bulk PostgreSQL writes.
+- **[Analytics Service Guide](docs/analytics_service_guide.md)** — Kafka macro-batch ingestion (up to 5,000 records / 5s), MaxMind GeoIP2 resolution, bot classification, and `reWriteBatchedInserts` bulk PostgreSQL writes.
 - **[Smart Routing, Campaigns & A/B Testing Master Guide](docs/smart_routing_campaigns_and_ab_testing_master_guide.md)** — Device deep-linking rules (iOS / Android / Desktop), cumulative weighted random variant selection, and sticky visitor cookies.
 
 ### Benchmarks & Performance
 
+- **[5-Minute Sustained 5,000 RPS Soak Test Report](load-tests/results/2026-10-12_01-12-00.md)** — Verified 1,526,133 request benchmark with 0.70ms P50 latency, 0.000% error rate, and +1,525,940 rows ingested.
 - **[5-Minute Sustained 1,000 RPS Soak Test Report](load-tests/results/2026-10-11_19-44-28.md)** — Verified 305,241 request benchmark with 0.60ms P50 latency, 0.000% error rate, and 100% Kafka/PostgreSQL event ingestion durability.
 - **[Redirect Load Testing & Production Scale Plan](docs/redirect_load_testing_and_scale_plan.md)** — Detailed soak test scenarios, unified `load-tests/cli.js` operations tool, and 10,000+ RPS horizontal scaling plan.

@@ -1,6 +1,7 @@
 import http from 'k6/http';
 import { check } from 'k6';
 import { Rate, Trend, Counter } from 'k6/metrics';
+import exec from 'k6/execution';
 
 // Custom Telemetry Metrics
 const redirectSuccessRate = new Rate('redirect_success');
@@ -265,6 +266,31 @@ const MAX_VUS = __ENV.MAX_VUS ? parseInt(__ENV.MAX_VUS, 10) : Math.max(100, Math
 
 const hasRamp = RAMP_TIME && RAMP_TIME !== '0s' && RAMP_TIME !== '0';
 
+function parseDurationToMs(durStr) {
+  if (!durStr) return 0;
+  const match = String(durStr).trim().match(/^(\d+(?:\.\d+)?)(ms|s|m|h)?$/);
+  if (!match) return 0;
+  const val = parseFloat(match[1]);
+  const unit = match[2] || 's';
+  switch (unit) {
+    case 'ms': return val;
+    case 's': return val * 1000;
+    case 'm': return val * 60 * 1000;
+    case 'h': return val * 3600 * 1000;
+    default: return val * 1000;
+  }
+}
+
+const RAMP_MS = hasRamp ? parseDurationToMs(RAMP_TIME) : 0;
+const scriptStartTime = Date.now();
+
+function getTestElapsedMs() {
+  if (exec && exec.instance && typeof exec.instance.currentTestRunDuration === 'number') {
+    return exec.instance.currentTestRunDuration;
+  }
+  return Date.now() - scriptStartTime;
+}
+
 export const options = {
   discardResponseBodies: true,
   summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'p(99.9)', 'max'],
@@ -293,13 +319,35 @@ export const options = {
         },
   },
   thresholds: {
+    'http_req_failed{phase:measured}': ['rate<0.001'],
+    'http_req_duration{phase:measured}': ['p(95)<15', 'p(99)<35'],
     http_req_failed: ['rate<0.001'],
     http_req_duration: ['p(95)<15', 'p(99)<35'],
     redirect_success: ['rate>0.999'],
   },
 };
 
+let rampTransitionLogged = false;
+
 export default function () {
+  // Determine if this request is during the steady-state measured phase
+  const isMeasuredPhase = !hasRamp || getTestElapsedMs() >= RAMP_MS;
+
+  // Distinct indicator displayed when switching from ramp to measured test
+  if (hasRamp && isMeasuredPhase && !rampTransitionLogged) {
+    if (exec && exec.vu && (exec.vu.idInTest === 1 || !exec.vu.idInTest)) {
+      rampTransitionLogged = true;
+      console.log(
+        '\n\x1b[32m' + '═'.repeat(60) + '\n' +
+        ' >>> [WARM-UP COMPLETE] SWITCHING TO RECORDED TEST <<<\n' +
+        ` Target Rate : ${TARGET_RPS} req/s\n` +
+        ` Duration    : ${DURATION}\n` +
+        ` Status      : RECORDING ACTIVE\n` +
+        '═'.repeat(60) + '\x1b[0m\n'
+      );
+    }
+  }
+
   // Balanced weighted selection across all 8 seeded links & campaigns
   const targetLink = pickTargetLink();
   const code = targetLink.code;
@@ -314,6 +362,9 @@ export default function () {
       'User-Agent': ua,
       'X-Forwarded-For': ip,
       'Connection': 'keep-alive',
+    },
+    tags: {
+      phase: isMeasuredPhase ? 'measured' : 'ramp',
     },
   };
 
@@ -335,20 +386,22 @@ export default function () {
 
   // Track if this VU holds an active A/B cookie previously set by the server
   const storedCookies = jar.cookiesForURL(baseUrl);
-  if (storedCookies[`ab_${code}`] && storedCookies[`ab_${code}`].length > 0) {
+  if (isMeasuredPhase && storedCookies[`ab_${code}`] && storedCookies[`ab_${code}`].length > 0) {
     stickyCookieHits.add(1);
   }
 
-  // Device telemetry counters
-  const uaLower = ua.toLowerCase();
-  if (uaLower.includes('bot') || uaLower.includes('crawl') || uaLower.includes('curl') || uaLower.includes('spider')) {
-    botHits.add(1);
-  } else if (uaLower.includes('ipad') || uaLower.includes('tablet')) {
-    tabletHits.add(1);
-  } else if (uaLower.includes('mobi') || uaLower.includes('iphone') || uaLower.includes('android')) {
-    mobileHits.add(1);
-  } else {
-    desktopHits.add(1);
+  // Device telemetry counters (recorded during measured phase)
+  if (isMeasuredPhase) {
+    const uaLower = ua.toLowerCase();
+    if (uaLower.includes('bot') || uaLower.includes('crawl') || uaLower.includes('curl') || uaLower.includes('spider')) {
+      botHits.add(1);
+    } else if (uaLower.includes('ipad') || uaLower.includes('tablet')) {
+      tabletHits.add(1);
+    } else if (uaLower.includes('mobi') || uaLower.includes('iphone') || uaLower.includes('android')) {
+      mobileHits.add(1);
+    } else {
+      desktopHits.add(1);
+    }
   }
 
   // Construct dynamic URL with realistic UTM parameters
@@ -370,8 +423,12 @@ export default function () {
   const elapsed = Date.now() - startTime;
 
   const isSuccess = res.status === 302 && res.headers['Location'] !== undefined;
-  redirectSuccessRate.add(isSuccess);
-  redirectLatency.add(elapsed);
+
+  // Only count latency and success rates during the steady-state measured phase
+  if (isMeasuredPhase) {
+    redirectSuccessRate.add(isSuccess);
+    redirectLatency.add(elapsed);
+  }
 
   check(res, {
     'status is 302': (r) => r.status === 302,

@@ -440,9 +440,8 @@ async function runTest(options) {
 	console.log("\x1b[36m" + "=".repeat(60));
 	console.log(" Black-Box Redirect Load Test Runner (Dockerized k6)");
 	console.log(` Target Ingress : ${baseUrl}`);
-	console.log(` Duration       : ${duration}`);
 	console.log(` Target Rate    : ${rps} req/sec`);
-	console.log(` Warm-up Ramp   : ${options.ramp || "10s (Gradual)"}`);
+	console.log(` Duration       : ${duration}`);
 	console.log("=".repeat(60) + "\x1b[0m\n");
 
 	// Clean up any stray shell artifacts
@@ -539,14 +538,29 @@ async function runTest(options) {
 				unlinkSync(RESULTS_PATH);
 			} catch {}
 
+			function parseDurationSec(durStr) {
+				if (!durStr) return 60;
+				const match = String(durStr).trim().match(/^(\d+(?:\.\d+)?)(ms|s|m|h)?$/);
+				if (!match) return 60;
+				const val = parseFloat(match[1]);
+				const unit = match[2] || "s";
+				if (unit === "ms") return Math.max(1, Math.round(val / 1000));
+				if (unit === "m") return Math.round(val * 60);
+				if (unit === "h") return Math.round(val * 3600);
+				return Math.round(val);
+			}
+
 			const data = JSON.parse(readFileSync(runResultsPath, "utf-8"));
 			const m = data.metrics || {};
-			const dur = m.http_req_duration || {};
-			const reqs = m.http_reqs || {};
-			const failed = m.http_req_failed || {};
+			const dur = m["http_req_duration{phase:measured}"] || m["http_req_duration{scenario:recorded_test}"] || m.redirect_latency || m.http_req_duration || {};
+			const reqs = m["http_reqs{phase:measured}"] || m["http_reqs{scenario:recorded_test}"] || m.http_reqs || {};
+			const failed = m["http_req_failed{phase:measured}"] || m["http_req_failed{scenario:recorded_test}"] || m.http_req_failed || {};
 
-			const achievedRate = reqs.rate ? reqs.rate.toFixed(2) : "0.00";
+			const durSec = parseDurationSec(duration);
 			const totalReqs = reqs.count || 0;
+			const achievedRate = durSec > 0 && totalReqs > 0
+				? (totalReqs / durSec).toFixed(2)
+				: (reqs.rate ? reqs.rate.toFixed(2) : "0.00");
 			const failRate =
 				failed.value !== undefined
 					? (failed.value * 100).toFixed(3)
@@ -570,7 +584,7 @@ async function runTest(options) {
 
 - **Timestamp**: ${timestamp}
 - **Target Ingress**: ${baseUrl}
-- **Target RPS**: ${rps} req/s (Warm-up Ramp: ${options.ramp || "None"}) | **Duration**: ${duration}
+- **Target RPS**: ${rps} req/s | **Duration**: ${duration}
 - **Achieved RPS**: ${achievedRate} req/s
 - **Total Requests**: ${totalReqs.toLocaleString()}
 - **Error Rate**: ${failRate}%
@@ -583,10 +597,10 @@ async function runTest(options) {
 | :--- | :--- | :--- | :--- |
 | **Median (P50)** | **${medLat} ms** | < 2.0 ms | ${medLat < 2 ? "✅ PASS" : "⚡ Near Sub-2ms"} |
 | **P90** | **${p90Lat} ms** | < 6.0 ms | ${p90Lat < 6 ? "✅ PASS" : "⚠️ WATCH"} |
-| **Average (mean)** | **${avgLat} ms** | < 5.0 ms | ${avgLat < 5 ? "✅ PASS" : "⚠️ Warmup Skew"} |
-| **P95** | **${p95Lat} ms** | < 15.0 ms | ${p95Lat < 15 ? "✅ PASS" : "⚠️ Warmup Skew"} |
-| **P99 (Tail)** | **${p99Lat} ms** | < 35.0 ms | ${p99Lat < 35 ? "✅ PASS" : "⚠️ Initial Handshakes"} |
-| **P99.9** | **${p999Lat} ms** | < 50.0 ms | ${p999Lat < 50 ? "✅ PASS" : "⚠️ Initial Handshakes"} |
+| **Average (mean)** | **${avgLat} ms** | < 5.0 ms | ${avgLat < 5 ? "✅ PASS" : "⚠️ WATCH"} |
+| **P95** | **${p95Lat} ms** | < 15.0 ms | ${p95Lat < 15 ? "✅ PASS" : "⚠️ WATCH"} |
+| **P99 (Tail)** | **${p99Lat} ms** | < 35.0 ms | ${p99Lat < 35 ? "✅ PASS" : "⚠️ WATCH"} |
+| **P99.9** | **${p999Lat} ms** | < 50.0 ms | ${p999Lat < 50 ? "✅ PASS" : "⚠️ WATCH"} |
 | **Max Outlier** | **${maxLat} ms** | - | - |
 
 ---
@@ -607,6 +621,8 @@ async function runTest(options) {
 			console.log("\n\x1b[32m[Report Generated]\x1b[0m");
 			console.log(`  Report : load-tests/results/${runId}.md`);
 			console.log(`  Raw    : load-tests/results/${runId}.json`);
+			console.log(`  Target : ${rps} req/s | Measured: ${achievedRate} req/s over ${duration}`);
+			console.log(`  Latency: P50=${medLat}ms, P90=${p90Lat}ms, P99=${p99Lat}ms, P99.9=${p999Lat}ms`);
 		} catch (e) {
 			console.log("Notice: Failed to parse results JSON:", e.message);
 		}
