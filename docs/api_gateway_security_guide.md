@@ -28,12 +28,11 @@ By following this guide, you will learn how to build a modern, high-performance 
 
 ```mermaid
 flowchart TD
-    Client["🌐 Client Browser / SPA"] --> Ingress["Nginx Edge Ingress (:80)"]
-    Ingress -->|"Proxy /api/v1/auth/*"| Gateway["API Gateway (:8080)<br/>Spring WebFlux + Spring Security"]
+    Client["🌐 Client Browser / SPA"] --> Ingress["Nginx Edge Ingress (:80)<br/>Edge Rate Limiter (limit_req)"]
+    Ingress -->|"Proxy /api/v1/auth/* (Rate Limited: 15 req/s)"| Gateway["API Gateway (:8080)<br/>Spring WebFlux + Spring Security"]
     
     subgraph Gateway Security Engine
         Gateway -->|"Stateless JWT Verification<br/>(In-Memory Microsecond Check)"| JwtFilter["JwtAuthenticationFilter"]
-        Gateway -->|"Rate Limit Check"| RedisCache[("Redis Rate Store :6379<br/>Token Bucket")]
         Gateway -->|"Non-blocking CRUD<br/>(R2DBC Connection Pool)"| AuthDB[("PostgreSQL Auth DB<br/>url_shortener_auth")]
         Gateway -->|"Forward Authenticated<br/>(Inject X-User-Id header)"| Downstream["Core / Analytics Microservices"]
     end

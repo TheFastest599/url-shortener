@@ -165,8 +165,6 @@ services:
         depends_on:
             postgres:
                 condition: service_healthy
-            redis:
-                condition: service_healthy
             core:
                 condition: service_started
             analytics:

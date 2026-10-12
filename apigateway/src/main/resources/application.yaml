@@ -47,10 +47,6 @@ spring:
     locations: classpath:db/migration
     connect-retries: 20
     connect-retries-interval: 2s
-  data:
-    redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
 
 app:
   frontend-url: http://localhost:5173
@@ -97,10 +93,6 @@ spring:
     url: r2dbc:postgresql://postgres:${DB_PORT:5432}/${DB_NAME:url_shortener_auth}
   flyway:
     url: jdbc:postgresql://postgres:${DB_PORT:5432}/${DB_NAME:url_shortener_auth}
-  data:
-    redis:
-      host: redis
-      port: ${REDIS_PORT:6379}
 
 app:
   frontend-url: http://localhost

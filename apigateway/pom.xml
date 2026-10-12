@@ -41,13 +41,7 @@
 			<scope>runtime</scope>
 		</dependency>
 
-		<!-- 4. Reactive Redis (Rate Limiting) -->
-		<dependency>
-			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-starter-data-redis-reactive</artifactId>
-		</dependency>
-
-		<!-- 5. Flyway Migrations & PostgreSQL JDBC -->
+		<!-- 4. Flyway Migrations & PostgreSQL JDBC -->
 		<dependency>
 			<groupId>org.flywaydb</groupId>
 			<artifactId>flyway-core</artifactId>

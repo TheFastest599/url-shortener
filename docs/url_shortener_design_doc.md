@@ -26,7 +26,7 @@ An **API Gateway** acts as the single entrypoint for all external client request
    Handles all authentication and authorization concerns at the perimeter. It integrates local email/password registration and OAuth2 authentication (Google, GitHub), issues stateless JSON Web Tokens (JWT), manages secure `HttpOnly` refresh token cookies, and performs Refresh Token Rotation (RTR). It blocks unauthorized traffic before it penetrates the internal network.
 
 3. **Distributed Rate Limiting:**
-   Protects downstream backend applications from Denial of Service (DoS) attacks, scraping, and client abuse. By executing high-performance checks against Redis at the edge, it rejects requests exceeding rate limits (HTTP `429 Too Many Requests`) before consuming backend database or processing power.
+   Protects downstream backend applications from Denial of Service (DoS) attacks, scraping, and client abuse. Rate limiting is strictly enforced at the **Nginx edge perimeter** using shared-memory zones (`limit_req_zone` 15 req/s for API Gateway, 50 req/s for redirects), rejecting abusive traffic before it ever penetrates internal microservices or databases.
 
 4. **Protocol Translation & Orchestration:**
    Translates external client-facing protocols (HTTP REST / JSON) into high-performance internal protocols (gRPC / Protocol Buffers). It orchestrates complex client requests by querying multiple gRPC microservices in parallel, aggregating their responses, and returning a unified JSON payload to the client.
@@ -48,25 +48,24 @@ An **API Gateway** acts as the single entrypoint for all external client request
 
 ```mermaid
 graph TD
-    Client(["🌐 Client Browser / Visitor"]) --> Ingress["Nginx Edge Ingress (:80)"]
+    Client(["🌐 Client Browser / Visitor"]) --> Ingress["Nginx Edge Ingress (:80)<br/>Edge Rate Limiter (limit_req)"]
     
     subgraph Edge Ingress Routing
         Ingress -->|"Main Domain (localhost): /"| ReactSPA["Static React SPA Bundle<br/>/usr/share/nginx/html"]
-        Ingress -->|"Main Domain (localhost): /api/*"| API_Gateway["API Gateway :8080<br/>Spring Cloud Gateway"]
-        Ingress -->|"Redirect Domain (r.localhost): /*"| MS_Redirect["Redirect Service :8082<br/>Spring WebFlux Netty"]
+        Ingress -->|"Main Domain (localhost): /api/*<br/>(Rate Limited: 15 req/s)"| API_Gateway["API Gateway :8080<br/>Spring Cloud Gateway"]
+        Ingress -->|"Redirect Domain (r.localhost): /*<br/>(Rate Limited: 50 req/s)"| MS_Redirect["Redirect Service :8082<br/>Spring WebFlux Netty"]
     end
 
     subgraph Microservices Cluster
         %% API Gateway & Auth
         API_Gateway -->|Reads/Writes Auth| DB_Auth[("PostgreSQL Auth DB<br/>url_shortener_auth")]
-        API_Gateway -->|Rate Limit Checks| Redis_Shared[("Redis Cache & Rate Store :6379")]
 
         %% Downstream HTTP REST Routing & Header/Query Transformation
         API_Gateway -->|"HTTP REST :8081<br/>/api/v1/urls, campaigns, ab-tests<br/>(Header Enrichment: X-User-Id, Roles)"| MS_Core["Core Admin Service :8081"]
         API_Gateway -->|"HTTP REST :8083<br/>/api/v1/analytics/**<br/>(Query & Header Forwarding)"| MS_Analytics["Analytics Service :8083"]
 
         %% Redirect Service
-        MS_Redirect -->|"Consolidated Hash url:{code}<br/>INCR url:hits:{code}"| Redis_Shared
+        MS_Redirect -->|"Consolidated Hash url:{code}<br/>INCR url:hits:{code}"| Redis_Shared[("Redis Cache :6379")]
         MS_Redirect -.->|"gRPC :9090 Fallback (5s deadline)"| MS_Core
         MS_Redirect -->|"Publish Click Event (Fire-and-Forget)"| KafkaBroker["Apache Kafka Broker :9092<br/>Topic: url-clicks"]
     end
@@ -94,7 +93,7 @@ graph TD
 | **Analytics Service** | `8083` (Internal) | `9091` | Spring Boot, Spring Kafka, MaxMind GeoIP, jOOQ DSL, JdbcTemplate Batch | Consumes Kafka click streams in micro-batches (500 items / 50ms), resolves geographic locations, detects bots, multi-row bulk-writes logs, and serves telemetry reports. |
 | **Frontend Client** | `80` (Production) / `5173` (Dev) | N/A | React 19, Vite, Tailwind CSS v4, shadcn UI, TanStack Query | Single Page Application dashboard compiled into Nginx static web root `/usr/share/nginx/html`. Standalone Vite dev server runs at `5173` during local dev. |
 | **PostgreSQL Shared Instance** | `5432` | N/A | PostgreSQL 16 Alpine | Single database container hosting 3 logically isolated databases: `url_shortener_auth`, `url_shortener_core`, and `url_shortener_analytics`. |
-| **Redis Cache & Rate Store**| `6379` | N/A | Redis 7.2 Alpine | Token-bucket rate limit statistics, Consolidated Hash redirect cache (`url:{shortCode}`), and popularity counters (`url:hits:{shortCode}`). |
+| **Redis Cache** | `6379` | N/A | Redis 7.2 Alpine | In-memory Consolidated Hash redirect cache (`url:{shortCode}`) and popularity counters (`url:hits:{shortCode}`). Rate limiting is strictly enforced by Nginx. |
 | **Apache Kafka Broker** | `9092` | N/A | Confluent Kafka / KRaft Mode | High-throughput streaming buffer (`url-clicks` topic) decoupling redirection handling from analytics database writes. |
 
 ---
@@ -512,7 +511,7 @@ message CountryBreakdown {
 
 ### 6.1 API Gateway Service (`url-gateway-service` - Port `8080`)
 
-Exposes REST resources externally, processes auth flows with its local DB, handles rate limits with Redis, and makes gRPC requests downstream.
+Exposes REST resources externally, processes auth flows with its local DB, manages JWT verification and token rotation, and routes requests downstream over HTTP REST. Rate limiting is strictly handled at the Nginx edge.
 
 #### 1. Routing & Security Setup (`application.yml`)
 
@@ -527,9 +526,6 @@ spring:
         url: r2dbc:postgresql://localhost:5432/url_shortener_auth
         username: auth_user
         password: auth_password
-    redis:
-        host: localhost
-        port: 6379
     cloud:
         gateway:
             routes:
@@ -573,80 +569,35 @@ public class SecurityConfiguration {
 }
 ```
 
-#### 3. Edge Rate Limiter (Redis Lua Token Bucket Filter)
+#### 3. Perimeter Rate Limiting (Offloaded to Nginx Ingress)
 
-Runs reactive global rate limit evaluations on all edge routes before propagating requests downstream.
+To maximize gateway throughput and prevent connection saturation, rate limiting is **strictly offloaded to the Nginx Edge Ingress** via shared-memory zones. The API Gateway maintains zero connection to Redis.
 
-##### Redis Lua Rate Limiting Script (`request_rate_limiter.lua`)
+##### Nginx Shared-Memory Rate Limiting Configuration (`nginx.conf`)
 
-This atomic script implements a Token Bucket algorithm in Redis to prevent race conditions during concurrent requests:
+Nginx evaluates incoming requests using client cookie/JWT keys with binary IP fallback:
 
-```lua
-local key = KEYS[1]
-local limit = tonumber(ARGV[1])
-local refill_rate = tonumber(ARGV[2])
-local now = tonumber(redis.call('TIME')[1])
+```nginx
+# 1. API Gateway: User JWT/Bearer token if logged in, otherwise binary IP
+map $http_authorization $api_rate_key {
+    default $http_authorization;
+    ""      $binary_remote_addr;
+}
 
-local bucket = redis.call('HMGET', key, 'tokens', 'last_refill')
-local tokens = tonumber(bucket[1])
-local last_refill = tonumber(bucket[2])
+# 2. Redirection: Unique browser cookie 'vid' if present, otherwise binary IP
+map $cookie_vid $redirect_rate_key {
+    default $cookie_vid;
+    ""      $binary_remote_addr;
+}
 
-if not tokens then
-    tokens = limit
-    last_refill = now
-else
-    local elapsed = math.max(0, now - last_refill)
-    tokens = math.min(limit, tokens + elapsed * refill_rate)
-    last_refill = now
-end
+# Shared memory rate limiting zones
+limit_req_zone $api_rate_key zone=api_limit:10m rate=15r/s;
+limit_req_zone $redirect_rate_key zone=redirect_limit:20m rate=50r/s;
 
-if tokens >= 1 then
-    tokens = tokens - 1
-    redis.call('HMSET', key, 'tokens', tokens, 'last_refill', last_refill)
-    redis.call('EXPIRE', key, 60)
-    return 1
-else
-    return 0
-end
-```
-
-##### Spring Cloud Gateway Rate Limiting Filter
-
-```java
-@Component
-public class GatewayRateLimitingFilter implements GlobalFilter, Ordered {
-
-    private final ReactiveStringRedisTemplate redisTemplate;
-    private final RedisScript<Long> luaScript;
-
-    public GatewayRateLimitingFilter(ReactiveStringRedisTemplate redisTemplate, RedisScript<Long> luaScript) {
-        this.redisTemplate = redisTemplate;
-        this.luaScript = luaScript;
-    }
-
-    @Override
-    public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
-        String ip = exchange.getRequest().getRemoteAddress().getAddress().getHostAddress();
-        String limitKey = "rate:limit:global:" + ip;
-
-        // Keys: [limitKey], Args: [MaxBucketSize (60 tokens), RefillRatePerSecond (1 token/s)]
-        return redisTemplate.execute(luaScript, List.of(limitKey), List.of("60", "1"))
-            .flatMap(allowed -> {
-                if (allowed == 0) {
-                    exchange.getResponse().setStatusCode(HttpStatus.TOO_MANY_REQUESTS);
-                    exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
-                    byte[] bytes = "{\"error\":\"Too many requests. Limit exceeded.\"}".getBytes(StandardCharsets.UTF_8);
-                    DataBuffer buffer = exchange.getResponse().bufferFactory().wrap(bytes);
-                    return exchange.getResponse().writeWith(Mono.just(buffer));
-                }
-                return chain.filter(exchange);
-            });
-    }
-
-    @Override
-    public int getOrder() {
-        return Ordered.HIGHEST_PRECEDENCE;
-    }
+# Ingress routes apply burst buffers with nodelay
+location /api/ {
+    limit_req zone=api_limit burst=20 nodelay;
+    proxy_pass http://apigateway:8080;
 }
 ```
 

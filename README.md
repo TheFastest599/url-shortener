@@ -33,7 +33,7 @@ A high-throughput, event-driven URL shortening and analytics platform built with
 - **High-Throughput Kafka Ingestion & Macro-Batching Pipeline**:
   - **Producer Hot-Path**: Asynchronous click telemetry dispatched to Kafka (`url-clicks`) with 64 KB memory buffers (`batch-size: 65536`), LZ4 block compression, and `linger.ms: 10` to avoid adding latency to redirects.
   - **Consumer Macro-Batching**: Polls up to 5,000 records (`max-poll-records: 5000`, `fetch.min.bytes: 1MB`, `fetch.max.wait.ms: 5000`) in `url-analytics-service`, pairing MaxMind GeoIP resolution and bot filtering with PostgreSQL JDBC bulk writes (`reWriteBatchedInserts=true`).
-- **Enterprise Security Perimeter**: Spring Cloud Gateway with stateless JWT verification, R2DBC reactive database access, Refresh Token Rotation (RTR) via secure `HttpOnly` cookies, OAuth2 (Google & GitHub), and Token Bucket rate limiting.
+- **Enterprise Security Perimeter**: Spring Cloud Gateway with stateless JWT verification, R2DBC reactive database access, Refresh Token Rotation (RTR) via secure `HttpOnly` cookies, and OAuth2 (Google & GitHub). Edge rate limiting is strictly enforced by Nginx.
 - **Decoupled Database Isolation**: Zero cross-database queries across 3 logically isolated PostgreSQL databases (`url_shortener_auth`, `url_shortener_core`, `url_shortener_analytics`), connected internally via strongly-typed gRPC channels.
 
 ---
@@ -118,7 +118,7 @@ Only **Nginx Ingress** publishes a public web port (`80`) to the host machine. A
 | **`core`**        | `8081` (REST), `9090` (gRPC) | _Internal only_    | URL & UTM management, campaigns, A/B testing, gRPC resolution engine.                                                                                 |
 | **`analytics`**   | `8083` (REST), `9091` (gRPC) | _Internal only_    | Kafka batch consumer, MaxMind GeoIP resolution, time-series aggregations.                                                                             |
 | **PostgreSQL**    | `5432`                       | _Internal only_    | Multi-database instance (`url_shortener_auth`, `url_shortener_core`, `url_shortener_analytics`).                                                      |
-| **Redis**         | `6379`                       | `6379:6379`        | In-memory cache for fast link lookup & distributed rate limiting (exposed for local CLI operations & hybrid dev).                                   |
+| **Redis**         | `6379`                       | `6379:6379`        | In-memory cache for fast link lookup & popularity hit counting (exposed for local CLI operations & hybrid dev).                                    |
 | **Kafka (KRaft)** | `29092`                      | `9092:9092`        | High-throughput event stream for click tracking (internal: `29092`, host: `9092` for local hybrid dev).                                              |
 
 ---
