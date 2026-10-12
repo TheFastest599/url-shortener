@@ -107,19 +107,19 @@ The platform is engineered for ultra-low latency redirection and sustained event
 
 ### Host Port Exposure & Isolation Matrix
 
-Only **Nginx Ingress** publishes a public web port (`80`) to the host machine. All microservices and databases communicate over the private Docker bridge network (`url-shortener-net`). Redis (`6379`) and Kafka (`9092`) publish ports strictly for local development and CLI operations tooling:
+Only **Nginx Ingress** publishes a public web port (`80`) to the host machine. All microservices, databases, caches, and message brokers communicate strictly over the private Docker bridge network (`url-shortener-net`) with zero direct host port exposure:
 
 | Service           | Internal Port                | Host Port Exposed  | Role & Routing                                                                                                                                        |
 | :---------------- | :--------------------------- | :----------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Nginx Ingress** | `80`                         | **`80:80`**        | Single public entrypoint. Serves React SPA & API Gateway on `localhost`, and handles clean short link redirection on `r.localhost` (or `r.<domain>`). |
 | **React Client**  | `80`                         | _Built into Nginx_ | Single Page Application bundled directly into the Nginx image.                                                                                        |
-| **`redirect`**    | `8082`                       | _Internal only_    | Sub-5ms reactive redirect engine (302 redirects, Redis cache, Kafka producer).                                                                        |
-| **`apigateway`**  | `8080`                       | _Internal only_    | Spring Cloud Gateway (JWT authentication, role authorization, routing).                                                                               |
+| **`redirect`**    | `8082`                       | _Internal only_    | Sub-5ms reactive redirect engine (302 redirects, Redis cache, Kafka producer). Only reachable via Nginx.                                              |
+| **`apigateway`**  | `8080`                       | _Internal only_    | Spring Cloud Gateway (JWT authentication, role authorization, routing). Only reachable via Nginx.                                                     |
 | **`core`**        | `8081` (REST), `9090` (gRPC) | _Internal only_    | URL & UTM management, campaigns, A/B testing, gRPC resolution engine.                                                                                 |
 | **`analytics`**   | `8083` (REST), `9091` (gRPC) | _Internal only_    | Kafka batch consumer, MaxMind GeoIP resolution, time-series aggregations.                                                                             |
 | **PostgreSQL**    | `5432`                       | _Internal only_    | Multi-database instance (`url_shortener_auth`, `url_shortener_core`, `url_shortener_analytics`).                                                      |
-| **Redis**         | `6379`                       | `6379:6379`        | In-memory cache for fast link lookup & popularity hit counting (exposed for local CLI operations & hybrid dev).                                    |
-| **Kafka (KRaft)** | `29092`                      | `9092:9092`        | High-throughput event stream for click tracking (internal: `29092`, host: `9092` for local hybrid dev).                                              |
+| **Redis**         | `6379`                       | _Internal only_    | In-memory cache for fast link lookup & popularity hit counting.                                                                                       |
+| **Kafka (KRaft)** | `29092`                      | _Internal only_    | High-throughput event stream for click tracking.                                                                                                      |
 
 ---
 

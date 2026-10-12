@@ -92,9 +92,9 @@ graph TD
 | **Redirect Service** | `8082` (Internal) | N/A | Spring WebFlux, Redis Reactive, gRPC Client | Resolves short URLs via Consolidated Redis Hash `url:{code}` (or gRPC Core fallback with 5s deadline), executes device rules & A/B splits, and publishes click events to Kafka. |
 | **Analytics Service** | `8083` (Internal) | `9091` | Spring Boot, Spring Kafka, MaxMind GeoIP, jOOQ DSL, JdbcTemplate Batch | Consumes Kafka click streams in micro-batches (500 items / 50ms), resolves geographic locations, detects bots, multi-row bulk-writes logs, and serves telemetry reports. |
 | **Frontend Client** | `80` (Production) / `5173` (Dev) | N/A | React 19, Vite, Tailwind CSS v4, shadcn UI, TanStack Query | Single Page Application dashboard compiled into Nginx static web root `/usr/share/nginx/html`. Standalone Vite dev server runs at `5173` during local dev. |
-| **PostgreSQL Shared Instance** | `5432` | N/A | PostgreSQL 16 Alpine | Single database container hosting 3 logically isolated databases: `url_shortener_auth`, `url_shortener_core`, and `url_shortener_analytics`. |
-| **Redis Cache** | `6379` | N/A | Redis 7.2 Alpine | In-memory Consolidated Hash redirect cache (`url:{shortCode}`) and popularity counters (`url:hits:{shortCode}`). Rate limiting is strictly enforced by Nginx. |
-| **Apache Kafka Broker** | `9092` | N/A | Confluent Kafka / KRaft Mode | High-throughput streaming buffer (`url-clicks` topic) decoupling redirection handling from analytics database writes. |
+| **PostgreSQL Shared Instance** | `5432` (Internal) | N/A | PostgreSQL 16 Alpine | Single database container hosting 3 logically isolated databases: `url_shortener_auth`, `url_shortener_core`, and `url_shortener_analytics`. |
+| **Redis Cache** | `6379` (Internal) | N/A | Redis 7.2 Alpine | In-memory Consolidated Hash redirect cache (`url:{shortCode}`) and popularity counters (`url:hits:{shortCode}`). Rate limiting is strictly enforced by Nginx. |
+| **Apache Kafka Broker** | `29092` (Internal) | N/A | Confluent Kafka / KRaft Mode | High-throughput streaming buffer (`url-clicks` topic) decoupling redirection handling from analytics database writes. |
 
 ---
 
