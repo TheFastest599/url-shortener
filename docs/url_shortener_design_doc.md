@@ -51,7 +51,7 @@ graph TD
     Client(["🌐 Client Browser / Visitor"]) --> Ingress["Nginx Edge Ingress (:80)<br/>Edge Rate Limiter (limit_req)"]
     
     subgraph Edge Ingress Routing
-        Ingress -->|"Main Domain (localhost): /"| ReactSPA["Static React SPA Bundle<br/>/usr/share/nginx/html"]
+        Ingress -->|"Main Domain (localhost): /<br/>(Rate Limited: 30 req/s)"| ReactSPA["Static React SPA Bundle<br/>/usr/share/nginx/html"]
         Ingress -->|"Main Domain (localhost): /api/*<br/>(Rate Limited: 15 req/s)"| API_Gateway["API Gateway :8080<br/>Spring Cloud Gateway"]
         Ingress -->|"Redirect Domain (r.localhost): /*<br/>(Rate Limited: 50 req/s)"| MS_Redirect["Redirect Service :8082<br/>Spring WebFlux Netty"]
     end
@@ -590,14 +590,26 @@ map $cookie_vid $redirect_rate_key {
     ""      $binary_remote_addr;
 }
 
+# 3. Frontend Web UI: Unique browser cookie 'vid' if present, otherwise binary IP
+map $cookie_vid $frontend_rate_key {
+    default $cookie_vid;
+    ""      $binary_remote_addr;
+}
+
 # Shared memory rate limiting zones
 limit_req_zone $api_rate_key zone=api_limit:10m rate=15r/s;
 limit_req_zone $redirect_rate_key zone=redirect_limit:20m rate=50r/s;
+limit_req_zone $frontend_rate_key zone=frontend_limit:10m rate=30r/s;
 
 # Ingress routes apply burst buffers with nodelay
 location /api/ {
     limit_req zone=api_limit burst=20 nodelay;
     proxy_pass http://apigateway:8080;
+}
+
+location / {
+    limit_req zone=frontend_limit burst=50 nodelay;
+    try_files $uri $uri/ /index.html;
 }
 ```
 

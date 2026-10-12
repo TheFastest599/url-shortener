@@ -109,8 +109,8 @@ Catch-all for the primary application domain (`yourdomain.com`), `localhost`, or
 
 | Request Path | Target Upstream | Behavior & Rules |
 | :--- | :--- | :--- |
-| **`/`** | `/usr/share/nginx/html` | Serves compiled static React SPA. Falls back to `/index.html` via `try_files` for client-side routing. |
-| **`/api/`** | `http://apigateway_service` | Authentication, OAuth2 callbacks, analytics, and URL CRUD proxy. |
+| **`/`** | `/usr/share/nginx/html` | Serves compiled static React SPA. Falls back to `/index.html` via `try_files` for client-side routing. Rate limited to 30 req/s with 50 burst. |
+| **`/api/`** | `http://apigateway_service` | Authentication, OAuth2 callbacks, analytics, and URL CRUD proxy. Rate limited to 15 req/s with 20 burst. |
 | **`~* \.(?:css\|js\|...)$`** | Static cache | 1-year immutable caching (`max-age=31536000, immutable`). |
 | **`~ /\. `** | Blocked | Blocks hidden system files (`.env`, `.git`) with 404. |
 
@@ -168,19 +168,29 @@ map $http_authorization $api_rate_key {
     ""      $binary_remote_addr;
 }
 
+# 3. Frontend Web UI: Unique browser cookie 'vid' if present, otherwise binary IP
+map $cookie_vid $frontend_rate_key {
+    default $cookie_vid;
+    ""      $binary_remote_addr;
+}
+
 # API routes: 15 requests/second per client (900 req/min)
 limit_req_zone $api_rate_key zone=api_limit:10m rate=15r/s;
 
 # Redirection routes: 50 requests/second per client (3,000 req/min)
 limit_req_zone $redirect_rate_key zone=redirect_limit:20m rate=50r/s;
+
+# Frontend Web UI routes: 30 requests/second per client (1,800 req/min)
+limit_req_zone $frontend_rate_key zone=frontend_limit:10m rate=30r/s;
 ```
 - **Fair to Shared Networks**: Different devices on the same Wi-Fi receive their own distinct `vid` cookie and independent rate-limiting buckets.
 - **Fair to API Consumers**: Authenticated accounts are throttled by their token rather than their shared corporate IP.
 - **Bot/Scraper Protection**: Attackers who strip or clear cookies automatically fall back to `$binary_remote_addr` (IP address) and are blocked.
-- **`20m` memory**: Holds ~320,000 active concurrent client states in shared memory (with LRU eviction).
+- **Shared memory**: Holds hundreds of thousands of active concurrent client states with LRU eviction.
 
 ### 5.3. Burst & Custom JSON 429 Responses
 - **`burst=50 nodelay`** (Redirection): Absorbs sudden bursts of legitimate redirection traffic without artificial queuing delay.
+- **`burst=50 nodelay`** (Frontend Web UI): Accommodates initial SPA loading and page refreshes.
 - **`burst=20 nodelay`** (API Gateway): Accommodates initial dashboard loading bursts.
 - **Custom JSON Error Handler**: Returns structured JSON instead of default HTML when rate limits are exceeded:
 
