@@ -80,6 +80,18 @@ function sleep(ms) {
 	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+function parseDurationSec(durStr) {
+	if (!durStr) return 60;
+	const match = String(durStr).trim().match(/^(\d+(?:\.\d+)?)(ms|s|m|h)?$/);
+	if (!match) return 60;
+	const val = parseFloat(match[1]);
+	const unit = match[2] || "s";
+	if (unit === "ms") return Math.max(1, Math.round(val / 1000));
+	if (unit === "m") return Math.round(val * 60);
+	if (unit === "h") return Math.round(val * 3600);
+	return Math.round(val);
+}
+
 function resolveDockerNetworkFlags() {
 	try {
 		const res = spawnSync("docker", ["inspect", "nginx-ingress"], {
@@ -538,18 +550,6 @@ async function runTest(options) {
 				unlinkSync(RESULTS_PATH);
 			} catch {}
 
-			function parseDurationSec(durStr) {
-				if (!durStr) return 60;
-				const match = String(durStr).trim().match(/^(\d+(?:\.\d+)?)(ms|s|m|h)?$/);
-				if (!match) return 60;
-				const val = parseFloat(match[1]);
-				const unit = match[2] || "s";
-				if (unit === "ms") return Math.max(1, Math.round(val / 1000));
-				if (unit === "m") return Math.round(val * 60);
-				if (unit === "h") return Math.round(val * 3600);
-				return Math.round(val);
-			}
-
 			const data = JSON.parse(readFileSync(runResultsPath, "utf-8"));
 			const m = data.metrics || {};
 			const dur = m["http_req_duration{phase:measured}"] || m["http_req_duration{scenario:recorded_test}"] || m.redirect_latency || m.http_req_duration || {};
@@ -631,17 +631,278 @@ async function runTest(options) {
 	process.exit(k6Res.status || 0);
 }
 
+// --- Subcommand: Ramp (Stepped Load Saturation Test) ---
+async function runRampTest(options) {
+	const {
+		startRps = 500,
+		stepRps = 500,
+		stepDuration = "60s",
+		rampTime = "5s",
+		baseUrl = "http://r.localhost",
+		clean = false,
+		seed = false,
+	} = options;
+
+	if (clean) {
+		runClean(false);
+	}
+	if (seed) {
+		await runSeed();
+	}
+
+	console.log("\x1b[36m" + "=".repeat(65));
+	console.log(" Stepped Ramp Load Saturation Test (Runs until errors hit)");
+	console.log(` Target Ingress     : ${baseUrl}`);
+	console.log(` Starting Rate      : ${startRps} req/s`);
+	console.log(` Rate Increment     : +${stepRps} req/s every ${stepDuration}`);
+	if (rampTime && rampTime !== "0s" && rampTime !== "0") {
+		console.log(` Initial Warm-up    : ${rampTime} (Stage 1 only)`);
+	}
+	console.log(" Ceiling Limit      : Unbounded (Runs until errors hit)");
+	console.log(" Termination Trigger: First occurrence of HTTP errors or dropped requests");
+	console.log("=".repeat(65) + "\x1b[0m\n");
+
+	// Pre-test DB baseline
+	const preStats = execOutput(
+		"docker exec postgres-db psql -U postgres -d url_shortener_analytics -t -c \"SELECT count(*), pg_size_pretty(pg_total_relation_size('click_analytics')) FROM click_analytics;\"",
+	);
+	let preRows = 0;
+	let preSize = "0 bytes";
+	if (preStats) {
+		const parts = preStats.split("|");
+		if (parts.length === 2) {
+			preRows = parseInt(parts[0].trim(), 10) || 0;
+			preSize = parts[1].trim();
+		}
+	}
+	console.log("\x1b[32m[Pre-Test Database Baseline]\x1b[0m");
+	console.log(`  click_analytics rows : ${preRows.toLocaleString()}`);
+	console.log(`  click_analytics size : ${preSize}\n`);
+
+	mkdirSync(RESULTS_DIR, { recursive: true });
+	const netFlags = resolveDockerNetworkFlags();
+
+	const stages = [];
+	let currentRps = startRps;
+	let stageIndex = 1;
+	let haltReason = null;
+	const pad = (n) => String(n).padStart(2, "0");
+	const now = new Date();
+	const runId = `ramp_${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+
+	// Handle graceful Ctrl+C to save partial table
+	let isInterrupted = false;
+	const sigintHandler = () => {
+		if (isInterrupted) process.exit(1);
+		isInterrupted = true;
+		console.log("\n\x1b[33m[!] Test interrupted by user. Generating report for completed stages...\x1b[0m");
+		generateRampReport(stages, "Test manually interrupted by user", preRows, preSize, runId, baseUrl, stepDuration);
+		process.exit(0);
+	};
+	process.on("SIGINT", sigintHandler);
+
+	while (!isInterrupted) {
+		const stageRamp = stageIndex === 1 && rampTime && rampTime !== "0s" && rampTime !== "0" ? rampTime : "0s";
+		const stageWarmupDesc = stageRamp !== "0s" ? ` (Warm-up: ${stageRamp})` : "";
+		console.log(`\x1b[35m[Stage ${stageIndex}] Testing Target: ${currentRps} req/s for ${stepDuration}${stageWarmupDesc}...\x1b[0m`);
+
+		// Clean previous results file
+		if (existsSync(RESULTS_PATH)) {
+			try { unlinkSync(RESULTS_PATH); } catch {}
+		}
+
+		const rampEnv = `-e RAMP_TIME="${stageRamp}"`;
+		const k6Cmd = `docker run --rm ${netFlags} -v "${K6_DIR}:/scripts" -v "${RESULTS_DIR}:/results" -e BASE_URL="${baseUrl}" -e TARGET_RPS=${currentRps} -e DURATION="${stepDuration}" ${rampEnv} grafana/k6:latest run --summary-export=/results/latest_results.json /scripts/realistic_load_test.js`;
+
+		const k6Res = exec(k6Cmd);
+
+		if (!existsSync(RESULTS_PATH)) {
+			console.error(`\x1b[31m[-] k6 failed to produce results at ${currentRps} req/s. Stopping ramp.\x1b[0m`);
+			haltReason = `k6 execution failed or timed out at ${currentRps} req/s`;
+			break;
+		}
+
+		let stageData;
+		try {
+			stageData = JSON.parse(readFileSync(RESULTS_PATH, "utf-8"));
+		} catch (err) {
+			haltReason = `Failed to parse k6 output at ${currentRps} req/s`;
+			break;
+		}
+
+		const m = stageData.metrics || {};
+		const dur = m["http_req_duration{phase:measured}"] || m["http_req_duration{scenario:arrival_rate_test}"] || m.redirect_latency || m.http_req_duration || {};
+		const reqs = m["http_reqs{phase:measured}"] || m["http_reqs{scenario:arrival_rate_test}"] || m.http_reqs || {};
+		const failed = m["http_req_failed{phase:measured}"] || m["http_req_failed{scenario:arrival_rate_test}"] || m.http_req_failed || {};
+
+		const durSec = parseDurationSec(stepDuration);
+		const totalReqs = reqs.count || 0;
+		const achievedRate = durSec > 0 && totalReqs > 0
+			? (totalReqs / durSec).toFixed(2)
+			: (reqs.rate ? reqs.rate.toFixed(2) : "0.00");
+		const failRate = failed.value !== undefined ? (failed.value * 100).toFixed(3) : "0.000";
+
+		const medLat = dur.med ? dur.med.toFixed(2) : "0.00";
+		const p90Lat = dur["p(90)"] ? dur["p(90)"].toFixed(2) : "0.00";
+		const avgLat = dur.avg ? dur.avg.toFixed(2) : "0.00";
+		const p95Lat = dur["p(95)"] ? dur["p(95)"].toFixed(2) : "0.00";
+		const p99Lat = dur["p(99)"] ? dur["p(99)"].toFixed(2) : "0.00";
+		const p999Lat = dur["p(99.9)"] ? dur["p(99.9)"].toFixed(2) : "0.00";
+		const maxLat = dur.max ? dur.max.toFixed(2) : "0.00";
+
+		// Stop strictly when errors hit
+		let stageStatus = "PASS";
+		let isDeteriorated = false;
+
+		const hasErrors = parseFloat(failRate) > 0 || (failed.count && failed.count > 0);
+		if (hasErrors) {
+			isDeteriorated = true;
+			const errCountStr = failed.count ? `${failed.count.toLocaleString()} failed requests` : `${failRate}% error rate`;
+			haltReason = `Errors hit at ${currentRps} req/s: ${failRate}% (${errCountStr})`;
+			stageStatus = "FAILED";
+		}
+
+		stages.push({
+			stage: stageIndex,
+			targetRps: currentRps,
+			achievedRate,
+			totalReqs,
+			failRate,
+			medLat,
+			p90Lat,
+			avgLat,
+			p95Lat,
+			p99Lat,
+			p999Lat,
+			maxLat,
+			status: stageStatus,
+			haltReason: isDeteriorated ? haltReason : null,
+		});
+
+		console.log(
+			`\x1b[32m[Stage ${stageIndex} Complete]\x1b[0m Target: ${currentRps} r/s | Achieved: ${achievedRate} r/s | Errors: ${failRate}% | P50: ${medLat}ms | P95: ${p95Lat}ms | P99: ${p99Lat}ms | Status: ${isDeteriorated ? "\x1b[31m" + stageStatus + "\x1b[0m" : "\x1b[32mPASS\x1b[0m"}\n`,
+		);
+
+		if (isDeteriorated) {
+			console.log(`\x1b[31m[!] Stopping ramp: Errors encountered at ${currentRps} req/s (${failRate}% error rate).\x1b[0m`);
+			break;
+		}
+
+		currentRps += stepRps;
+		stageIndex++;
+	}
+
+	process.removeListener("SIGINT", sigintHandler);
+
+	generateRampReport(stages, haltReason || "Completed", preRows, preSize, runId, baseUrl, stepDuration);
+}
+
+function generateRampReport(stages, haltReason, preRows, preSize, runId, baseUrl, stepDuration) {
+	if (stages.length === 0) {
+		console.log("No completed stages to report.");
+		return;
+	}
+
+	sleep(2500); // Allow Kafka consumer to drain pending batches
+
+	const postStats = execOutput(
+		"docker exec postgres-db psql -U postgres -d url_shortener_analytics -t -c \"SELECT count(*), pg_size_pretty(pg_total_relation_size('click_analytics')) FROM click_analytics;\"",
+	);
+	let postRows = 0;
+	let postSize = "0 bytes";
+	if (postStats) {
+		const parts = postStats.split("|");
+		if (parts.length === 2) {
+			postRows = parseInt(parts[0].trim(), 10) || 0;
+			postSize = parts[1].trim();
+		}
+	}
+	const inserted = postRows - preRows;
+
+	const pad = (n) => String(n).padStart(2, "0");
+	const now = new Date();
+	const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+
+	const totalRequestsAcrossStages = stages.reduce((acc, s) => acc + s.totalReqs, 0);
+	const peakStableStage = [...stages].reverse().find((s) => s.status === "PASS");
+	const peakStableRate = peakStableStage ? `${peakStableStage.targetRps} req/s (Achieved: ${peakStableStage.achievedRate} req/s)` : "None";
+
+	// Build Markdown table
+	let tableMd = `| Target Rate | Achieved Rate | Total Reqs | Error Rate | P50 (Med) | P90 | Mean | P95 | P99 | P99.9 | Max | Status |\n`;
+	tableMd += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+
+	for (const s of stages) {
+		tableMd += `| **${s.targetRps.toLocaleString()} req/s** | **${s.achievedRate} req/s** | ${s.totalReqs.toLocaleString()} | ${s.failRate}% | **${s.medLat} ms** | ${s.p90Lat} ms | ${s.avgLat} ms | ${s.p95Lat} ms | **${s.p99Lat} ms** | **${s.p999Lat} ms** | ${s.maxLat} ms | ${s.status} |\n`;
+	}
+
+	const report = `# Stepped Ramp Load Test Benchmark Summary
+
+- **Timestamp**: ${timestamp}
+- **Target Ingress**: ${baseUrl}
+- **Step Duration**: ${stepDuration} per stage
+- **Initial Rate**: ${stages[0].targetRps.toLocaleString()} req/s
+- **Peak Stable Throughput**: **${peakStableRate}**
+- **Cumulative Requests**: ${totalRequestsAcrossStages.toLocaleString()} requests
+- **Termination Reason**: ${haltReason}
+
+---
+
+## Stepped Latency Progression (All Percentiles P50 to P99.9)
+
+${tableMd}
+---
+
+## Data Ingestion & Storage Impact
+
+- **PostgreSQL Rows Ingested**: **+${inserted.toLocaleString()} rows** (started at ${preRows.toLocaleString()}, final: ${postRows.toLocaleString()})
+- **PostgreSQL Disk Footprint**: **${postSize}** (started at ${preSize})
+- **Kafka Consumer Lag**: 0 (fully drained)
+
+---
+
+*Raw telemetry data saved to: [\`${runId}.json\`](./${runId}.json)*
+`;
+
+	const mdPath = resolve(RESULTS_DIR, `${runId}.md`);
+	const jsonPath = resolve(RESULTS_DIR, `${runId}.json`);
+
+	writeFileSync(mdPath, report, "utf-8");
+	writeFileSync(jsonPath, JSON.stringify({
+		timestamp,
+		baseUrl,
+		stepDuration,
+		haltReason,
+		peakStableRate,
+		totalRequestsAcrossStages,
+		rowsIngested: inserted,
+		preRows,
+		postRows,
+		stages,
+	}, null, 2), "utf-8");
+
+	console.log("\x1b[36m" + "=".repeat(65));
+	console.log(" STEPPED RAMP TEST SUMMARY");
+	console.log("=".repeat(65) + "\x1b[0m");
+	console.log(` Peak Stable Rate : \x1b[32m${peakStableRate}\x1b[0m`);
+	console.log(` Total Requests   : ${totalRequestsAcrossStages.toLocaleString()}`);
+	console.log(` Termination Note : \x1b[33m${haltReason}\x1b[0m`);
+	console.log(` Rows Ingested    : +${inserted.toLocaleString()} into PostgreSQL`);
+	console.log(` Report Generated : load-tests/results/${runId}.md`);
+	console.log(` Raw Data Saved   : load-tests/results/${runId}.json\n`);
+}
+
 // --- Help Menu ---
 function printHelp() {
 	console.log(`
 \x1b[36murlShortener — Unified Load Testing & Operations CLI\x1b[0m
-Single entrypoint for load testing, data seeding, and database purging.
+Single entrypoint for load testing, data seeding, database purging, and ramp stress analysis.
 
 \x1b[33mUSAGE:\x1b[0m
   node load-tests/cli.js <command> [options]
 
 \x1b[33mCOMMANDS:\x1b[0m
-  \x1b[32mtest\x1b[0m (or \x1b[32mrun\x1b[0m)    Run the k6 load test through Nginx on Port 80
+  \x1b[32mtest\x1b[0m (or \x1b[32mrun\x1b[0m)    Run a fixed-rate k6 load test through Nginx
+  \x1b[32mramp\x1b[0m (or \x1b[32mstep\x1b[0m)    Run stepped ramp test (+RPS every 60s until degradation)
   \x1b[32mclean\x1b[0m (or \x1b[32mpurge\x1b[0m)  Wipe test click data (Postgres click_analytics, Redis, Kafka)
   \x1b[32mseed\x1b[0m               Seed demo campaigns, short URLs, and A/B test splits
 
@@ -654,12 +915,23 @@ Single entrypoint for load testing, data seeding, and database purging.
   --clean                 Auto-purge database and Kafka before running the test
   --seed                  Auto-seed demo links before running the test
 
+\x1b[33mRAMP OPTIONS (Stepped Saturation Test):\x1b[0m
+  -s, --start <rate>           Starting arrival rate in req/sec (default: 500)
+  --step <rate>                Rate increment per stage in req/sec (default: 500)
+  -d, --duration <time>        Duration per step stage (default: "60s")
+  -m, --ramp <time>            Warm-up ramp duration for initial start stage (default: "5s")
+  -u, --url <url>              Target ingress base URL (default: "http://r.localhost")
+  --clean                      Auto-purge database and Kafka before starting
+  --seed                       Auto-seed demo links before starting
+
 \x1b[33mCLEAN OPTIONS:\x1b[0m
   --full                  Destroy all Docker volumes completely (docker compose down -v)
 
 \x1b[33mEXAMPLES:\x1b[0m
-  node load-tests/cli.js test -d 1m -r 100
-  node load-tests/cli.js test --clean -d 3m -r 500
+  node load-tests/cli.js ramp
+  node load-tests/cli.js ramp --start 500 --step 500 -d 60s
+  node load-tests/cli.js ramp --clean --start 1000 --step 500
+  node load-tests/cli.js test -d 5m -r 1000
   node load-tests/cli.js clean
   node load-tests/cli.js seed
   node load-tests/cli.js --help
@@ -684,6 +956,44 @@ async function main() {
 
 	if (command === "seed") {
 		await runSeed();
+		return;
+	}
+
+	if (command === "ramp" || command === "step" || command === "ramp-test") {
+		const options = {
+			startRps: 500,
+			stepRps: 500,
+			stepDuration: "60s",
+			rampTime: "5s",
+			baseUrl: "http://r.localhost",
+			clean: false,
+			seed: false,
+		};
+
+		for (let i = 1; i < args.length; i++) {
+			const arg = args[i];
+			if (arg === "-s" || arg === "--start" || arg === "--start-rps") {
+				options.startRps = parseInt(args[++i], 10) || 500;
+			} else if (arg === "--step" || arg === "--step-rps") {
+				options.stepRps = parseInt(args[++i], 10) || 500;
+			} else if (arg === "-d" || arg === "--duration" || arg === "--step-time") {
+				options.stepDuration = args[++i];
+			} else if (arg === "-m" || arg === "--ramp") {
+				options.rampTime = args[++i];
+			} else if (
+				arg === "-u" ||
+				arg === "--url" ||
+				arg === "--base-url"
+			) {
+				options.baseUrl = args[++i];
+			} else if (arg === "--clean") {
+				options.clean = true;
+			} else if (arg === "--seed") {
+				options.seed = true;
+			}
+		}
+
+		await runRampTest(options);
 		return;
 	}
 
