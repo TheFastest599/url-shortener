@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Standardized DTO encapsulating the entire routing payload for a short code.
@@ -33,6 +34,10 @@ public class ShortCodePayloadDto {
     private String campaignId;
     private String abTestId;
 
+    private static final int MAX_CACHE_ENTRIES = 10_000;
+    private static final Map<String, AbConfig> AB_CONFIG_CACHE = new ConcurrentHashMap<>();
+    private static final Map<String, SmartRules> SMART_RULES_CACHE = new ConcurrentHashMap<>();
+
     /**
      * Runtime converter: transforms Redis Hash entries into a structured domain DTO.
      */
@@ -52,24 +57,16 @@ public class ShortCodePayloadDto {
         AbConfig abConfig = null;
         String abString = hash.get("ab");
         if (abString != null && !abString.isBlank()) {
-            try {
-                abConfig = mapper.readValue(abString, AbConfig.class);
-                if ((abTestId == null || abTestId.isBlank()) && abConfig != null && abConfig.testId() != null) {
-                    abTestId = abConfig.testId();
-                }
-            } catch (Exception e) {
-                log.warn("Failed to deserialize AbConfig for {}: {}", shortCode, e.getMessage());
+            abConfig = getCachedAbConfig(abString, mapper, shortCode);
+            if ((abTestId == null || abTestId.isBlank()) && abConfig != null && abConfig.testId() != null) {
+                abTestId = abConfig.testId();
             }
         }
 
         SmartRules smartRules = null;
         String rulesString = hash.get("rules");
         if (rulesString != null && !rulesString.isBlank()) {
-            try {
-                smartRules = mapper.readValue(rulesString, SmartRules.class);
-            } catch (Exception e) {
-                log.warn("Failed to deserialize SmartRules for {}: {}", shortCode, e.getMessage());
-            }
+            smartRules = getCachedSmartRules(rulesString, mapper, shortCode);
         }
 
         return ShortCodePayloadDto.builder()
@@ -82,6 +79,42 @@ public class ShortCodePayloadDto {
                 .campaignId(campaignId)
                 .abTestId(abTestId)
                 .build();
+    }
+
+    private static AbConfig getCachedAbConfig(String abString, ObjectMapper mapper, String shortCode) {
+        AbConfig cached = AB_CONFIG_CACHE.get(abString);
+        if (cached != null) {
+            return cached;
+        }
+        if (AB_CONFIG_CACHE.size() >= MAX_CACHE_ENTRIES) {
+            AB_CONFIG_CACHE.clear();
+        }
+        return AB_CONFIG_CACHE.computeIfAbsent(abString, s -> {
+            try {
+                return mapper.readValue(s, AbConfig.class);
+            } catch (Exception e) {
+                log.warn("Failed to deserialize AbConfig for {}: {}", shortCode, e.getMessage());
+                return null;
+            }
+        });
+    }
+
+    private static SmartRules getCachedSmartRules(String rulesString, ObjectMapper mapper, String shortCode) {
+        SmartRules cached = SMART_RULES_CACHE.get(rulesString);
+        if (cached != null) {
+            return cached;
+        }
+        if (SMART_RULES_CACHE.size() >= MAX_CACHE_ENTRIES) {
+            SMART_RULES_CACHE.clear();
+        }
+        return SMART_RULES_CACHE.computeIfAbsent(rulesString, s -> {
+            try {
+                return mapper.readValue(s, SmartRules.class);
+            } catch (Exception e) {
+                log.warn("Failed to deserialize SmartRules for {}: {}", shortCode, e.getMessage());
+                return null;
+            }
+        });
     }
 
     /**

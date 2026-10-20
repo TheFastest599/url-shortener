@@ -50,7 +50,6 @@ public class RedirectService {
         String hitsKey = "url:hits:" + shortCode;
         String routeKey = "url:" + shortCode;
 
-        // Concurrently increment dedicated hits counter and fetch consolidated metadata Hash
         Mono<Long> hitCountMono = redisTemplate.opsForValue().increment(hitsKey).defaultIfEmpty(1L);
         Mono<Map<String, String>> hashMono = redisTemplate.opsForHash().entries(routeKey)
                 .collectMap(e -> (String) e.getKey(), e -> (String) e.getValue());
@@ -58,13 +57,19 @@ public class RedirectService {
         return Mono.zip(hitCountMono, hashMono)
                 .flatMap(tuple -> {
                     long hits = tuple.getT1();
+                    Map<String, String> hash = tuple.getT2();
                     Duration adaptiveTtl = calculateAdaptiveTtl(hits);
 
-                    ShortCodePayloadDto payload = ShortCodePayloadDto.fromHash(shortCode, tuple.getT2(), hits, objectMapper);
+                    ShortCodePayloadDto payload = ShortCodePayloadDto.fromHash(shortCode, hash, hits, objectMapper);
 
                     // Cache Miss -> Fallback to Core Service single-query gRPC
                     if (payload.isEmpty()) {
                         return resolveFromGrpc(shortCode, routeKey, hitsKey, adaptiveTtl, hits, request, response);
+                    }
+
+                    // Adaptive TTL refresh (sampled to reduce Redis write load)
+                    if (hits == 1 || hits == 11 || hits == 101 || hits == 1001 || hits % 100 == 0) {
+                        redisTemplate.expire(routeKey, adaptiveTtl).subscribe(null, ex -> log.debug("Redis expire error: {}", ex.getMessage()));
                     }
 
                     // Cache Hit: Resolve routing from structured DTO
@@ -90,13 +95,10 @@ public class RedirectService {
                         destinationUrl = payload.getTargetUrl();
                     }
 
-                    // Cache Hit: Extend adaptive TTL on single consolidated key
-                    redisTemplate.expire(routeKey, adaptiveTtl).subscribe();
-
                     // Merge visitor's inbound query parameters
                     String finalUrl = mergeQueryParams(destinationUrl, request.getQueryParams());
 
-                    // Async fire-and-forget Kafka telemetry
+                    // Async decoupled Kafka telemetry
                     emitTelemetry(shortCode, selectedVariant, payload, request);
 
                     return Mono.just(finalUrl);

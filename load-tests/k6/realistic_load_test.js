@@ -261,8 +261,10 @@ const SUPPLEMENTAL_CAMPAIGNS = [
 const TARGET_RPS = parseInt(__ENV.TARGET_RPS || '100', 10);
 const DURATION = __ENV.DURATION || '60s';
 const RAMP_TIME = __ENV.RAMP_TIME || '10s';
-const PRE_VUS = __ENV.PRE_VUS ? parseInt(__ENV.PRE_VUS, 10) : Math.max(20, Math.min(TARGET_RPS, 2000));
-const MAX_VUS = __ENV.MAX_VUS ? parseInt(__ENV.MAX_VUS, 10) : Math.max(100, Math.floor(TARGET_RPS * 3));
+// Cap initial pre-allocated connections at 500 to avoid overflowing Linux TCP accept backlogs.
+// MAX_VUS can still expand dynamically up to 4,500 if latency rises.
+const PRE_VUS = __ENV.PRE_VUS ? parseInt(__ENV.PRE_VUS, 10) : Math.min(500, Math.max(50, Math.floor(TARGET_RPS * 0.05)));
+const MAX_VUS = __ENV.MAX_VUS ? parseInt(__ENV.MAX_VUS, 10) : Math.min(4500, Math.max(100, Math.floor(TARGET_RPS * 0.45)));
 
 const hasRamp = RAMP_TIME && RAMP_TIME !== '0s' && RAMP_TIME !== '0';
 

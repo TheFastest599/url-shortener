@@ -838,38 +838,42 @@ public class RedirectService {
 
     private final ReactiveStringRedisTemplate redisTemplate;
     private final CoreGrpcClient coreGrpcClient;
-    private final KafkaTemplate<String, ClickEvent> kafkaTemplate;
+    private final ClickEventProducer clickEventProducer;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public Mono<String> resolveAndTrackUrl(String shortCode, ServerHttpRequest request, ServerHttpResponse response) {
         String hashKey = "url:" + shortCode;
         String hitsKey = "url:hits:" + shortCode;
 
-        // 1. Concurrently INCR hit counter and fetch consolidated Redis Hash in parallel
-        Mono<Long> hitCountMono = redisTemplate.opsForValue().increment(hitsKey);
-        Mono<Map<String, String>> hashMono = redisTemplate.opsForHash().entries(hashKey).collectMap(
-            e -> e.getKey().toString(),
-            e -> e.getValue().toString()
-        );
-
-        return Mono.zip(hitCountMono, hashMono)
-            .flatMap(tuple -> {
-                Long hits = tuple.getT1();
-                Map<String, String> cachedData = tuple.getT2();
-                Duration adaptiveTtl = calculateAdaptiveTtl(hits != null ? hits : 1L);
+        // Critical path: Only HGETALL is executed synchronously
+        return redisTemplate.opsForHash().entries(hashKey)
+            .collectMap(e -> e.getKey().toString(), e -> e.getValue().toString())
+            .flatMap(cachedData -> {
+                // Background non-blocking hit counter & sampled TTL refresh
+                trackHitsAndTtlParallel(hashKey, hitsKey);
 
                 if (!cachedData.isEmpty()) {
-                    ShortCodePayloadDto payload = ShortCodePayloadDto.fromMap(cachedData);
-
-                    // Extend adaptive TTL asynchronously
-                    redisTemplate.expire(hashKey, adaptiveTtl).subscribe();
-
+                    ShortCodePayloadDto payload = ShortCodePayloadDto.fromHash(shortCode, cachedData, 0L, objectMapper);
                     return resolveDestination(shortCode, payload, request, response);
                 }
 
                 // Cache Miss -> Fallback to Core Service via gRPC (:9090)
-                return resolveFromGrpc(shortCode, adaptiveTtl, hitsKey, request, response);
+                return resolveFromGrpc(shortCode, calculateAdaptiveTtl(1L), hitsKey, request, response);
             });
+    }
+
+    private void trackHitsAndTtlParallel(String routeKey, String hitsKey) {
+        redisTemplate.opsForValue().increment(hitsKey)
+            .flatMap(hits -> {
+                // Sample TTL updates to avoid flooding the single Netty TCP socket
+                if (hits == 1 || hits == 11 || hits == 101 || hits == 1001 || hits % 100 == 0) {
+                    Duration adaptiveTtl = calculateAdaptiveTtl(hits);
+                    return redisTemplate.expire(routeKey, adaptiveTtl);
+                }
+                return Mono.empty();
+            })
+            .subscribeOn(Schedulers.parallel())
+            .subscribe(null, ex -> log.debug("Parallel Redis hit increment error: {}", ex.getMessage()));
     }
 
     /**

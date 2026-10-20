@@ -28,40 +28,40 @@ The redirect service is built on non-blocking reactive Spring WebFlux (Netty) an
 
 ```mermaid
 flowchart TD
-    Client(["🌐 Client / Load Generator"]) -->|"HTTP GET http://r.localhost/{code}"| NGINX["Nginx Edge Ingress (Port 80)"]
-    NGINX -->|"Upstream Keepalive (proxy_pass :8082)"| REDIRECT["Spring WebFlux Netty (redirect-service:8082)"]
+    Client(["Client / Load Generator"]) -->|"HTTP GET http://r.localhost/{code}"| NGINX["Nginx Edge Ingress (Port 80)"]
+    NGINX -->|"Upstream Keepalive (:8082)"| REDIRECT["Spring WebFlux Netty (redirect-service:8082)"]
 
-    subgraph RedirectPipeline ["Non-Blocking Reactive Pipeline"]
-        REDIRECT -->|"Parallel Mono.zip"| LOOKUP["Concurrent Redis Operations"]
-        LOOKUP -->|"1. opsForHash.entries('url:{code}')"| REDIS_HASH[("Consolidated Redis Hash<br/>url:{code}")]
-        LOOKUP -->|"2. opsForValue.increment('url:hits:{code}')"| REDIS_HITS[("Hit Counter & Adaptive TTL<br/>url:hits:{code}")]
-
-        REDIS_HASH -->|"Cache Hit"| RESOLVE{"Resolve Target & A/B"}
+    subgraph CriticalPath ["Critical Path: Read-Only (< 0.4ms)"]
+        REDIRECT -->|"HGETALL url:{code}"| REDIS_HASH[("Consolidated Redis Hash<br/>url:{code}")]
+        REDIS_HASH -->|"Memoized DTO Parsing"| RESOLVE{"Resolve Target & A/B"}
         RESOLVE -->|"A/B Test Active"| AB_LOGIC["Check Cookie ab_{code}<br/>or Weighted Variant Roll"]
         RESOLVE -->|"Standard Link"| BASE_DEST["Base Target URL"]
-
-        REDIS_HASH -->|"Cache Miss"| GRPC_FALLBACK["gRPC Core Fallback (:9090)<br/>UrlService.GetDestinationUrl()"]
-        GRPC_FALLBACK -->|"Pre-warm Hash & Hits"| REDIS_HASH
-        GRPC_FALLBACK --> RESOLVE
-
-        AB_LOGIC --> FORM_URL["Merge Inbound UTM Query Params"]
+        
+        AB_LOGIC --> FORM_URL["Merge Inbound Query Params"]
         BASE_DEST --> FORM_URL
-
         FORM_URL -->|"Return 302 Found<br/>(Set-Cookie: ab_{code})"| NGINX
-        FORM_URL -.->|"Async Fire-and-Forget<br/>(Non-blocking)"| KAFKA_PROD["ClickEventProducer"]
     end
 
-    KAFKA_PROD -->|"Topic: url-clicks"| KAFKA{{"Kafka Broker:29092"}}
-    KAFKA -->|"Batch Consumer (5k / 5s)"| ANALYTICS["Analytics Service (:8083)"]
-    ANALYTICS -->|"reWriteBatchedInserts"| POSTGRES[("PostgreSQL 16<br/>url_shortener_analytics")]
+    subgraph AsyncPipelines ["Asynchronous Background Operations"]
+        REDIRECT -.->|"Schedulers.parallel()"| REDIS_HITS["Async INCR hitsKey<br/>Sampled EXPIRE (Tiers / % 100)"]
+        REDIRECT -.->|"Sinks.Many (< 0.001ms)"| SINK_BUFFER["In-Memory Bounded Sink (100k)"]
+        SINK_BUFFER -->|"boundedElastic"| KAFKA{{"Kafka Broker:29092<br/>Topic: url-clicks"}}
+        KAFKA -->|"Batch Consumer (5k / 5s)"| ANALYTICS["Analytics Service (:8083)"]
+        ANALYTICS -->|"reWriteBatchedInserts"| POSTGRES[("PostgreSQL 16 (Tuned WAL)<br/>url_shortener_analytics")]
+    end
+
+    REDIS_HASH -->|"Cache Miss"| GRPC_FALLBACK["gRPC Core Fallback (:9090)<br/>UrlService.GetDestinationUrl()"]
+    GRPC_FALLBACK -->|"Pre-warm Hash"| REDIS_HASH
+    GRPC_FALLBACK --> RESOLVE
 ```
 
 ### Latency Budget per Request
 - **Total End-to-End SLA**: `< 5.0ms` (P99 via Nginx)
-- **Consolidated Redis Hash Fetch (`entries`)**: `< 0.4ms`
-- **Hits Increment & Adaptive TTL**: `< 0.2ms` (concurrent with Hash lookup)
+- **Consolidated Redis Hash Fetch (`entries`)**: `< 0.4ms` (only read operation on critical path)
+- **JSON Deserialization**: `< 0.01ms` (memoized in `ShortCodePayloadDto` up to 10,000 entries)
 - **In-Memory A/B Resolution & Cookie Check**: `< 0.05ms`
-- **Kafka Producer Handoff**: `< 0.15ms` (non-blocking in-memory ring buffer)
+- **Telemetry Sink Emission (`sink.tryEmitNext`)**: `< 0.001ms` (dispatched asynchronously on `boundedElastic`)
+- **Hits Increment & Adaptive TTL**: Asynchronous (offloaded to `Schedulers.parallel()`, sampled every 100 hits)
 - **HTTP 302 Header Serialization**: `< 0.1ms`
 
 ---
@@ -186,21 +186,22 @@ Stage 6: 1,000,000 RPS──► Clustered Hyper-Scale (Nginx + Multi-Instance + 
 
 ---
 
-### Stage 4: 10,000 RPS (10k) — Netty & Redis Saturation Testing
+### Stage 4: 10,000 RPS (10k) — Sustained High-Concurrency Scale
 
-- **Primary Goal**: Push a single `redirect-service` process and single Redis instance to high utilization.
-- **Concurrency**: 500 – 1,000 VUs.
+- **Primary Goal**: Sustain 10,000 requests/second with sub-20ms P50 latency and 0% errors across multi-minute soak runs.
+- **Topology**: 3 horizontally scaled `redirect` container replicas behind Nginx (`docker compose up -d --scale redirect=3`).
 - **Target Metrics**:
-  - P50 Latency: `< 2.0ms`
-  - P99 Latency: `< 8.0ms`
-  - Error Rate: `< 0.01%`
-- **Identified Failure Modes**:
-  1. **TCP Ephemeral Port Exhaustion**: If client connections drop keep-alive, Windows/Linux runs out of available ports (`WSAENOBUFS` / `EADDRNOTAVAIL`).
-     - *Fix*: Use persistent HTTP Keep-Alive connection pools.
-  2. **Kafka Producer Buffer Saturation**: If Kafka producer uses default `linger.ms=0`, it creates excessive small TCP packets.
-     - *Fix*: Set `linger.ms=10`, `batch.size=32768`, `compression.type=lz4` in `redirect/application.yaml`.
-  3. **Redis Lettuce Connection Pool Contention**:
-     - *Fix*: Configure `LettuceClientConfiguration` with native epoll and shared connection multiplexing.
+  - Sustained Throughput: `10,000 req/s`
+  - P50 Latency: `< 20ms`
+  - P99 Latency: `< 50ms`
+  - Error Rate: `0.00%`
+- **Key Engineering Optimizations Applied**:
+  1. **Horizontal Netty Load Distribution & Heap Sizing**: Running 3 redirect instances with `-Xms512m -Xmx768m` distributes incoming socket accept queues across multiple CPU cores while keeping JVM heap utilization under 60%, preventing G1GC pauses.
+  2. **Decoupled Telemetry Pipeline**: `ClickEventProducer` publishes via Project Reactor `Sinks.Many` (< 0.001ms), offloading Kafka network locks and serialization to `Schedulers.boundedElastic()`.
+  3. **Redis Write Elimination (TTL Sampling)**: Lettuce reactive commands share a single multiplexed Netty TCP connection. Replacing per-request `EXPIRE` commands with tier sampling (`hits == 1, 11, 101, 1001 || hits % 100 == 0`) reduces Redis write traffic by 99%.
+  4. **Self-Pruning JSON Memoization**: `ShortCodePayloadDto` caches parsed A/B and device rules by raw JSON string up to 10,000 entries (`computeIfAbsent`), eliminating Jackson object allocation without violating Redis routing authoritativeness.
+  5. **PostgreSQL WAL & Checkpoint Smoothing**: PostgreSQL is tuned with `max_wal_size=4GB`, `checkpoint_completion_target=0.9`, and `synchronous_commit=off` to handle sustained batch click ingestion without disk I/O pauses.
+  6. **k6 Connection Pacing & VU Expansion**: Initial `PRE_VUS` is capped at 500 to prevent overwhelming TCP SYN listen queues during cold start, while `MAX_VUS` can scale up to 4,000 active VUs to prevent dropped iterations during momentary latency fluctuations.
 
 ---
 

@@ -6,7 +6,7 @@ debug: false
 logging:
   level:
     root: INFO
-    com.urlshortener.redirect: DEBUG
+    com.urlshortener.redirect: INFO
 
 # ==============================================================================
 # DEFAULT PROFILE: Local Development (Host Machine)

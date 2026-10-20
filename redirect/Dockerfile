@@ -21,7 +21,7 @@ COPY --from=builder /build/target/redirect-*.jar app.jar
 USER appuser
 EXPOSE 8082
 
-ENV JAVA_OPTS="-XX:+UseG1GC -Xms256m -Xmx512m"
+ENV JAVA_OPTS="-XX:+UseG1GC -Xms512m -Xmx768m"
 
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar app.jar"]
 

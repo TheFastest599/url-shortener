@@ -17,10 +17,14 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 public class ClickEventProducer {
+
     private static final String TOPIC = "url-clicks";
     private final KafkaTemplate<String, ClickEvent> kafkaTemplate;
 
     public void publishClickEvent(ClickEvent event) {
+        if (event == null) {
+            return;
+        }
         try {
             kafkaTemplate.send(TOPIC, event.shortCode(), event).whenComplete((result, ex) -> {
                 if (ex != null) {
