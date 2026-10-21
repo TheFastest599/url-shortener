@@ -329,9 +329,94 @@ export const options = {
   },
 };
 
+const BASE_URL = __ENV.BASE_URL || 'http://r.localhost';
+const POOL_SIZE = 50;
+
+function generateSingleRequest(baseUrl) {
+  const targetLink = pickTargetLink();
+  const code = targetLink.code;
+  const ip = getRealisticClientIp();
+  const ua = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+  const ref = REFERRERS[Math.floor(Math.random() * REFERRERS.length)];
+
+  const headers = {
+    'User-Agent': ua,
+    'X-Forwarded-For': ip,
+    'Connection': 'keep-alive',
+  };
+
+  if (ref) {
+    headers['Referer'] = ref;
+  }
+
+  if (ua.includes('Windows')) {
+    headers['Sec-CH-UA-Platform'] = '"Windows"';
+    headers['Sec-CH-UA-Platform-Version'] = '"15.0.0"'; // Windows 11 (23H2 / 24H2)
+  }
+
+  let url = `${baseUrl}/${code}`;
+
+  // 65% of clicks carry marketing UTM tags
+  if (Math.random() < 0.65) {
+    const src = UTM_SOURCES[Math.floor(Math.random() * UTM_SOURCES.length)];
+    const med = UTM_MEDIUMS[Math.floor(Math.random() * UTM_MEDIUMS.length)];
+    const cmp = (Math.random() < 0.75)
+      ? targetLink.campaign
+      : SUPPLEMENTAL_CAMPAIGNS[Math.floor(Math.random() * SUPPLEMENTAL_CAMPAIGNS.length)];
+    url += `?utm_source=${src}&utm_medium=${med}&utm_campaign=${cmp}`;
+  }
+
+  // Pre-classify device category to avoid regex/string parsing on every request
+  const uaLower = ua.toLowerCase();
+  let deviceType = 'desktop';
+  if (uaLower.includes('bot') || uaLower.includes('crawl') || uaLower.includes('curl') || uaLower.includes('spider')) {
+    deviceType = 'bot';
+  } else if (uaLower.includes('ipad') || uaLower.includes('tablet')) {
+    deviceType = 'tablet';
+  } else if (uaLower.includes('mobi') || uaLower.includes('iphone') || uaLower.includes('android')) {
+    deviceType = 'mobile';
+  }
+
+  return {
+    url,
+    code,
+    isAbTest: targetLink.isAbTest,
+    deviceType,
+    measuredParams: {
+      redirects: 0,
+      timeout: '5s',
+      headers,
+      tags: { phase: 'measured' },
+    },
+    rampParams: {
+      redirects: 0,
+      timeout: '5s',
+      headers,
+      tags: { phase: 'ramp' },
+    },
+  };
+}
+
+function buildVuPool(poolSize, baseUrl) {
+  const pool = new Array(poolSize);
+  for (let i = 0; i < poolSize; i++) {
+    pool[i] = generateSingleRequest(baseUrl);
+  }
+  return pool;
+}
+
 let rampTransitionLogged = false;
+let vuPool = null;
+let vuIndex = 0;
+let jar = null;
 
 export default function () {
+  // Lazy per-VU pool allocation: runs once (0.1ms) when this specific VU wakes up
+  if (!vuPool) {
+    vuPool = buildVuPool(POOL_SIZE, BASE_URL);
+    jar = http.cookieJar();
+  }
+
   // Determine if this request is during the steady-state measured phase
   const isMeasuredPhase = !hasRamp || getTestElapsedMs() >= RAMP_MS;
 
@@ -350,86 +435,34 @@ export default function () {
     }
   }
 
-  // Balanced weighted selection across all 8 seeded links & campaigns
-  const targetLink = pickTargetLink();
-  const code = targetLink.code;
-  const ip = getRealisticClientIp();
-  const ua = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-  const ref = REFERRERS[Math.floor(Math.random() * REFERRERS.length)];
+  // Blazing fast array lookup: 0 allocations, 0 random calls, 0 string concatenation
+  const req = vuPool[vuIndex++ % POOL_SIZE];
+  const params = isMeasuredPhase ? req.measuredParams : req.rampParams;
 
-  const params = {
-    redirects: 0,
-    timeout: '5s', // Don't let stalled connections hang for 60 seconds
-    headers: {
-      'User-Agent': ua,
-      'X-Forwarded-For': ip,
-      'Connection': 'keep-alive',
-    },
-    tags: {
-      phase: isMeasuredPhase ? 'measured' : 'ramp',
-    },
-  };
-
-  if (ref) {
-    params.headers['Referer'] = ref;
-  }
-
-  if (ua.includes('Windows')) {
-    params.headers['Sec-CH-UA-Platform'] = '"Windows"';
-    params.headers['Sec-CH-UA-Platform-Version'] = '"15.0.0"'; // Windows 11 (23H2 / 24H2)
-  }
-
-  // --- Native Browser CookieJar Management ---
-  // k6 maintains an isolated, automatic CookieJar per Virtual User (VU).
-  // Real cookies returned in 'Set-Cookie' by Nginx ('vid') and redirect-service ('ab_*')
-  // are automatically captured and sent back on subsequent visits like a real browser.
-  const baseUrl = __ENV.BASE_URL || 'http://r.localhost';
-  const jar = http.cookieJar();
-
-  // Track if this VU holds an active A/B cookie previously set by the server
-  const storedCookies = jar.cookiesForURL(baseUrl);
-  if (isMeasuredPhase && storedCookies[`ab_${code}`] && storedCookies[`ab_${code}`].length > 0) {
-    stickyCookieHits.add(1);
-  }
-
-  // Device telemetry counters (recorded during measured phase)
-  if (isMeasuredPhase) {
-    const uaLower = ua.toLowerCase();
-    if (uaLower.includes('bot') || uaLower.includes('crawl') || uaLower.includes('curl') || uaLower.includes('spider')) {
-      botHits.add(1);
-    } else if (uaLower.includes('ipad') || uaLower.includes('tablet')) {
-      tabletHits.add(1);
-    } else if (uaLower.includes('mobi') || uaLower.includes('iphone') || uaLower.includes('android')) {
-      mobileHits.add(1);
-    } else {
-      desktopHits.add(1);
-    }
-  }
-
-  // Construct dynamic URL with realistic UTM parameters
-  let url = `${baseUrl}/${code}`;
-
-  // 65% of clicks carry marketing UTM tags
-  if (Math.random() < 0.65) {
-    const src = UTM_SOURCES[Math.floor(Math.random() * UTM_SOURCES.length)];
-    const med = UTM_MEDIUMS[Math.floor(Math.random() * UTM_MEDIUMS.length)];
-    // 75% use the link's specific campaign slug, 25% use supplemental campaign angles
-    const cmp = (Math.random() < 0.75)
-      ? targetLink.campaign
-      : SUPPLEMENTAL_CAMPAIGNS[Math.floor(Math.random() * SUPPLEMENTAL_CAMPAIGNS.length)];
-    url += `?utm_source=${src}&utm_medium=${med}&utm_campaign=${cmp}`;
-  }
-
-  const startTime = Date.now();
-  const res = http.get(url, params);
-  const elapsed = Date.now() - startTime;
+  const res = http.get(req.url, params);
 
   const isSuccess = res.status === 302 && res.headers['Location'] !== undefined;
 
-  // Only count latency and success rates during the steady-state measured phase
+  // Telemetry recording during measured steady-state phase
   if (isMeasuredPhase) {
     redirectSuccessRate.add(isSuccess);
-    redirectLatency.add(elapsed);
+    if (res.timings && typeof res.timings.duration === 'number') {
+      redirectLatency.add(res.timings.duration);
+    }
+
+    switch (req.deviceType) {
+      case 'bot': botHits.add(1); break;
+      case 'tablet': tabletHits.add(1); break;
+      case 'mobile': mobileHits.add(1); break;
+      default: desktopHits.add(1); break;
+    }
+
+    if (req.isAbTest && jar) {
+      const storedCookies = jar.cookiesForURL(BASE_URL);
+      if (storedCookies[`ab_${req.code}`] && storedCookies[`ab_${req.code}`].length > 0) {
+        stickyCookieHits.add(1);
+      }
+    }
   }
 
   check(res, {

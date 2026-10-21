@@ -1,0 +1,277 @@
+{
+  "metrics": {
+    "tablet_hits": {
+      "count": 628119,
+      "rate": 347.03777906608207
+    },
+    "http_req_duration": {
+      "max": 2403.106857,
+      "avg": 2.999925885947207,
+      "min": -1.324225,
+      "med": 0.779331,
+      "p(90)": 6.8620884,
+      "p(95)": 12.014618749999997,
+      "p(99)": 25.006864319999643,
+      "p(99.9)": 128.09527481600338,
+      "thresholds": {
+        "p(99)<35": false,
+        "p(95)<15": false
+      }
+    },
+    "desktop_hits": {
+      "count": 3640129,
+      "rate": 2011.1830460056744
+    },
+    "mobile_hits": {
+      "count": 3213664,
+      "rate": 1775.5597541622233
+    },
+    "iterations": {
+      "count": 9019914,
+      "rate": 4983.5316586937515
+    },
+    "http_req_failed": {
+      "passes": 0,
+      "fails": 9019914,
+      "thresholds": {
+        "rate<0.001": false
+      },
+      "value": 0
+    },
+    "redirect_success": {
+      "passes": 8995319,
+      "fails": 0,
+      "thresholds": {
+        "rate>0.999": false
+      },
+      "value": 1
+    },
+    "sticky_cookie_hits": {
+      "count": 829816,
+      "rate": 458.47602392779066
+    },
+    "dropped_iterations": {
+      "rate": 3.3139143997210088,
+      "count": 5998
+    },
+    "http_reqs": {
+      "count": 9019914,
+      "rate": 4983.5316586937515
+    },
+    "http_req_blocked": {
+      "max": 87.223276,
+      "avg": 0.006478039538838204,
+      "min": 0,
+      "med": 0.004028,
+      "p(90)": 0.005722,
+      "p(95)": 0.006572,
+      "p(99)": 0.012475,
+      "p(99.9)": 0.16242587000001224
+    },
+    "http_req_waiting": {
+      "med": 0.708888,
+      "p(90)": 6.519304,
+      "p(95)": 11.687089749999998,
+      "p(99)": 24.513448929999967,
+      "p(99.9)": 127.74880238400223,
+      "max": 2403.020179,
+      "avg": 2.8648072905768895,
+      "min": 0
+    },
+    "data_sent": {
+      "count": 2764720942,
+      "rate": 1527517.262571529
+    },
+    "http_req_tls_handshaking": {
+      "med": 0,
+      "p(90)": 0,
+      "p(95)": 0,
+      "p(99)": 0,
+      "p(99.9)": 0,
+      "max": 0,
+      "avg": 0,
+      "min": 0
+    },
+    "checks": {
+      "passes": 18039828,
+      "fails": 0,
+      "value": 1
+    },
+    "bot_hits": {
+      "count": 1513407,
+      "rate": 836.1622624105656
+    },
+    "iteration_duration": {
+      "max": 2407.157233,
+      "avg": 3.2371581446456603,
+      "min": 0.484299,
+      "med": 0.996629,
+      "p(90)": 7.1243544000000005,
+      "p(95)": 12.281777449999982,
+      "p(99)": 25.425145399999817,
+      "p(99.9)": 131.60575322100132
+    },
+    "redirect_latency": {
+      "p(99.9)": 89.11612325000213,
+      "max": 302.135641,
+      "avg": 2.7448870360949624,
+      "min": -1.324225,
+      "med": 0.777877,
+      "p(90)": 6.733936,
+      "p(95)": 11.778151999999993,
+      "p(99)": 23.40622288000007
+    },
+    "vus": {
+      "value": 22,
+      "min": 0,
+      "max": 635
+    },
+    "http_req_connecting": {
+      "p(90)": 0,
+      "p(95)": 0,
+      "p(99)": 0,
+      "p(99.9)": 0.07800448000004888,
+      "max": 87.161096,
+      "avg": 0.0016663532919493527,
+      "min": 0,
+      "med": 0
+    },
+    "data_received": {
+      "count": 2931943480,
+      "rate": 1619908.255675246
+    },
+    "http_req_duration{phase:measured}": {
+      "p(90)": 6.733936,
+      "p(95)": 11.778151999999993,
+      "p(99)": 23.40622288000007,
+      "p(99.9)": 89.11612325000213,
+      "max": 302.135641,
+      "avg": 2.7448870360949624,
+      "min": -1.324225,
+      "med": 0.777877,
+      "thresholds": {
+        "p(95)<15": false,
+        "p(99)<35": false
+      }
+    },
+    "http_req_failed{phase:measured}": {
+      "passes": 0,
+      "fails": 8995319,
+      "thresholds": {
+        "rate<0.001": false
+      },
+      "value": 0
+    },
+    "vus_max": {
+      "value": 852,
+      "min": 314,
+      "max": 852
+    },
+    "http_req_sending": {
+      "p(99.9)": 9.787999006002613,
+      "max": 107.687903,
+      "avg": 0.0776728776901731,
+      "min": 0,
+      "med": 0.013476,
+      "p(90)": 0.038614,
+      "p(95)": 0.122418,
+      "p(99)": 1.4718303999999836
+    },
+    "http_req_receiving": {
+      "max": 202.871462,
+      "avg": 0.05744571768021943,
+      "min": -1.944498,
+      "med": 0.034607,
+      "p(90)": 0.059666,
+      "p(95)": 0.083121,
+      "p(99)": 0.2795528699999992,
+      "p(99.9)": 3.2870881640009433
+    },
+    "http_req_duration{expected_response:true}": {
+      "p(90)": 6.8620884,
+      "p(95)": 12.014618749999997,
+      "p(99)": 25.006864319999643,
+      "p(99.9)": 128.09527481600338,
+      "max": 2403.106857,
+      "avg": 2.999925885947207,
+      "min": -1.324225,
+      "med": 0.779331
+    }
+  },
+  "root_group": {
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": {},
+    "checks": {
+      "status is 302": {
+        "name": "status is 302",
+        "path": "::status is 302",
+        "id": "9ef425e11baabefe00b04a8500db882d",
+        "passes": 9019914,
+        "fails": 0
+      },
+      "has location header": {
+        "name": "has location header",
+        "path": "::has location header",
+        "id": "40e624e3e91f2a8257c4fd971ca1083d",
+        "passes": 9019914,
+        "fails": 0
+      }
+    }
+  },
+  "config": {
+    "command": "node load-tests/cli.js test -d 30m -r 5000",
+    "redirectReplicas": 1,
+    "services": [
+      {
+        "service": "analytics",
+        "container": "analytics-service",
+        "status": "Up 31 minutes",
+        "ports": "8083/tcp, 9091/tcp"
+      },
+      {
+        "service": "apigateway",
+        "container": "apigateway-service",
+        "status": "Up 31 minutes",
+        "ports": "8080/tcp"
+      },
+      {
+        "service": "core",
+        "container": "core-service",
+        "status": "Up 31 minutes",
+        "ports": "8081/tcp, 9090/tcp"
+      },
+      {
+        "service": "kafka",
+        "container": "kafka-broker",
+        "status": "Up 31 minutes (healthy)",
+        "ports": "9092/tcp"
+      },
+      {
+        "service": "nginx",
+        "container": "nginx-ingress",
+        "status": "Up 31 minutes",
+        "ports": "0.0.0.0:80->80/tcp, [::]:80->80/tcp"
+      },
+      {
+        "service": "postgres",
+        "container": "postgres-db",
+        "status": "Up 31 minutes (healthy)",
+        "ports": "5432/tcp"
+      },
+      {
+        "service": "redis",
+        "container": "redis-cache",
+        "status": "Up 31 minutes (healthy)",
+        "ports": "6379/tcp"
+      },
+      {
+        "service": "redirect",
+        "container": "url-shortener-redirect-1",
+        "status": "Up 31 minutes",
+        "ports": "8082/tcp"
+      }
+    ]
+  }
+}

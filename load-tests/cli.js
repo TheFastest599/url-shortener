@@ -541,7 +541,7 @@ async function runTest(options) {
 	const rampEnv = options.ramp ? `-e RAMP_TIME="${options.ramp}"` : "";
 	const vusEnv = options.vus ? `-e MAX_VUS=${options.vus}` : "";
 	exec("docker rm -f k6-load-tester", { silent: true });
-	const k6Cmd = `docker run --rm --name k6-load-tester --cpus="2.0" --memory="3.0g" ${netFlags} -v "${K6_DIR}:/scripts" -v "${RESULTS_DIR}:/results" -e BASE_URL="${baseUrl}" -e TARGET_RPS=${rps} -e DURATION="${duration}" ${rampEnv} ${vusEnv} grafana/k6:latest run --summary-export=/results/latest_results.json /scripts/realistic_load_test.js`;
+	const k6Cmd = `docker run --rm --name k6-load-tester --cpus="3.0" --memory="3.0g" ${netFlags} -v "${K6_DIR}:/scripts" -v "${RESULTS_DIR}:/results" -e BASE_URL="${baseUrl}" -e TARGET_RPS=${rps} -e DURATION="${duration}" ${rampEnv} ${vusEnv} grafana/k6:latest run --summary-export=/results/latest_results.json /scripts/realistic_load_test.js`;
 
 	const k6Res = exec(k6Cmd);
 
