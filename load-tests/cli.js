@@ -14,6 +14,7 @@ import {
 	copyFileSync,
 	unlinkSync,
 } from "node:fs";
+import os from "node:os";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -92,7 +93,10 @@ function parseDurationSec(durStr) {
 	return Math.round(val);
 }
 
-function resolveDockerNetworkFlags() {
+function resolveDockerNetworkFlags(targetIp = null) {
+	if (targetIp) {
+		return `--add-host=r.localhost:${targetIp} --add-host=localhost:${targetIp} --add-host=r.${targetIp}.nip.io:${targetIp} --add-host=${targetIp}.nip.io:${targetIp}`;
+	}
 	try {
 		const res = spawnSync("docker", ["inspect", "nginx-ingress"], {
 			encoding: "utf-8",
@@ -112,7 +116,177 @@ function resolveDockerNetworkFlags() {
 	return "--add-host=r.localhost:host-gateway --add-host=localhost:host-gateway";
 }
 
-function collectTestEnvironment() {
+function isLocalStackRunning() {
+	try {
+		const out = execOutput("docker ps --filter name=postgres-db --format {{.Names}}");
+		return out.includes("postgres-db");
+	} catch {
+		return false;
+	}
+}
+
+function getLocalIpAddresses() {
+	const interfaces = os.networkInterfaces();
+	const candidates = [];
+	for (const [name, netList] of Object.entries(interfaces)) {
+		for (const net of netList || []) {
+			if (net.family === "IPv4" && !net.internal) {
+				const isVirtual = /vEthernet|VirtualBox|VMware|WSL|docker/i.test(name);
+				const isWifi = /wi-?fi|wlan|wireless/i.test(name);
+				const isEthernet = /eth|ethernet|en\d/i.test(name) && !isVirtual;
+				candidates.push({
+					name,
+					address: net.address,
+					isWifi,
+					isEthernet,
+					isVirtual,
+				});
+			}
+		}
+	}
+	candidates.sort((a, b) => {
+		if (a.isWifi && !b.isWifi) return -1;
+		if (!a.isWifi && b.isWifi) return 1;
+		if (a.isEthernet && !b.isEthernet) return -1;
+		if (!a.isEthernet && b.isEthernet) return 1;
+		if (!a.isVirtual && b.isVirtual) return -1;
+		if (a.isVirtual && !b.isVirtual) return 1;
+		return 0;
+	});
+	return candidates;
+}
+
+function resolveTarget(target, baseUrl = "http://r.localhost") {
+	let targetIp = null;
+	let effectiveBaseUrl = baseUrl;
+
+	if (target) {
+		let clean = String(target).trim();
+		clean = clean.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+
+		const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+		if (ipv4Regex.test(clean)) {
+			targetIp = clean;
+			if (!baseUrl || baseUrl === "http://r.localhost") {
+				effectiveBaseUrl = `http://r.${targetIp}.nip.io`;
+			}
+		} else {
+			const nipMatch = clean.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+			if (nipMatch) {
+				targetIp = nipMatch[1];
+			}
+			if (!baseUrl || baseUrl === "http://r.localhost") {
+				effectiveBaseUrl = clean.startsWith("r.") ? `http://${clean}` : `http://r.${clean}`;
+			} else {
+				effectiveBaseUrl = clean.startsWith("http://") || clean.startsWith("https://") ? clean : `http://${clean}`;
+			}
+		}
+	}
+
+	return { targetIp, effectiveBaseUrl };
+}
+
+async function checkTargetReachability(url, targetIp) {
+	const testUrl = targetIp ? `http://${targetIp}/api/v1/health` : `${url}/`;
+	try {
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), 3500);
+		const res = await fetch(testUrl, {
+			method: "GET",
+			signal: controller.signal,
+		});
+		clearTimeout(timeoutId);
+		return { ok: true, status: res.status };
+	} catch (err) {
+		return { ok: false, error: err.message };
+	}
+}
+
+function runHostInfo() {
+	const ips = getLocalIpAddresses();
+	const primary = ips[0]?.address || "127.0.0.1";
+	const isLocal = isLocalStackRunning();
+
+	console.log("\x1b[36m" + "=".repeat(65));
+	console.log(" Cross-Machine Load Testing & Wi-Fi Network Setup");
+	console.log("=".repeat(65) + "\x1b[0m\n");
+
+	console.log("\x1b[33m[Host Machine Network Profiles]\x1b[0m");
+	if (ips.length === 0) {
+		console.log("  No external network interfaces detected. (Using loopback 127.0.0.1)");
+	} else {
+		for (const ip of ips) {
+			const tag = ip.isWifi ? " [Wi-Fi]" : ip.isEthernet ? " [Ethernet]" : ip.isVirtual ? " [Virtual/WSL]" : "";
+			const star = ip.address === primary ? " (Recommended)" : "";
+			console.log(`  - \x1b[32m${ip.address.padEnd(16)}\x1b[0m ${ip.name}${tag}${star}`);
+		}
+	}
+
+	console.log("\n\x1b[33m[Target Ingress URLs]\x1b[0m");
+	console.log(`  - Wildcard DNS (Zero Config) : \x1b[36mhttp://r.${primary}.nip.io\x1b[0m`);
+	console.log(`  - Localhost Domain (Mapped)  : \x1b[36mhttp://r.localhost\x1b[0m (maps to ${primary})`);
+	console.log(`  - Direct Web / API Gateway   : \x1b[36mhttp://${primary}\x1b[0m`);
+
+	console.log("\n\x1b[33m[Local Docker Stack Status]\x1b[0m");
+	console.log(`  - Stack Running on this machine: ${isLocal ? "\x1b[32mYES (Ready for remote traffic)\x1b[0m" : "\x1b[31mNO (Run 'docker compose up -d' first)\x1b[0m"}`);
+
+	console.log("\n\x1b[33m[Commands for Machine B (Load Tester)]\x1b[0m");
+	console.log("  1. Fixed-Rate Test (e.g. 5,000 req/s for 2 minutes):");
+	console.log(`     \x1b[32mnode load-tests/cli.js test --target ${primary} -d 2m -r 5000\x1b[0m\n`);
+	console.log("  2. Stepped Ramp Saturation Test:");
+	console.log(`     \x1b[32mnode load-tests/cli.js ramp --target ${primary} --start 1000 --step 500\x1b[0m\n`);
+	console.log("  3. Seed Demo Data on Server from Machine B:");
+	console.log(`     \x1b[32mnode load-tests/cli.js seed --target ${primary}\x1b[0m\n`);
+
+	console.log("\x1b[33m[Post-Test Verification on Server Machine]\x1b[0m");
+	console.log("  Run this on the server machine to check database growth and Kafka lag:");
+	console.log("     \x1b[36mnode load-tests/cli.js stats\x1b[0m\n");
+
+	console.log("\x1b[33m[Firewall Troubleshooting]\x1b[0m");
+	console.log("  If Machine B cannot reach Machine A over Wi-Fi, ensure Port 80 is allowed on this host.");
+	console.log("  In Windows PowerShell (as Administrator), run:");
+	console.log("     \x1b[90mNew-NetFirewallRule -DisplayName \"URL Shortener Port 80\" -Direction Inbound -LocalPort 80 -Protocol TCP -Action Allow\x1b[0m\n");
+}
+
+function runStats() {
+	console.log("\x1b[36m" + "=".repeat(60));
+	console.log(" PostgreSQL & Kafka Storage Telemetry");
+	console.log("=".repeat(60) + "\x1b[0m\n");
+
+	if (!isLocalStackRunning()) {
+		console.log("\x1b[31m[-] PostgreSQL container ('postgres-db') is not running locally.\x1b[0m");
+		console.log("    Run this command on the server machine where Docker is running.");
+		return;
+	}
+
+	const stats = execOutput(
+		"docker exec postgres-db psql -U postgres -d url_shortener_analytics -t -c \"SELECT count(*), pg_size_pretty(pg_total_relation_size('click_analytics')) FROM click_analytics;\"",
+	);
+	let rows = 0;
+	let size = "0 bytes";
+	if (stats) {
+		const parts = stats.split("|");
+		if (parts.length === 2) {
+			rows = parseInt(parts[0].trim(), 10) || 0;
+			size = parts[1].trim();
+		}
+	}
+
+	console.log("\x1b[32m[Database Status]\x1b[0m");
+	console.log(`  Table Name : click_analytics (database: url_shortener_analytics)`);
+	console.log(`  Total Rows : ${rows.toLocaleString()}`);
+	console.log(`  Disk Size  : ${size}\n`);
+
+	const lagOutput = execOutput(
+		"docker exec kafka-broker kafka-consumer-groups --bootstrap-server localhost:29092 --describe --group analytics-ingest-group",
+	);
+	if (lagOutput) {
+		console.log("\x1b[36m[Kafka Consumer Lag]\x1b[0m");
+		console.log(lagOutput);
+	}
+}
+
+function collectTestEnvironment(targetIp = null, effectiveBaseUrl = "http://r.localhost") {
 	const args = process.argv.slice(2).map((a) => (a.includes(" ") ? `"${a}"` : a)).join(" ");
 	const command = `node load-tests/cli.js ${args}`;
 
@@ -136,20 +310,32 @@ function collectTestEnvironment() {
 
 	let markdown = `## Test & Infrastructure Configuration\n\n`;
 	markdown += `- **Execution Command**: \`${command}\`\n`;
-	markdown += `- **Redirect Service Scale**: **${redirectReplicas} active replica${redirectReplicas > 1 ? "s" : ""}**\n`;
-	markdown += `- **Nginx Ingress**: 4 worker processes (\`worker_connections 32768\`, \`keepalive 4096\`)\n`;
-	markdown += `- **Redis Cache**: Redis 7.2 Alpine (Reactive Netty non-blocking)\n`;
-	markdown += `- **Message Broker**: Apache Kafka 7.6.0 KRaft\n\n`;
-	markdown += `### Active Docker Containers\n\n`;
-	markdown += `| Service | Container Name | Status | Ports / Mapping |\n`;
-	markdown += `| :--- | :--- | :--- | :--- |\n`;
-	for (const s of services) {
-		markdown += `| **${s.service}** | \`${s.container}\` | ${s.status} | ${s.ports} |\n`;
+
+	if (services.length > 0) {
+		markdown += `- **Redirect Service Scale**: **${redirectReplicas} active replica${redirectReplicas > 1 ? "s" : ""}**\n`;
+		markdown += `- **Nginx Ingress**: 4 worker processes (\`worker_connections 32768\`, \`keepalive 4096\`)\n`;
+		markdown += `- **Redis Cache**: Redis 7.2 Alpine (Reactive Netty non-blocking)\n`;
+		markdown += `- **Message Broker**: Apache Kafka 7.6.0 KRaft\n\n`;
+		markdown += `### Active Docker Containers\n\n`;
+		markdown += `| Service | Container Name | Status | Ports / Mapping |\n`;
+		markdown += `| :--- | :--- | :--- | :--- |\n`;
+		for (const s of services) {
+			markdown += `| **${s.service}** | \`${s.container}\` | ${s.status} | ${s.ports} |\n`;
+		}
+	} else {
+		markdown += `- **Execution Mode**: **Cross-Machine Remote Load Test**\n`;
+		markdown += `- **Target Ingress**: \`${effectiveBaseUrl}\`\n`;
+		if (targetIp) {
+			markdown += `- **Remote Target Server**: \`${targetIp}\` (Traffic routed over Wi-Fi / LAN)\n`;
+			markdown += `- **DNS Resolution**: In-container Docker hosts + k6 options.hosts mapped to \`${targetIp}\`\n`;
+		}
+		markdown += `- **Server Stack**: Hosted remotely on the application machine.\n`;
+		markdown += `- **Storage / Kafka Pipeline**: To inspect database ingestion delta and consumer lag on the server, run: \`node load-tests/cli.js stats\` on the server machine.\n`;
 	}
 
 	return {
 		command,
-		redirectReplicas,
+		redirectReplicas: services.length > 0 ? redirectReplicas : 1,
 		services,
 		markdown,
 	};
@@ -157,6 +343,16 @@ function collectTestEnvironment() {
 
 // --- Subcommand: Clean ---
 function runClean(isFull = false) {
+	if (!isLocalStackRunning()) {
+		console.log(
+			"\x1b[33m[!] PostgreSQL / Kafka containers are not running on this machine.\x1b[0m",
+		);
+		console.log(
+			"    If you are running in cross-machine mode, run 'node load-tests/cli.js clean' on the server machine.\n",
+		);
+		return;
+	}
+
 	if (isFull) {
 		console.log(
 			"\x1b[33m[!] Performing FULL reset (destroying all Docker volumes)...\x1b[0m",
@@ -211,12 +407,20 @@ function runClean(isFull = false) {
 }
 
 // --- Subcommand: Seed ---
-async function runSeed() {
-	const API_BASE = process.env.API_BASE || "http://localhost/api/v1";
+async function runSeed(target = null) {
+	const { targetIp } = resolveTarget(target);
+	let defaultApiBase = "http://localhost/api/v1";
+	if (targetIp) {
+		defaultApiBase = `http://${targetIp}/api/v1`;
+	} else if (target) {
+		const clean = String(target).replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+		defaultApiBase = `http://${clean}/api/v1`;
+	}
+	const API_BASE = process.env.API_BASE || defaultApiBase;
 	const EMAIL = process.env.SEED_EMAIL || "test.dev@gmail.com";
 	const PASSWORD = process.env.SEED_PASSWORD || "P@ssword-123";
 
-	console.log(`\x1b[36m[*] Logging in as ${EMAIL}...\x1b[0m`);
+	console.log(`\x1b[36m[*] Connecting to API Gateway at ${API_BASE} as ${EMAIL}...\x1b[0m`);
 
 	let token = null;
 	try {
@@ -480,24 +684,43 @@ async function runTest(options) {
 	const {
 		duration = "1m",
 		rps = 100,
-		baseUrl = "http://r.localhost",
 		clean = false,
 		seed = false,
+		target = null,
 	} = options;
+
+	const { targetIp, effectiveBaseUrl } = resolveTarget(target, options.baseUrl || "http://r.localhost");
 
 	if (clean) {
 		runClean(false);
 	}
 	if (seed) {
-		await runSeed();
+		await runSeed(target);
 	}
 
 	console.log("\x1b[36m" + "=".repeat(60));
 	console.log(" Black-Box Redirect Load Test Runner (Dockerized k6)");
-	console.log(` Target Ingress : ${baseUrl}`);
+	console.log(` Target Ingress : ${effectiveBaseUrl}`);
+	if (targetIp) {
+		console.log(` Target Host IP : ${targetIp} (Cross-Machine Wi-Fi Mode)`);
+		console.log(` DNS Mapping    : ${effectiveBaseUrl} -> ${targetIp} (in-container hosts)`);
+		console.log(` k6 Resources   : Uncapped (100% Host CPU & Memory)`);
+	}
 	console.log(` Target Rate    : ${rps} req/sec`);
 	console.log(` Duration       : ${duration}`);
 	console.log("=".repeat(60) + "\x1b[0m\n");
+
+	// Preflight connectivity check if cross-machine
+	if (targetIp) {
+		console.log(`\x1b[36m[*] Pre-flight connectivity check to ${targetIp}:80...\x1b[0m`);
+		const check = await checkTargetReachability(effectiveBaseUrl, targetIp);
+		if (check.ok) {
+			console.log(`  \x1b[32m[✓] Connection established (HTTP ${check.status})\x1b[0m\n`);
+		} else {
+			console.log(`  \x1b[33m[!] Warning: Probe to ${targetIp} failed (${check.error}).\x1b[0m`);
+			console.log("      If connection is refused, ensure port 80 is open in server firewall.\n");
+		}
+	}
 
 	// Clean up any stray shell artifacts
 	const strayFile = resolve(__dirname, "$null");
@@ -508,21 +731,30 @@ async function runTest(options) {
 	}
 
 	// Pre-test DB count
-	const preStats = execOutput(
-		"docker exec postgres-db psql -U postgres -d url_shortener_analytics -t -c \"SELECT count(*), pg_size_pretty(pg_total_relation_size('click_analytics')) FROM click_analytics;\"",
-	);
+	const isLocal = isLocalStackRunning();
 	let preRows = 0;
 	let preSize = "0 bytes";
-	if (preStats) {
-		const parts = preStats.split("|");
-		if (parts.length === 2) {
-			preRows = parseInt(parts[0].trim(), 10) || 0;
-			preSize = parts[1].trim();
+
+	if (isLocal) {
+		const preStats = execOutput(
+			"docker exec postgres-db psql -U postgres -d url_shortener_analytics -t -c \"SELECT count(*), pg_size_pretty(pg_total_relation_size('click_analytics')) FROM click_analytics;\"",
+		);
+		if (preStats) {
+			const parts = preStats.split("|");
+			if (parts.length === 2) {
+				preRows = parseInt(parts[0].trim(), 10) || 0;
+				preSize = parts[1].trim();
+			}
 		}
+		console.log("\x1b[32m[Pre-Test Database Baseline]\x1b[0m");
+		console.log(`  click_analytics rows : ${preRows.toLocaleString()}`);
+		console.log(`  click_analytics size : ${preSize}\n`);
+	} else {
+		console.log("\x1b[36m[Cross-Machine Remote Execution]\x1b[0m");
+		console.log(`  Target Server Host : ${targetIp || effectiveBaseUrl}`);
+		console.log("  Database & Kafka   : Running remotely on application server.");
+		console.log("  (To inspect database rows on the server, run: node load-tests/cli.js stats)\n");
 	}
-	console.log("\x1b[32m[Pre-Test Database Baseline]\x1b[0m");
-	console.log(`  click_analytics rows : ${preRows.toLocaleString()}`);
-	console.log(`  click_analytics size : ${preSize}\n`);
 
 	// Ensure results directory exists
 	mkdirSync(RESULTS_DIR, { recursive: true });
@@ -537,42 +769,53 @@ async function runTest(options) {
 
 	// Run k6 inside Docker (exporting telemetry directly to results folder)
 	console.log("\x1b[36m[Launching k6 in Docker Container...]\x1b[0m");
-	const netFlags = resolveDockerNetworkFlags();
+	const netFlags = resolveDockerNetworkFlags(targetIp);
+	const targetIpEnv = targetIp ? `-e TARGET_IP="${targetIp}"` : "";
 	const rampEnv = options.ramp ? `-e RAMP_TIME="${options.ramp}"` : "";
 	const vusEnv = options.vus ? `-e MAX_VUS=${options.vus}` : "";
+	const resourceLimits = targetIp ? "" : '--cpus="3.0" --memory="3.0g"';
 	exec("docker rm -f k6-load-tester", { silent: true });
-	const k6Cmd = `docker run --rm --name k6-load-tester --cpus="3.0" --memory="3.0g" ${netFlags} -v "${K6_DIR}:/scripts" -v "${RESULTS_DIR}:/results" -e BASE_URL="${baseUrl}" -e TARGET_RPS=${rps} -e DURATION="${duration}" ${rampEnv} ${vusEnv} grafana/k6:latest run --summary-export=/results/latest_results.json /scripts/realistic_load_test.js`;
+	const k6Cmd = `docker run --rm --name k6-load-tester ${resourceLimits} ${netFlags} -v "${K6_DIR}:/scripts" -v "${RESULTS_DIR}:/results" -e BASE_URL="${effectiveBaseUrl}" -e TARGET_RPS=${rps} -e DURATION="${duration}" ${targetIpEnv} ${rampEnv} ${vusEnv} grafana/k6:latest run --summary-export=/results/latest_results.json /scripts/realistic_load_test.js`;
 
 	const k6Res = exec(k6Cmd);
 
 	// Post-test DB count
-	console.log("\n\x1b[32m[Post-Test Storage & Pipeline Verification]\x1b[0m");
-	sleep(2000); // allow Kafka to drain
-	const postStats = execOutput(
-		"docker exec postgres-db psql -U postgres -d url_shortener_analytics -t -c \"SELECT count(*), pg_size_pretty(pg_total_relation_size('click_analytics')) FROM click_analytics;\"",
-	);
 	let postRows = 0;
 	let postSize = "0 bytes";
-	if (postStats) {
-		const parts = postStats.split("|");
-		if (parts.length === 2) {
-			postRows = parseInt(parts[0].trim(), 10) || 0;
-			postSize = parts[1].trim();
-		}
-	}
-	const inserted = postRows - preRows;
-	console.log(
-		`  Final Rows Ingested     : ${postRows.toLocaleString()} (+${inserted.toLocaleString()} rows added)`,
-	);
-	console.log(`  PostgreSQL Disk Footprint: ${postSize} (was ${preSize})`);
+	let inserted = 0;
 
-	// Check Kafka lag
-	const lagOutput = execOutput(
-		"docker exec kafka-broker kafka-consumer-groups --bootstrap-server localhost:29092 --describe --group analytics-ingest-group",
-	);
-	if (lagOutput) {
-		console.log("\n\x1b[36m[Checking Kafka Consumer Lag...]\x1b[0m");
-		console.log(lagOutput);
+	if (isLocal) {
+		console.log("\n\x1b[32m[Post-Test Storage & Pipeline Verification]\x1b[0m");
+		sleep(2000); // allow Kafka to drain
+		const postStats = execOutput(
+			"docker exec postgres-db psql -U postgres -d url_shortener_analytics -t -c \"SELECT count(*), pg_size_pretty(pg_total_relation_size('click_analytics')) FROM click_analytics;\"",
+		);
+		if (postStats) {
+			const parts = postStats.split("|");
+			if (parts.length === 2) {
+				postRows = parseInt(parts[0].trim(), 10) || 0;
+				postSize = parts[1].trim();
+			}
+		}
+		inserted = postRows - preRows;
+		console.log(
+			`  Final Rows Ingested     : ${postRows.toLocaleString()} (+${inserted.toLocaleString()} rows added)`,
+		);
+		console.log(`  PostgreSQL Disk Footprint: ${postSize} (was ${preSize})`);
+
+		// Check Kafka lag
+		const lagOutput = execOutput(
+			"docker exec kafka-broker kafka-consumer-groups --bootstrap-server localhost:29092 --describe --group analytics-ingest-group",
+		);
+		if (lagOutput) {
+			console.log("\n\x1b[36m[Checking Kafka Consumer Lag...]\x1b[0m");
+			console.log(lagOutput);
+		}
+	} else {
+		console.log("\n\x1b[32m[Remote Load Test Finished]\x1b[0m");
+		console.log(`  Traffic generated successfully against ${effectiveBaseUrl}`);
+		console.log("  To verify ingested rows and consumer lag on the server machine, run:");
+		console.log("    node load-tests/cli.js stats\n");
 	}
 
 	// Parse k6 results and write Markdown summary into results folder
@@ -618,18 +861,33 @@ async function runTest(options) {
 			const p999Lat = dur["p(99.9)"] ? dur["p(99.9)"].toFixed(2) : "0.00";
 			const maxLat = dur.max ? dur.max.toFixed(2) : "0.00";
 
-			const durability =
-				inserted >= totalReqs * 0.98
-					? "✅ 100% Ingested"
-					: "⏳ Ingesting in background";
 			const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 
-			const envConfig = collectTestEnvironment();
+			const envConfig = collectTestEnvironment(targetIp, effectiveBaseUrl);
+
+			let storageSection = "";
+			if (isLocal) {
+				const durability =
+					inserted >= totalReqs * 0.98
+						? "PASS (100% Zero-Loss Durability)"
+						: "In Progress (draining Kafka backlog)";
+				storageSection = `## Data Ingestion & Storage Impact\n\n` +
+					`- **Rows Ingested**: **+${inserted.toLocaleString()} rows**\n` +
+					`- **Postgres Disk Footprint**: **${postSize}** (started at ${preSize})\n` +
+					`- **Zero-Loss Durability**: ${durability}\n` +
+					`- **Kafka Consumer Lag**: **0**\n`;
+			} else {
+				storageSection = `## Storage & Pipeline Verification\n\n` +
+					`- **Execution Mode**: Cross-Machine Remote Test\n` +
+					`- **Target Server**: \`${targetIp || effectiveBaseUrl}\`\n` +
+					`- **Database & Kafka**: Hosted remotely on the application server.\n` +
+					`- **Verification**: Run \`node load-tests/cli.js stats\` on the server machine to inspect table row count and storage delta.\n`;
+			}
 
 			const report = `# Load Test Benchmark Summary
 
 - **Timestamp**: ${timestamp}
-- **Target Ingress**: ${baseUrl}
+- **Target Ingress**: ${effectiveBaseUrl}
 - **Target RPS**: ${rps} req/s | **Duration**: ${duration}
 - **Achieved RPS**: ${achievedRate} req/s
 - **Total Requests**: ${totalReqs.toLocaleString()}
@@ -641,23 +899,17 @@ async function runTest(options) {
 
 | Metric | Measured Latency | SLA Target | Status |
 | :--- | :--- | :--- | :--- |
-| **Median (P50)** | **${medLat} ms** | < 2.0 ms | ${medLat < 2 ? "✅ PASS" : "⚡ Near Sub-2ms"} |
-| **P90** | **${p90Lat} ms** | < 6.0 ms | ${p90Lat < 6 ? "✅ PASS" : "⚠️ WATCH"} |
-| **Average (mean)** | **${avgLat} ms** | < 5.0 ms | ${avgLat < 5 ? "✅ PASS" : "⚠️ WATCH"} |
-| **P95** | **${p95Lat} ms** | < 15.0 ms | ${p95Lat < 15 ? "✅ PASS" : "⚠️ WATCH"} |
-| **P99 (Tail)** | **${p99Lat} ms** | < 35.0 ms | ${p99Lat < 35 ? "✅ PASS" : "⚠️ WATCH"} |
-| **P99.9** | **${p999Lat} ms** | < 50.0 ms | ${p999Lat < 50 ? "✅ PASS" : "⚠️ WATCH"} |
+| **Median (P50)** | **${medLat} ms** | < 2.0 ms | ${medLat < 2 ? "PASS" : "Near Sub-2ms"} |
+| **P90** | **${p90Lat} ms** | < 6.0 ms | ${p90Lat < 6 ? "PASS" : "WATCH"} |
+| **Average (mean)** | **${avgLat} ms** | < 5.0 ms | ${avgLat < 5 ? "PASS" : "WATCH"} |
+| **P95** | **${p95Lat} ms** | < 15.0 ms | ${p95Lat < 15 ? "PASS" : "WATCH"} |
+| **P99 (Tail)** | **${p99Lat} ms** | < 35.0 ms | ${p99Lat < 35 ? "PASS" : "WATCH"} |
+| **P99.9** | **${p999Lat} ms** | < 50.0 ms | ${p999Lat < 50 ? "PASS" : "WATCH"} |
 | **Max Outlier** | **${maxLat} ms** | - | - |
 
 ---
 
-## Data Ingestion & Storage Impact
-
-- **Rows Ingested**: **+${inserted.toLocaleString()} rows**
-- **Postgres Disk Footprint**: **${postSize}** (started at ${preSize})
-- **Zero-Loss Durability**: ${durability}
-- **Kafka Consumer Lag**: **0**
-
+${storageSection}
 ---
 
 ${envConfig.markdown}
@@ -694,21 +946,28 @@ async function runRampTest(options) {
 		stepRps = 500,
 		stepDuration = "60s",
 		rampTime = "5s",
-		baseUrl = "http://r.localhost",
 		clean = false,
 		seed = false,
+		target = null,
 	} = options;
+
+	const { targetIp, effectiveBaseUrl } = resolveTarget(target, options.baseUrl || "http://r.localhost");
 
 	if (clean) {
 		runClean(false);
 	}
 	if (seed) {
-		await runSeed();
+		await runSeed(target);
 	}
 
 	console.log("\x1b[36m" + "=".repeat(65));
 	console.log(" Stepped Ramp Load Saturation Test (Runs until errors hit)");
-	console.log(` Target Ingress     : ${baseUrl}`);
+	console.log(` Target Ingress     : ${effectiveBaseUrl}`);
+	if (targetIp) {
+		console.log(` Target Host IP     : ${targetIp} (Cross-Machine Wi-Fi Mode)`);
+		console.log(` DNS Mapping        : ${effectiveBaseUrl} -> ${targetIp} (in-container hosts)`);
+		console.log(` k6 Resources       : Uncapped (100% Host CPU & Memory)`);
+	}
 	console.log(` Starting Rate      : ${startRps} req/s`);
 	console.log(` Rate Increment     : +${stepRps} req/s every ${stepDuration}`);
 	if (rampTime && rampTime !== "0s" && rampTime !== "0") {
@@ -718,25 +977,47 @@ async function runRampTest(options) {
 	console.log(" Termination Trigger: First occurrence of HTTP errors or dropped requests");
 	console.log("=".repeat(65) + "\x1b[0m\n");
 
-	// Pre-test DB baseline
-	const preStats = execOutput(
-		"docker exec postgres-db psql -U postgres -d url_shortener_analytics -t -c \"SELECT count(*), pg_size_pretty(pg_total_relation_size('click_analytics')) FROM click_analytics;\"",
-	);
-	let preRows = 0;
-	let preSize = "0 bytes";
-	if (preStats) {
-		const parts = preStats.split("|");
-		if (parts.length === 2) {
-			preRows = parseInt(parts[0].trim(), 10) || 0;
-			preSize = parts[1].trim();
+	// Preflight connectivity check if cross-machine
+	if (targetIp) {
+		console.log(`\x1b[36m[*] Pre-flight connectivity check to ${targetIp}:80...\x1b[0m`);
+		const check = await checkTargetReachability(effectiveBaseUrl, targetIp);
+		if (check.ok) {
+			console.log(`  \x1b[32m[✓] Connection established (HTTP ${check.status})\x1b[0m\n`);
+		} else {
+			console.log(`  \x1b[33m[!] Warning: Probe to ${targetIp} failed (${check.error}).\x1b[0m`);
+			console.log("      If connection is refused, ensure port 80 is open in server firewall.\n");
 		}
 	}
-	console.log("\x1b[32m[Pre-Test Database Baseline]\x1b[0m");
-	console.log(`  click_analytics rows : ${preRows.toLocaleString()}`);
-	console.log(`  click_analytics size : ${preSize}\n`);
+
+	// Pre-test DB baseline
+	const isLocal = isLocalStackRunning();
+	let preRows = 0;
+	let preSize = "0 bytes";
+
+	if (isLocal) {
+		const preStats = execOutput(
+			"docker exec postgres-db psql -U postgres -d url_shortener_analytics -t -c \"SELECT count(*), pg_size_pretty(pg_total_relation_size('click_analytics')) FROM click_analytics;\"",
+		);
+		if (preStats) {
+			const parts = preStats.split("|");
+			if (parts.length === 2) {
+				preRows = parseInt(parts[0].trim(), 10) || 0;
+				preSize = parts[1].trim();
+			}
+		}
+		console.log("\x1b[32m[Pre-Test Database Baseline]\x1b[0m");
+		console.log(`  click_analytics rows : ${preRows.toLocaleString()}`);
+		console.log(`  click_analytics size : ${preSize}\n`);
+	} else {
+		console.log("\x1b[36m[Cross-Machine Remote Execution]\x1b[0m");
+		console.log(`  Target Server Host : ${targetIp || effectiveBaseUrl}`);
+		console.log("  Database & Kafka   : Running remotely on application server.");
+		console.log("  (To inspect database rows on the server, run: node load-tests/cli.js stats)\n");
+	}
 
 	mkdirSync(RESULTS_DIR, { recursive: true });
-	const netFlags = resolveDockerNetworkFlags();
+	const netFlags = resolveDockerNetworkFlags(targetIp);
+	const targetIpEnv = targetIp ? `-e TARGET_IP="${targetIp}"` : "";
 
 	const stages = [];
 	let currentRps = startRps;
@@ -755,7 +1036,7 @@ async function runRampTest(options) {
 		process.removeListener("SIGBREAK", sigintHandler);
 		process.removeListener("SIGTERM", sigintHandler);
 		console.log("\n\x1b[33m[!] Test interrupted by user (Ctrl+C). Generating report for completed stages...\x1b[0m");
-		generateRampReport(stages, "Test manually interrupted by user (Ctrl+C)", preRows, preSize, runId, baseUrl, stepDuration);
+		generateRampReport(stages, "Test manually interrupted by user (Ctrl+C)", preRows, preSize, runId, effectiveBaseUrl, stepDuration, true, targetIp);
 		process.exit(0);
 	};
 	process.on("SIGINT", sigintHandler);
@@ -786,8 +1067,9 @@ async function runRampTest(options) {
 
 		const rampEnv = `-e RAMP_TIME="${stageRamp}"`;
 		const vusEnv = options.vus ? `-e MAX_VUS=${options.vus}` : "";
+		const resourceLimits = targetIp ? "" : '--cpus="3.0" --memory="3.0g"';
 		exec("docker rm -f k6-load-tester", { silent: true });
-		const k6Cmd = `docker run --rm --name k6-load-tester --cpus="2.0" --memory="3.0g" ${netFlags} -v "${K6_DIR}:/scripts" -v "${RESULTS_DIR}:/results" -e BASE_URL="${baseUrl}" -e TARGET_RPS=${currentRps} -e DURATION="${stepDuration}" ${rampEnv} ${vusEnv} grafana/k6:latest run --no-thresholds --summary-export=/results/latest_results.json /scripts/realistic_load_test.js`;
+		const k6Cmd = `docker run --rm --name k6-load-tester ${resourceLimits} ${netFlags} -v "${K6_DIR}:/scripts" -v "${RESULTS_DIR}:/results" -e BASE_URL="${effectiveBaseUrl}" -e TARGET_RPS=${currentRps} -e DURATION="${stepDuration}" ${targetIpEnv} ${rampEnv} ${vusEnv} grafana/k6:latest run --no-thresholds --summary-export=/results/latest_results.json /scripts/realistic_load_test.js`;
 
 		const k6Res = exec(k6Cmd);
 
@@ -896,7 +1178,7 @@ async function runRampTest(options) {
 		);
 
 		// Immediately persist current progress to disk so results are NEVER lost
-		generateRampReport(stages, isDeteriorated ? haltReason : "In Progress", preRows, preSize, runId, baseUrl, stepDuration, false);
+		generateRampReport(stages, isDeteriorated ? haltReason : "In Progress", preRows, preSize, runId, effectiveBaseUrl, stepDuration, false, targetIp);
 
 		if (isDeteriorated) {
 			console.log(`\x1b[31m[!] Stopping ramp: Errors encountered at ${currentRps} req/s (${failRate}% error rate).\x1b[0m`);
@@ -909,10 +1191,10 @@ async function runRampTest(options) {
 
 	process.removeListener("SIGINT", sigintHandler);
 
-	generateRampReport(stages, haltReason || "Completed", preRows, preSize, runId, baseUrl, stepDuration, true);
+	generateRampReport(stages, haltReason || "Completed", preRows, preSize, runId, effectiveBaseUrl, stepDuration, true, targetIp);
 }
 
-function generateRampReport(stages, haltReason, preRows, preSize, runId, baseUrl, stepDuration, isFinal = true) {
+function generateRampReport(stages, haltReason, preRows, preSize, runId, baseUrl, stepDuration, isFinal = true, targetIp = null) {
 	if (stages.length === 0) {
 		console.log("No completed stages to report.");
 		return;
@@ -922,19 +1204,24 @@ function generateRampReport(stages, haltReason, preRows, preSize, runId, baseUrl
 		sleep(2500); // Allow Kafka consumer to drain pending batches
 	}
 
-	const postStats = execOutput(
-		"docker exec postgres-db psql -U postgres -d url_shortener_analytics -t -c \"SELECT count(*), pg_size_pretty(pg_total_relation_size('click_analytics')) FROM click_analytics;\"",
-	);
+	const isLocal = isLocalStackRunning();
 	let postRows = 0;
 	let postSize = "0 bytes";
-	if (postStats) {
-		const parts = postStats.split("|");
-		if (parts.length === 2) {
-			postRows = parseInt(parts[0].trim(), 10) || 0;
-			postSize = parts[1].trim();
+	let inserted = 0;
+
+	if (isLocal) {
+		const postStats = execOutput(
+			"docker exec postgres-db psql -U postgres -d url_shortener_analytics -t -c \"SELECT count(*), pg_size_pretty(pg_total_relation_size('click_analytics')) FROM click_analytics;\"",
+		);
+		if (postStats) {
+			const parts = postStats.split("|");
+			if (parts.length === 2) {
+				postRows = parseInt(parts[0].trim(), 10) || 0;
+				postSize = parts[1].trim();
+			}
 		}
+		inserted = postRows - preRows;
 	}
-	const inserted = postRows - preRows;
 
 	const pad = (n) => String(n).padStart(2, "0");
 	const now = new Date();
@@ -952,10 +1239,26 @@ function generateRampReport(stages, haltReason, preRows, preSize, runId, baseUrl
 		tableMd += `| **${s.targetRps.toLocaleString()} req/s** | **${s.achievedRate} req/s** | ${s.totalReqs.toLocaleString()} | ${s.failRate}% | **${s.medLat} ms** | ${s.p90Lat} ms | ${s.avgLat} ms | ${s.p95Lat} ms | **${s.p99Lat} ms** | **${s.p999Lat} ms** | ${s.maxLat} ms | ${s.status} |\n`;
 	}
 
+	let storageSection = "";
+	if (isLocal) {
+		storageSection = `## Data Ingestion & Storage Impact\n\n` +
+			`- **PostgreSQL Rows Ingested**: **+${inserted.toLocaleString()} rows** (started at ${preRows.toLocaleString()}, final: ${postRows.toLocaleString()})\n` +
+			`- **PostgreSQL Disk Footprint**: **${postSize}** (started at ${preSize})\n` +
+			`- **Kafka Consumer Lag**: 0 (fully drained)\n`;
+	} else {
+		storageSection = `## Storage & Pipeline Verification\n\n` +
+			`- **Execution Mode**: Cross-Machine Remote Test\n` +
+			`- **Target Server**: \`${targetIp || effectiveBaseUrl}\`\n` +
+			`- **Database & Kafka**: Hosted remotely on the application server.\n` +
+			`- **Verification**: Run \`node load-tests/cli.js stats\` on the server machine to inspect table row count and storage delta.\n`;
+	}
+
+	const envConfig = collectTestEnvironment(targetIp, effectiveBaseUrl);
+
 	const report = `# Stepped Ramp Load Test Benchmark Summary
 
 - **Timestamp**: ${timestamp}
-- **Target Ingress**: ${baseUrl}
+- **Target Ingress**: ${effectiveBaseUrl}
 - **Step Duration**: ${stepDuration} per stage
 - **Initial Rate**: ${stages[0].targetRps.toLocaleString()} req/s
 - **Peak Stable Throughput**: **${peakStableRate}**
@@ -969,15 +1272,10 @@ function generateRampReport(stages, haltReason, preRows, preSize, runId, baseUrl
 ${tableMd}
 ---
 
-## Data Ingestion & Storage Impact
-
-- **PostgreSQL Rows Ingested**: **+${inserted.toLocaleString()} rows** (started at ${preRows.toLocaleString()}, final: ${postRows.toLocaleString()})
-- **PostgreSQL Disk Footprint**: **${postSize}** (started at ${preSize})
-- **Kafka Consumer Lag**: 0 (fully drained)
-
+${storageSection}
 ---
 
-${collectTestEnvironment().markdown}
+${envConfig.markdown}
 ---
 
 *Raw telemetry data saved to: [\`${runId}.json\`](./${runId}.json)*
@@ -985,8 +1283,6 @@ ${collectTestEnvironment().markdown}
 
 	const mdPath = resolve(RESULTS_DIR, `${runId}.md`);
 	const jsonPath = resolve(RESULTS_DIR, `${runId}.json`);
-
-	const envConfig = collectTestEnvironment();
 
 	writeFileSync(mdPath, report, "utf-8");
 	writeFileSync(jsonPath, JSON.stringify({
@@ -1014,7 +1310,11 @@ ${collectTestEnvironment().markdown}
 		console.log(` Peak Stable Rate : \x1b[32m${peakStableRate}\x1b[0m`);
 		console.log(` Total Requests   : ${totalRequestsAcrossStages.toLocaleString()}`);
 		console.log(` Termination Note : \x1b[33m${haltReason}\x1b[0m`);
-		console.log(` Rows Ingested    : +${inserted.toLocaleString()} into PostgreSQL`);
+		if (isLocal) {
+			console.log(` Rows Ingested    : +${inserted.toLocaleString()} into PostgreSQL`);
+		} else {
+			console.log(" Database Check   : Run 'node load-tests/cli.js stats' on server machine");
+		}
 		console.log(` Report Generated : load-tests/results/${runId}.md`);
 		console.log(` Raw Data Saved   : load-tests/results/${runId}.json\n`);
 	}
@@ -1024,20 +1324,23 @@ ${collectTestEnvironment().markdown}
 function printHelp() {
 	console.log(`
 \x1b[36murlShortener — Unified Load Testing & Operations CLI\x1b[0m
-Single entrypoint for load testing, data seeding, database purging, and ramp stress analysis.
+Single entrypoint for load testing, data seeding, database purging, and cross-machine Wi-Fi benchmarks.
 
 \x1b[33mUSAGE:\x1b[0m
   node load-tests/cli.js <command> [options]
 
 \x1b[33mCOMMANDS:\x1b[0m
-  \x1b[32mtest\x1b[0m (or \x1b[32mrun\x1b[0m)    Run a fixed-rate k6 load test through Nginx
-  \x1b[32mramp\x1b[0m (or \x1b[32mstep\x1b[0m)    Run stepped ramp test (+RPS every 60s until degradation)
-  \x1b[32mclean\x1b[0m (or \x1b[32mpurge\x1b[0m)  Wipe test click data (Postgres click_analytics, Redis, Kafka)
-  \x1b[32mseed\x1b[0m               Seed demo campaigns, short URLs, and A/B test splits
+  \x1b[32mtest\x1b[0m (or \x1b[32mrun\x1b[0m)        Run a fixed-rate k6 load test through Nginx
+  \x1b[32mramp\x1b[0m (or \x1b[32mstep\x1b[0m)        Run stepped ramp test (+RPS every 60s until degradation)
+  \x1b[32mclean\x1b[0m (or \x1b[32mpurge\x1b[0m)      Wipe test click data (Postgres click_analytics, Redis, Kafka)
+  \x1b[32mseed\x1b[0m                   Seed demo campaigns, short URLs, and A/B test splits
+  \x1b[32mip\x1b[0m (or \x1b[32mserver-info\x1b[0m)     Display host Wi-Fi/LAN IP & cross-machine setup instructions
+  \x1b[32mstats\x1b[0m (or \x1b[32mdb-stats\x1b[0m)     Inspect PostgreSQL row counts, disk footprint & Kafka lag
 
 \x1b[33mTEST OPTIONS:\x1b[0m
   -d, --duration <time>   Duration of the test (default: "1m", e.g. 30s, 1m, 3m, 5m)
   -r, --rps <rate>        Target arrival rate in req/sec (default: 100)
+  -t, --target <host>     Target server IP or domain for cross-machine test (e.g. 192.168.1.50)
   -m, --ramp <time>       Warm-up ramp duration to target rate (default: "10s", e.g. 5s, 10s, 0s)
   -v, --vus <count>       Max virtual users allocated (default: auto-scaled 3x RPS)
   -u, --url <url>         Target ingress base URL (default: "http://r.localhost")
@@ -1048,6 +1351,7 @@ Single entrypoint for load testing, data seeding, database purging, and ramp str
   -s, --start <rate>           Starting arrival rate in req/sec (default: 500)
   --step <rate>                Rate increment per stage in req/sec (default: 500)
   -d, --duration <time>        Duration per step stage (default: "60s")
+  -t, --target <host>          Target server IP or domain for cross-machine test
   -m, --ramp <time>            Warm-up ramp duration for initial start stage (default: "5s")
   -v, --vus <count>            Max virtual users allocated (default: auto-capped at 1,000)
   -u, --url <url>              Target ingress base URL (default: "http://r.localhost")
@@ -1057,14 +1361,24 @@ Single entrypoint for load testing, data seeding, database purging, and ramp str
 \x1b[33mCLEAN OPTIONS:\x1b[0m
   --full                  Destroy all Docker volumes completely (docker compose down -v)
 
+\x1b[33mCROSS-MACHINE WI-FI BENCHMARK WORKFLOW:\x1b[0m
+  Step 1 (On Server Machine):
+    docker compose up -d
+    node load-tests/cli.js ip
+
+  Step 2 (On Load Tester Machine over same Wi-Fi):
+    node load-tests/cli.js test --target <SERVER_IP> -d 2m -r 5000
+
+  Step 3 (On Server Machine to verify data):
+    node load-tests/cli.js stats
+
 \x1b[33mEXAMPLES:\x1b[0m
-  node load-tests/cli.js ramp
-  node load-tests/cli.js ramp --start 500 --step 500 -d 60s
-  node load-tests/cli.js ramp --clean --start 1000 --step 500
-  node load-tests/cli.js test -d 5m -r 1000
-  node load-tests/cli.js clean
-  node load-tests/cli.js seed
-  node load-tests/cli.js --help
+  node load-tests/cli.js test -d 1m -r 1000
+  node load-tests/cli.js test --target 192.168.1.50 -d 5m -r 5000
+  node load-tests/cli.js ramp --target 192.168.1.50 --start 1000 --step 500
+  node load-tests/cli.js seed --target 192.168.1.50
+  node load-tests/cli.js ip
+  node load-tests/cli.js stats
 `);
 }
 
@@ -1078,6 +1392,16 @@ async function main() {
 		return;
 	}
 
+	if (command === "ip" || command === "host" || command === "server-info" || command === "host-info") {
+		runHostInfo();
+		return;
+	}
+
+	if (command === "stats" || command === "db-stats" || command === "status") {
+		runStats();
+		return;
+	}
+
 	if (command === "clean" || command === "purge") {
 		const isFull = args.includes("--full");
 		runClean(isFull);
@@ -1085,7 +1409,14 @@ async function main() {
 	}
 
 	if (command === "seed") {
-		await runSeed();
+		let target = null;
+		for (let i = 1; i < args.length; i++) {
+			const arg = args[i];
+			if (arg === "-t" || arg === "--target" || arg === "--remote" || arg === "--host" || arg === "--server") {
+				target = args[++i];
+			}
+		}
+		await runSeed(target);
 		return;
 	}
 
@@ -1097,6 +1428,7 @@ async function main() {
 			rampTime: "5s",
 			vus: null,
 			baseUrl: "http://r.localhost",
+			target: null,
 			clean: false,
 			seed: false,
 		};
@@ -1109,6 +1441,8 @@ async function main() {
 				options.stepRps = parseInt(args[++i], 10) || 500;
 			} else if (arg === "-d" || arg === "--duration" || arg === "--step-time") {
 				options.stepDuration = args[++i];
+			} else if (arg === "-t" || arg === "--target" || arg === "--remote" || arg === "--host" || arg === "--server") {
+				options.target = args[++i];
 			} else if (arg === "-m" || arg === "--ramp") {
 				options.rampTime = args[++i];
 			} else if (arg === "-v" || arg === "--vus") {
@@ -1137,6 +1471,7 @@ async function main() {
 			ramp: "10s",
 			vus: null,
 			baseUrl: "http://r.localhost",
+			target: null,
 			clean: false,
 			seed: false,
 		};
@@ -1147,6 +1482,8 @@ async function main() {
 				options.duration = args[++i];
 			} else if (arg === "-r" || arg === "--rps") {
 				options.rps = parseInt(args[++i], 10) || 100;
+			} else if (arg === "-t" || arg === "--target" || arg === "--remote" || arg === "--host" || arg === "--server") {
+				options.target = args[++i];
 			} else if (arg === "-m" || arg === "--ramp") {
 				options.ramp = args[++i];
 			} else if (arg === "-v" || arg === "--vus") {

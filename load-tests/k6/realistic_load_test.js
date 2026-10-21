@@ -293,7 +293,17 @@ function getTestElapsedMs() {
   return Date.now() - scriptStartTime;
 }
 
+const TARGET_IP = __ENV.TARGET_IP;
+
 export const options = {
+  ...(TARGET_IP ? {
+    hosts: {
+      'r.localhost': TARGET_IP,
+      'localhost': TARGET_IP,
+      [`r.${TARGET_IP}.nip.io`]: TARGET_IP,
+      [`${TARGET_IP}.nip.io`]: TARGET_IP,
+    },
+  } : {}),
   discardResponseBodies: true,
   summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'p(99.9)', 'max'],
   scenarios: {
