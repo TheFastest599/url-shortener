@@ -70,13 +70,15 @@ A high-throughput, event-driven URL shortening and analytics platform built with
 
 ### Verified Performance Benchmark (30-Minute Sustained 5,000 RPS Soak Test)
 
-The platform is engineered for ultra-low latency redirection and high-concurrency event ingestion under continuous load. Below are empirical results from a verified **30-minute continuous soak test** generating **over 9 million requests** targeting the Nginx ingress gateway (`http://r.localhost`):
+The platform is engineered for ultra-low latency redirection and high-concurrency event ingestion under continuous load. Below are empirical results from a verified **30-minute continuous soak test** generating **over 9 million requests** targeting exclusively the **redirection route (`http://r.localhost/{shortCode}`)** through the Nginx ingress gateway:
 
 - **Verified 30-Minute 5,000 RPS Benchmark Report**: [load-tests/results/2026-10-21_12-44-38.md](load-tests/results/2026-10-21_12-44-38.md) | [Raw Telemetry JSON](load-tests/results/2026-10-21_12-44-38.json)
 
 #### Host Hardware Specifications & Co-Located Stack Profile
 
-> **Crucial Benchmark Context**: This benchmark was **not** executed across multiple cloud servers or distributed Kubernetes nodes. The **entire platform stack**—including the Nginx reverse proxy, all 4 Spring Boot microservices, PostgreSQL database, Redis cache, Apache Kafka event broker, and the k6 load generator itself—ran concurrently on a **single consumer laptop**. All 8 containers and the load generation engine actively shared and competed for the same 6 physical CPU cores, RAM, and disk I/O.
+> **Crucial Benchmark Context**:
+> - **Redirection Route Scope Only**: This benchmark evaluates exclusively the high-velocity redirection route (`http://r.localhost/{shortCode}`). It exercises the end-to-end hot-path: Nginx ingress -> `url-redirect-service` (WebFlux Netty) -> Redis cache -> Kafka event publishing -> `url-analytics-service` macro-batch consumer -> PostgreSQL persistent bulk writes. It does not measure admin management APIs (CRUD operations for links/campaigns via `apigateway`) or static frontend asset downloads.
+> - **Co-Located Single-Machine Stack**: This benchmark was **not** executed across multiple cloud servers or distributed Kubernetes nodes. The **entire platform stack**—including the Nginx reverse proxy, all 4 Spring Boot microservices, PostgreSQL database, Redis cache, Apache Kafka event broker, and the k6 load generator itself—ran concurrently on a **single consumer laptop**. All 8 containers and the load generation engine actively shared and competed for the same 6 physical CPU cores, RAM, and disk I/O.
 
 - **Host Machine Hardware Specifications**:
   - **CPU**: AMD Ryzen 5 5600H (6 Physical Cores / 12 Logical Threads, 3.3 GHz base, up to 4.2 GHz boost, 16 MB L3 Cache)
@@ -99,6 +101,7 @@ The platform is engineered for ultra-low latency redirection and high-concurrenc
 
 | Metric / Profile | Measured Value | SLA Target | Status |
 | :--- | :--- | :--- | :--- |
+| **Evaluated Route / Scope** | **Redirection Route Only (`http://r.localhost/{shortCode}`)** | - | Pure redirect + analytics streaming hot-path |
 | **Duration** | **30 minutes (1,800 seconds continuous)** | - | Completed |
 | **Target Rate** | **5,000 req/s** | - | - |
 | **Achieved Throughput** | **5,011.06 req/s** | > 95% target | PASS (100.2% precision) |
@@ -336,5 +339,5 @@ The repository documentation in [`docs/`](docs/) provides comprehensive architec
 
 ### Benchmarks & Performance
 
-- **[30-Minute Sustained 5,000 RPS Soak Test Benchmark](load-tests/results/2026-10-21_12-44-38.md)** — Verified 9,019,914 request continuous benchmark on a single laptop hosting the entire stack, delivering 0.78ms P50 latency, 0.000% error rate, 100% data durability (+9,019,914 rows ingested into PostgreSQL), and 0 Kafka consumer lag.
+- **[30-Minute Sustained 5,000 RPS Soak Test Benchmark](load-tests/results/2026-10-21_12-44-38.md)** — Verified 9,019,914 request continuous benchmark on the link redirection route (`http://r.localhost/{shortCode}`) on a single laptop hosting the entire stack, delivering 0.78ms P50 latency, 0.000% error rate, 100% data durability (+9,019,914 rows ingested into PostgreSQL), and 0 Kafka consumer lag.
 - **[Redirect Load Testing & Production Scale Plan](docs/redirect_load_testing_and_scale_plan.md)** — Detailed soak test scenarios, unified `load-tests/cli.js` operations tool, and horizontal scaling plan.
